@@ -206,12 +206,13 @@ const Voice = {
   ring(channelId, from) {
     if (this.channel === channelId) return;
     S.users[from.id] = { ...S.users[from.id], ...from };
-    let n = 0; const iv = setInterval(() => { if (++n > 10 || !$('.ring-modal')) return clearInterval(iv); beep('ring'); }, 1600); beep('ring');
-    modal(`<div class="ring-modal">${avatar(from, 's96')}<h2>${esc(from.display_name)}</h2><p style="color:var(--muted)">Incoming call…</p>
-      <div class="btns"><button class="vbtn leave" data-no title="Decline">${I.hangup}</button><button class="vbtn" style="background:var(--green);color:#fff" data-yes title="Accept">${I.phone}</button></div></div>`, (m, close) => {
-      $('[data-yes]', m).onclick = () => { close(); clearInterval(iv); if (!S.dms.find(d => d.id === channelId)) S.dms.unshift({ id: channelId, type: 'dm', user: from, last_at: Date.now() }); selectChannel(channelId); this.join(channelId); };
-      $('[data-no]', m).onclick = () => { close(); clearInterval(iv); this.socket.emit('call:decline', { channel_id: channelId }); };
-      setTimeout(() => { if (document.body.contains(m)) { close(); clearInterval(iv); } }, 30000);
+    Ringtone.start();
+    const stop = () => Ringtone.stop();
+    modal(`<div class="ring-modal">${avatar(from, 's96')}<h2>${esc(from.display_name)}</h2><p class="ring-sub">Incoming call</p>
+      <div class="btns"><button class="vbtn leave" data-no title="Decline">${I.hangup}</button><button class="vbtn ring-accept" data-yes title="Accept">${I.phone}</button></div></div>`, (m, close) => {
+      $('[data-yes]', m).onclick = () => { stop(); close(); if (!S.dms.find(d => d.id === channelId)) S.dms.unshift({ id: channelId, type: 'dm', user: from, last_at: Date.now() }); selectChannel(channelId); this.join(channelId); };
+      $('[data-no]', m).onclick = () => { stop(); close(); this.socket.emit('call:decline', { channel_id: channelId }); };
+      setTimeout(() => { if (document.body.contains(m)) { stop(); close(); } }, 30000);
     });
   },
 };
@@ -220,37 +221,100 @@ window.Voice = Voice;
 function rerenderVoiceUi() { renderSidebar(); renderVoiceArea(); }
 
 /* voice channel view + DM call strip */
+// cached <video> elements so re-renders don't recreate streams (prevents flicker / fullscreen drops)
+Voice.videoEls = Voice.videoEls || new Map();
+function videoFor(id) {
+  let el = Voice.videoEls.get(id);
+  if (!el) { el = document.createElement('video'); el.autoplay = true; el.playsInline = true; el.muted = true; Voice.videoEls.set(id, el); }
+  const stream = id === S.me.id ? (Voice.videoTrack ? new MediaStream([Voice.videoTrack]) : null) : Voice.peers.get(id)?.videoStream || null;
+  if (stream && el.srcObject !== stream) { el.srcObject = stream; el.play().catch(() => {}); }
+  el.style.transform = (id === S.me.id && Voice.video) ? 'scaleX(-1)' : '';  // mirror own camera only, never a screen share
+  return el;
+}
+function hasVideoOf(id) { return id === S.me.id ? !!Voice.videoTrack : !!Voice.peers.get(id)?.videoStream; }
+function isScreenOf(cid, id) { return (S.voice[cid] || []).find(p => p.user_id === id)?.screen || (id === S.me.id && Voice.screen); }
+
 function renderVoiceArea() {
   const ch = curChannel(); if (!ch) return;
+  // never rebuild while a tile is fullscreen — it would exit fullscreen and drop the stream
+  if (document.fullscreenElement && document.fullscreenElement.closest('.voice-view, .call-strip')) { refreshStreams(); return; }
   if (ch.type === 'voice') {
     const view = $('.voice-view'); if (!view) return;
     const inThis = Voice.channel === ch.id;
     const people = S.voice[ch.id] || [];
     if (!inThis) {
-      view.innerHTML = `<div class="voice-empty"><div class="ch-welcome" style="padding:0"><div class="big" style="margin:0 auto 12px">${I.speaker}</div></div><h2>${esc(ch.name)}</h2>
-        <p>${people.length ? `${people.map(p => esc(nameIn(ch.server_id, p.user_id))).join(', ')} ${people.length === 1 ? 'is' : 'are'} in voice.` : 'No one is here yet.'}</p>
-        <button class="btn green" data-joinv>Join Voice</button></div>`;
+      view.innerHTML = `<div class="voice-empty"><div class="vc-bubble">${I.speaker}</div><h2>${esc(ch.name)}</h2>
+        <p>${people.length ? `${people.map(p => esc(nameIn(ch.server_id, p.user_id))).join(', ')} ${people.length === 1 ? 'is' : 'are'} in voice.` : 'No one’s here yet. Be the first to hop in.'}</p>
+        <button class="btn green" data-joinv>${I.phone} Join Voice</button></div>`;
       $('[data-joinv]', view).onclick = () => { if (!can(PERM.CONNECT, ch.server_id)) return toast('You don’t have permission to connect here', true); Voice.join(ch.id); };
       return;
     }
-    view.innerHTML = `<div class="voice-grid"></div>${voiceControlsHtml()}`;
-    drawTiles($('.voice-grid', view), ch.id, ch.server_id);
+    view.innerHTML = `<div class="stage-wrap"></div>${voiceControlsHtml()}`;
+    drawStage($('.stage-wrap', view), ch.id, ch.server_id);
     bindVoiceControls(view);
   } else if (ch.type === 'dm' || ch.type === 'group') {
     const slot = $('.call-slot'); if (!slot) return;
     const people = S.voice[ch.id] || [];
     if (Voice.channel === ch.id) {
       slot.className = 'call-slot call-strip';
-      slot.innerHTML = `<div class="voice-grid"></div>${voiceControlsHtml()}`;
-      drawTiles($('.voice-grid', slot), ch.id, null);
+      slot.innerHTML = `<div class="stage-wrap"></div>${voiceControlsHtml()}`;
+      drawStage($('.stage-wrap', slot), ch.id, null);
       bindVoiceControls(slot);
     } else if (people.length) {
-      slot.className = 'call-slot call-strip';
-      slot.innerHTML = `<div class="voice-empty" style="padding:16px"><p>${esc(people.map(p => user(p.user_id).display_name).join(', '))} ${people.length === 1 ? 'is' : 'are'} in a call</p><button class="btn green" data-joinv>${I.phone} Join Call</button></div>`;
+      slot.className = 'call-slot call-strip ringing';
+      slot.innerHTML = `<div class="call-join"><div class="cj-avatars">${people.slice(0, 4).map(p => avatar(user(p.user_id), 's32', true)).join('')}</div><div class="cj-text"><b>${esc(people.map(p => user(p.user_id).display_name).join(', '))}</b><span>${people.length === 1 ? 'is' : 'are'} in a call</span></div><button class="btn green" data-joinv>${I.phone} Join</button></div>`;
       $('[data-joinv]', slot).onclick = () => Voice.join(ch.id);
     } else { slot.className = 'call-slot'; slot.innerHTML = ''; }
   }
 }
+function refreshStreams() { $$('[data-tile]').forEach(t => { const id = t.dataset.tile; if (hasVideoOf(id)) { const holder = $('.vid-holder', t) || t; const ex = $('video', holder); const el = videoFor(id); if (ex !== el) { if (ex) ex.remove(); holder.appendChild(el); } } }); }
+
+function participants(cid) {
+  const people = (S.voice[cid] || []).slice();
+  if (!people.find(p => p.user_id === S.me.id)) people.unshift({ user_id: S.me.id, muted: Voice.muted, deaf: Voice.deaf, video: Voice.video, screen: Voice.screen });
+  return people;
+}
+function tileInner(p, sid, cid, big) {
+  const u = user(p.user_id);
+  const isMe = p.user_id === S.me.id;
+  const vid = hasVideoOf(p.user_id);
+  const tbg = u.theme_primary ? `background:linear-gradient(160deg,${u.theme_primary},${u.theme_accent || u.theme_primary})` : `background:radial-gradient(120% 120% at 50% 0%,color-mix(in oklab,${u.accent || '#8b6dff'} 38%,var(--bg-3)),var(--bg-3))`;
+  return `<div class="tile ${Voice.speaking.has(p.user_id) ? 'speaking' : ''}" data-speak="${p.user_id}" data-tile="${p.user_id}" style="${vid ? '' : tbg}">
+      <div class="vid-holder"></div>${vid ? '' : avatar(u, big ? 's96' : '')}
+      <span class="label">${esc(sid ? nameIn(sid, p.user_id) : u.display_name)}${isMe ? ' (you)' : ''}${p.screen ? ' <span class="live">● LIVE</span>' : ''}${p.deaf ? I.deaf : p.muted ? I.micOff : ''}</span>
+      ${vid ? `<div class="tile-tools"><button data-focus title="${big ? 'Exit' : 'Focus'}">${big ? I.x : I.expand}</button><button data-fs title="Fullscreen">${I.fs}</button></div>` : ''}</div>`;
+}
+function drawStage(wrap, cid, sid) {
+  const people = participants(cid);
+  // pick the stage: an explicit focus, else whoever is screen-sharing, else first camera
+  let stageId = Voice.focus && people.find(p => p.user_id === Voice.focus) ? Voice.focus : null;
+  if (!stageId) stageId = (people.find(p => p.screen) || people.find(p => hasVideoOf(p.user_id)) || {}).user_id;
+  const theater = !!stageId && people.length > 0;
+  if (theater) {
+    const stageP = people.find(p => p.user_id === stageId);
+    wrap.className = 'stage-wrap theater';
+    wrap.innerHTML = `<div class="stage">${tileInner(stageP, sid, cid, true)}</div>
+      <div class="strip">${people.filter(p => p.user_id !== stageId).map(p => tileInner(p, sid, cid, false)).join('')}</div>`;
+  } else {
+    wrap.className = 'stage-wrap grid-mode';
+    wrap.innerHTML = `<div class="voice-grid">${people.map(p => tileInner(p, sid, cid, false)).join('')}</div>`;
+  }
+  // attach cached video elements
+  $$('[data-tile]', wrap).forEach(t => { const id = t.dataset.tile; if (hasVideoOf(id)) $('.vid-holder', t).appendChild(videoFor(id)); });
+  wrap.onclick = (e) => {
+    const fs = e.target.closest('[data-fs]'); if (fs) { const t = fs.closest('[data-tile]'); toggleFullscreen(t); return; }
+    const f = e.target.closest('[data-focus]'); if (f) { const id = f.closest('[data-tile]').dataset.tile; Voice.focus = Voice.focus === id ? null : id; renderVoiceArea(); return; }
+    const t = e.target.closest('[data-tile]'); if (t && !e.target.closest('video') && !e.target.closest('button')) { const id = t.dataset.tile; if (hasVideoOf(id)) { Voice.focus = Voice.focus === id ? null : id; renderVoiceArea(); } else profilePopout(id, t); }
+  };
+  wrap.ondblclick = (e) => { const t = e.target.closest('[data-tile]'); if (t && hasVideoOf(t.dataset.tile)) toggleFullscreen(t); };
+}
+function toggleFullscreen(tile) {
+  if (!tile) return;
+  if (document.fullscreenElement) { document.exitFullscreen().catch(() => {}); return; }
+  (tile.requestFullscreen ? tile.requestFullscreen() : tile.webkitRequestFullscreen?.()) ?.catch?.(() => {});
+}
+document.addEventListener('fullscreenchange', () => { $$('.tile').forEach(t => t.classList.toggle('is-fs', document.fullscreenElement === t)); });
+
 function voiceControlsHtml() {
   return `<div class="voice-controls">
     <button class="vbtn ${Voice.video ? 'on' : ''}" data-v="cam" title="${Voice.video ? 'Turn off camera' : 'Turn on camera'}">${Voice.video ? I.video : I.videoOff}</button>
@@ -264,29 +328,5 @@ function bindVoiceControls(root) {
     const v = e.target.closest('[data-v]')?.dataset.v;
     if (v === 'cam') Voice.toggleCamera(); if (v === 'screen') Voice.toggleScreen();
     if (v === 'mute') Voice.toggleMute(); if (v === 'deaf') Voice.toggleDeaf(); if (v === 'leave') Voice.leave();
-  };
-}
-function drawTiles(grid, cid, sid) {
-  const people = (S.voice[cid] || []).slice();
-  if (!people.find(p => p.user_id === S.me.id)) people.unshift({ user_id: S.me.id, muted: Voice.muted, deaf: Voice.deaf, video: Voice.video, screen: Voice.screen });
-  grid.innerHTML = people.map(p => {
-    const u = user(p.user_id);
-    const isMe = p.user_id === S.me.id;
-    const hasVideo = isMe ? !!Voice.videoTrack : !!Voice.peers.get(p.user_id)?.videoStream;
-    const tbg = u.theme_primary ? `background:linear-gradient(160deg,${u.theme_primary},${u.theme_accent || u.theme_primary})` : `background:radial-gradient(120% 120% at 50% 0%,color-mix(in oklab,${u.accent || '#8b6dff'} 40%,var(--bg-2)),var(--bg-2))`;
-    return `<div class="tile ${Voice.speaking.has(p.user_id) ? 'speaking' : ''} ${Voice.focus === p.user_id ? 'focus' : ''}" data-speak="${p.user_id}" data-tile="${p.user_id}" style="${hasVideo ? '' : tbg}">
-      ${hasVideo ? `<video autoplay playsinline muted></video>` : avatar(u, '')}
-      <span class="label">${esc(sid ? nameIn(sid, p.user_id) : u.display_name)}${isMe ? ' (you)' : ''}${p.screen ? ' <span class="live" style="background:var(--red);color:#fff;font-size:10px;padding:0 4px;border-radius:3px">LIVE</span>' : ''}${p.deaf ? I.deaf : p.muted ? I.micOff : ''}</span>
-      ${hasVideo ? `<button class="expand" data-focus title="Focus">${I.expand}</button>` : ''}</div>`;
-  }).join('');
-  $$('[data-tile]', grid).forEach(tile => {
-    const id = tile.dataset.tile; const v = $('video', tile); if (!v) return;
-    v.srcObject = id === S.me.id ? new MediaStream([Voice.videoTrack]) : Voice.peers.get(id).videoStream;
-    if (id === S.me.id && Voice.video) v.style.transform = 'scaleX(-1)';
-    v.play().catch(() => {});
-  });
-  grid.onclick = (e) => {
-    const f = e.target.closest('[data-focus]'); if (f) { const id = f.closest('[data-tile]').dataset.tile; Voice.focus = Voice.focus === id ? null : id; renderVoiceArea(); return; }
-    const t = e.target.closest('[data-tile]'); if (t && !e.target.closest('video')) profilePopout(t.dataset.tile, t);
   };
 }

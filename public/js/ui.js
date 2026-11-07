@@ -808,6 +808,7 @@ function composerHtml(ch, thread) {
     <div class="cbox ${canSend ? '' : 'disabled'}">
       ${canSend && (isDM(ch) || can(PERM.ATTACH, ch.server_id)) ? `<button class="icon-btn" data-attach title="Upload a file">${I.plus}</button>` : ''}
       <textarea rows="1" placeholder="${esc(placeholder)}" ${canSend ? '' : 'disabled'} maxlength="4000"></textarea>
+      ${canSend && S.info.gif ? `<button class="icon-btn gif-btn" data-gif title="GIF">GIF</button>` : ''}
       ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button><button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
     </div><input type="file" multiple hidden>
     ${thread ? '' : '<div class="typing"></div>'}</div>`;
@@ -852,6 +853,7 @@ function bindComposer(comp, cid, threadId) {
   ta.addEventListener('input', syncSend); comp._syncSend = syncSend;
   file.onchange = () => { addFiles(file.files); file.value = ''; };
   $('[data-emoji]', comp)?.addEventListener('click', (e) => emojiPicker(e.currentTarget, (em) => { insertAtCursor(ta, em); }, true));
+  $('[data-gif]', comp)?.addEventListener('click', (e) => gifPicker(e.currentTarget, cid, threadId, state, comp));
   ta.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
   let lastTyping = 0;
   ta.addEventListener('input', () => {
@@ -999,6 +1001,37 @@ function contextMenu(e, items, cls = '', minW) {
   const el = h(`<div class="menu ${cls}" ${minW ? `style="min-width:${minW}px"` : ''}>${list.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it[2] || ''}">${it[0]}</button>`).join('')}</div>`);
   L.set(el); place(el, e.clientX, e.clientY, { above: e.above });
   el.onclick = (ev) => { const b = ev.target.closest('[data-i]'); if (!b) return; L.close(); list[b.dataset.i][1](); };
+}
+function gifPicker(anchor, cid, threadId, state, comp) {
+  const L = layer();
+  const el = h(`<div class="popout gif-picker"><div class="gp-head"><input class="input" placeholder="Search Giphy"></div><div class="gp-grid"><div class="gp-loading">Loading GIFs…</div></div><div class="gp-foot">Powered by GIPHY</div></div>`);
+  L.set(el);
+  const r = anchor.getBoundingClientRect();
+  place(el, r.right - 360, r.top - 8, { above: true });
+  const grid = $('.gp-grid', el);
+  let token = 0;
+  const load = async (q) => {
+    const mine = ++token;
+    grid.innerHTML = '<div class="gp-loading">Loading GIFs…</div>';
+    try {
+      const { gifs } = await api('GET', '/api/gifs?q=' + encodeURIComponent(q || '') + '&_=' + Date.now());
+      if (mine !== token) return;
+      grid.innerHTML = gifs.length ? gifs.map(g => `<button class="gp-item" data-url="${esc(g.url)}" style="aspect-ratio:${g.w}/${g.h}"><img src="${esc(g.preview)}" alt="${esc(g.title)}" loading="lazy"></button>`).join('') : '<div class="gp-loading">No GIFs found.</div>';
+    } catch (e) { if (mine === token) grid.innerHTML = `<div class="gp-loading">${esc(e.message)}</div>`; }
+  };
+  const search = debounce((v) => load(v), 350);
+  $('input', el).oninput = (e) => search(e.target.value.trim());
+  grid.onclick = async (e) => {
+    const b = e.target.closest('[data-url]'); if (!b) return;
+    L.close();
+    const form = new FormData();
+    form.append('gif', b.dataset.url);
+    if (state && state.reply) { form.append('reply_to', state.reply.id); form.append('mention_reply', String(state.mentionReply)); }
+    if (threadId) form.append('thread_id', threadId);
+    try { await upload(`/api/channels/${cid}/messages`, form); if (comp && state && state.reply) comp._setReply(null); } catch (er) { toast(er.message, true); }
+  };
+  load('');
+  if (window.innerWidth > 760) $('input', el).focus();
 }
 function emojiPicker(anchor, onPick, keepOpen) {
   const L = layer();

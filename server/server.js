@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.4.1';
+const VERSION = '1.5.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -62,6 +62,7 @@ function start(opts = {}) {
   if (!fs.existsSync(cfgPath)) cfg.smtp = { host: '', port: 587, user: '', pass: '', from: '' };
   if (cfg.spotifyClientId === undefined) cfg.spotifyClientId = '';
   const SPOTIFY_ID = process.env.SPOTIFY_CLIENT_ID || opts.spotifyClientId || cfg.spotifyClientId || '';
+  const GIPHY_KEY = process.env.GIPHY_KEY || cfg.giphyKey || '';
   const PUBLIC_URL = (process.env.PUBLIC_URL || opts.publicUrl || cfg.publicUrl || '').replace(/\/$/, '');
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
   const SECRET = process.env.JWT_SECRET || cfg.jwtSecret;
@@ -298,7 +299,7 @@ function start(opts = {}) {
     if (!c || c.expires < now()) throw err(400, 'That code is wrong or expired');
     run('DELETE FROM codes WHERE email=? AND purpose=?', email, purpose);
   }
-  app.get('/api/info', (req, res) => res.json({ name: 'Orbit', version: VERSION, email_verification: emailEnabled, max_upload_mb: maxUpload / 1048576, spotify: !!SPOTIFY_ID }));
+  app.get('/api/info', (req, res) => res.json({ name: 'Orbit', version: VERSION, email_verification: emailEnabled, max_upload_mb: maxUpload / 1048576, spotify: !!SPOTIFY_ID, gif: !!GIPHY_KEY }));
   app.post('/api/auth/register', wrap(async (req, res) => {
     const { email, username, password, display_name } = req.body || {};
     if (!emailRe.test(email || '')) throw err(400, 'Enter a valid email');
@@ -819,6 +820,25 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // ----- GIFs (Giphy proxy; key stays server-side) -----
+  app.get('/api/gifs', auth, wrap(async (req, res) => {
+    if (!GIPHY_KEY) throw err(400, 'GIFs aren’t set up on this server.');
+    const q = String(req.query.q || '').trim().slice(0, 100);
+    const offset = Math.min(Number(req.query.offset) || 0, 200);
+    const base = q ? 'https://api.giphy.com/v1/gifs/search' : 'https://api.giphy.com/v1/gifs/trending';
+    const params = new URLSearchParams({ api_key: GIPHY_KEY, limit: '24', offset: String(offset), rating: 'pg-13', bundle: 'messaging_non_clips' });
+    if (q) params.set('q', q);
+    let data;
+    try { const r = await fetch(base + '?' + params); data = await r.json(); } catch { throw err(502, 'Couldn’t reach Giphy.'); }
+    const gifs = (data.data || []).map(g => {
+      const im = g.images || {};
+      const full = im.downsized_medium || im.original || {};
+      const prev = im.fixed_width_small || im.fixed_width || full;
+      return { id: g.id, url: full.url, preview: prev.url, w: Number(prev.width) || 200, h: Number(prev.height) || 200, title: g.title || 'GIF' };
+    }).filter(g => g.url);
+    res.json({ gifs });
+  }));
+
   // ----- friends -----
   app.get('/api/friends', auth, wrap((req, res) => res.json(friendsPayload(req.user.id))));
   app.post('/api/friends', auth, wrap((req, res) => {
@@ -917,8 +937,11 @@ function start(opts = {}) {
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
     const content = String(req.body?.content || '').slice(0, 4000);
-    if (!content.trim() && !req.files?.length) throw err(400, 'Message is empty');
+    const gifUrl = String(req.body?.gif || '').trim();
+    const gifOk = gifUrl && /^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(gifUrl);
+    if (!content.trim() && !req.files?.length && !gifOk) throw err(400, 'Message is empty');
     const attachments = (req.files || []).map(f => ({ url: fileUrl(f), name: f.originalname.slice(0, 200), size: f.size, type: f.mimetype }));
+    if (gifOk) attachments.push({ url: gifUrl, name: 'GIF', type: 'image/gif', external: true, size: 0 });
     const reply = req.body?.reply_to ? one('SELECT id FROM messages WHERE id=? AND channel_id=?', Number(req.body.reply_to), ch.id) : null;
     const thread = req.body?.thread_id ? one('SELECT id FROM messages WHERE id=? AND channel_id=? AND thread_id IS NULL', Number(req.body.thread_id), ch.id) : null;
     const m = mentionsIn(content, ch, req.user.id);
