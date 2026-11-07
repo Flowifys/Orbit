@@ -231,7 +231,17 @@ ic('fs', '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 
 ic('group', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>');
 ic('leave', '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>');
 ic('star', '<path d="M12 2l3 7 7 .5-5.5 4.5 2 7-6.5-4-6.5 4 2-7L2 9.5 9 9z" fill="currentColor" stroke="none"/>');
-function badgeHtml(u) { return u && u.staff ? `<span class="badge-staff" title="Orbit Staff">${I.star.replace('width="20" height="20"', 'width="11" height="11"')}Staff</span>` : ''; }
+/* ---------- badges ---------- */
+// Orbit Staff: a purple shield with Orbit's planet + ring
+const BADGE_SVG = {
+  staff: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.6 3.6 4.8v6.1c0 5.3 3.6 9.9 8.4 11.5 4.8-1.6 8.4-6.2 8.4-11.5V4.8z" fill="#7b5cf5"/><path d="M12 1.6 3.6 4.8v6.1c0 .9.1 1.8.3 2.6L20.4 6.9V4.8z" fill="#fff" opacity=".16"/><ellipse cx="12" cy="11.6" rx="6.4" ry="2.4" fill="none" stroke="#fff" stroke-width="1.4" transform="rotate(-22 12 11.6)"/><circle cx="12" cy="11.6" r="2.6" fill="#fff"/></svg>',
+};
+// every badge a user has, in display order (add new badges here)
+function badgesOf(u) { const out = []; if (u && u.staff) out.push({ id: 'staff', label: 'Orbit Staff' }); return out; }
+// the row of badges next to the username on profile cards
+function badgeRowHtml(u) { const b = badgesOf(u); return b.length ? `<span class="badges" role="list" aria-label="Badges">${b.map(x => `<span class="bdg bdg-${x.id}" role="listitem" aria-label="${esc(x.label)}" data-tip="${esc(x.label)}" title="${esc(x.label)}">${BADGE_SVG[x.id]}</span>`).join('')}</span>` : ''; }
+// tiny icon next to a name in chat / member lists
+function badgeHtml(u) { const b = badgesOf(u)[0]; return b ? `<span class="bdg-mini" role="img" aria-label="${esc(b.label)}" title="${esc(b.label)}">${BADGE_SVG[b.id]}</span>` : ''; }
 function groupAvatar(g, cls = '') {
   if (g.icon) return `<div class="av ${cls}" style="background:var(--bg-3)"><span class="crop"><img src="${esc(g.icon)}" alt=""></span></div>`;
   const ms = (g.members || []).filter(m => m.id !== S.me.id).slice(0, 2);

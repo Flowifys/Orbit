@@ -1487,3 +1487,15 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .dmp-full{width:100%;padding:11px;border-radius:10px;font-weight:600;font-size:14px;background:color-mix(in oklab,var(--bg-0) 60%,transparent)}
 .profile-card.themed .dmp-full{background:rgba(8,6,20,.45);color:#f4f2ff}
 .dmp-full:hover{filter:brightness(1.2)}
+
+/* ============ 1.16 — badges ============ */
+.profile-card .un{display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+.profile-card .un-text{min-width:0}
+.badges{display:inline-flex;align-items:center;gap:3px;padding:3px 5px;border-radius:8px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.06)}
+.profile-card:not(.themed) .badges{background:var(--bg-3);border-color:var(--line)}
+.bdg{width:22px;height:22px;display:grid;place-items:center;border-radius:6px;cursor:default;transition:transform .12s,background .12s}
+.bdg:hover{background:rgba(255,255,255,.08);transform:translateY(-1px)}
+.bdg svg{width:20px;height:20px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))}
+.bdg-mini{display:inline-grid;place-items:center;width:16px;height:16px;margin-left:5px;vertical-align:-3px;flex:none}
+.bdg-mini svg{width:16px;height:16px}
+.mem .who b .bdg-mini,.friend-row .who b .bdg-mini{margin-left:3px}

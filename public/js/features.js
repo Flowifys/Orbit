@@ -211,8 +211,8 @@ async function selfProfilePopout(anchor) {
       <button class="status-bubble" data-cstatus>${u.status_text ? esc(u.status_text) : `<span class="sb-ph">${I.smile.replace('width="20" height="20"', 'width="14" height="14"')} What’s on your mind?</span>`}</button>
       ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
       <div class="inner self-inner">
-        <div class="dn" style="${nameStyle(u)}">${esc(u.display_name)}${badgeHtml(u)}</div>
-        <div class="un">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</div>
+        <div class="dn" style="${nameStyle(u)}">${esc(u.display_name)}</div>
+        <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
         ${u.bio ? `<div class="bio self-bio">${formatText(u.bio)}</div>` : ''}
         <div class="activity-slot">${activityHtml(u.id)}</div>
         <div class="self-menu">

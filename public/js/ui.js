@@ -1211,8 +1211,8 @@ function profileCardHtml(u, opts = {}) {
     <div class="avwrap">${avatar(u, 's80', true)}</div>
     ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
     <div class="inner">
-      <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}${badgeHtml(u)}</div>
-      <div class="un">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</div>
+      <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}</div>
+      <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
       ${u.status_text ? `<div class="stt">${esc(u.status_text)}</div>` : ''}
       <div class="activity-slot">${activityHtml(u.id)}</div>
       ${u.bio ? `<section><h5>About me</h5><div class="bio">${formatText(u.bio)}</div></section>` : ''}
