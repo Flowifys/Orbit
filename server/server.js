@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.11.0';
+const VERSION = '1.12.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -277,7 +277,7 @@ function start(opts = {}) {
   app.use(express.json({ limit: '1mb' }));
   app.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE'); if (req.method === 'OPTIONS') return res.end(); next(); });
-  app.use('/uploads', express.static(uploadDir, { maxAge: '30d', setHeaders: (res, p) => {
+  app.use('/uploads', express.static(uploadDir, { maxAge: '365d', immutable: true, setHeaders: (res, p) => {
     if (!/\.(png|jpe?g|gif|webp|mp4|webm|mov|mp3|ogg|wav|m4a)$/i.test(p)) res.setHeader('Content-Disposition', 'attachment');
     res.setHeader('X-Content-Type-Options', 'nosniff'); } }));
   app.use(express.static(publicDir, { setHeaders: (res, p) => { if (/\.(html|js|css)$/.test(p)) res.setHeader('Cache-Control', 'no-cache, must-revalidate'); } }));

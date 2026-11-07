@@ -21,14 +21,15 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#10919f', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
 try { Object.assign(S.prefs, JSON.parse(localStorage.getItem('orbit-prefs') || '{}')); } catch {}
 // 1.8: move everyone still on the old purple default to the new accent (custom picks are kept)
 // 1.10: Orbit's own teal accent replaces the old defaults (custom picks are kept)
-if (!S.prefs.v110) { if (!S.prefs.accent || ['#8b6dff', '#5865f2'].includes(S.prefs.accent)) S.prefs.accent = '#10919f'; S.prefs.v18 = S.prefs.v110 = true; }
+// 1.12: Orbit purple is the default accent again (anyone on an old default moves to it; custom picks are kept)
+if (!S.prefs.v112) { if (!S.prefs.accent || ['#10919f', '#5865f2'].includes(S.prefs.accent)) S.prefs.accent = '#8b6dff'; S.prefs.v18 = S.prefs.v110 = S.prefs.v112 = true; }
 const savePrefs = () => { try { localStorage.setItem('orbit-prefs', JSON.stringify(S.prefs)); } catch {} };
 const RINGTONES = [['ring1', 'Orbital'], ['ring2', 'Orbital II'], ['ring3', 'Orbital III']];
 const NOTIFSOUNDS = [['notif1', 'Ping'], ['notif2', 'Ping II'], ['notif3', 'Ping III']];
@@ -116,14 +117,19 @@ const colorIn = (sid, uidv) => (sid && topRole(sid, uidv, true)?.color) || null;
 const can = (perm, sid = S.view.server) => { const sd = S.serverData[sid]; return !!sd && (sd.my_perms & perm) === perm; };
 const statusOf = (uidv) => S.presence[uidv] || 'offline';
 const cropStyle = (c) => c ? `object-position:${c.x}% ${c.y}%;transform-origin:${c.x}% ${c.y}%;transform:scale(${c.z})` : '';
+const AV_LOADED = new Set();
+// warm the cache with everyone's profile picture so lists render instantly
+function prefetchAvatars() { const seen = new Set(); for (const u of Object.values(S.users)) { if (u && u.avatar && !seen.has(u.avatar) && !AV_LOADED.has(u.avatar) && seen.size < 300) { seen.add(u.avatar); const i = new Image(); i.decoding = 'async'; i.onload = () => AV_LOADED.add(u.avatar); i.src = u.avatar; } } }
 function avatar(u, cls = '', withStatus = false) {
   u = typeof u === 'string' ? user(u) : u;
   const st = withStatus ? `<i class="st ${statusOf(u.id)}"></i>` : '';
-  const a = u.accent || '#10919f';
-  return `<div class="av ${cls}" data-uid="${esc(u.id)}" style="background:${esc(a)}">${u.avatar ? `<span class="crop"><img src="${esc(u.avatar)}" alt="" loading="lazy" style="${cropStyle(u.avatar_crop)}"></span>` : `<span class="ini">${esc(initials(u.display_name || u.username))}</span>`}${st}</div>`;
+  const a = u.accent || '#8b6dff';
+  // people with a picture get a neutral placeholder (no colored flash while it loads); no lazy-loading for avatars
+  const known = u.avatar && AV_LOADED.has(u.avatar);
+  return `<div class="av ${cls} ${u.avatar ? 'has-img' : ''}" data-uid="${esc(u.id)}" style="background:${u.avatar ? 'var(--bg-3)' : esc(a)}">${u.avatar ? `<span class="crop"><img src="${esc(u.avatar)}" alt="" decoding="async" class="${known ? 'ok' : ''}" onload="this.classList.add('ok');AV_LOADED.add(this.getAttribute('src'))" style="${cropStyle(u.avatar_crop)}"></span>` : `<span class="ini">${esc(initials(u.display_name || u.username))}</span>`}${st}</div>`;
 }
 function bannerHtml(u, cls = 'banner') {
-  const bg = u.banner_color || u.theme_primary || u.accent || '#10919f';
+  const bg = u.banner_color || u.theme_primary || u.accent || '#8b6dff';
   return `<div class="${cls}" style="background:${esc(bg)}">${u.banner ? `<img src="${esc(u.banner)}" alt="" style="${cropStyle(u.banner_crop)}">` : ''}</div>`;
 }
 function nameStyle(u) {
@@ -314,9 +320,9 @@ const Ringtone = {
 function applyAppearance() {
   const p = S.prefs, r = document.documentElement;
   r.dataset.theme = p.theme || 'dark';
-  r.style.setProperty('--accent', p.accent || '#10919f');
-  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#10919f'} 78%, white)`);
-  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#10919f'} 18%, transparent)`);
+  r.style.setProperty('--accent', p.accent || '#8b6dff');
+  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#8b6dff'} 78%, white)`);
+  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#8b6dff'} 18%, transparent)`);
   r.style.setProperty('--fs', (p.fontSize || 15) + 'px');
   r.classList.toggle('compact', !!p.compact);
   r.classList.toggle('reduce-motion', !!p.reduceMotion);

@@ -3,7 +3,7 @@
   --bg-0:#111214;--bg-1:#17181b;--bg-2:#1d1e22;--bg-3:#26272c;--bg-4:#313238;--tile-bg:#232428;
   --bg-hover:rgba(255,255,255,.045);--bg-active:rgba(255,255,255,.085);--line:rgba(255,255,255,.065);--line-2:rgba(255,255,255,.12);
   --text:#f2f3f5;--text-2:#d2d4d8;--muted:#9a9fa8;--dim:#6d717a;
-  --accent:#10919f;--accent-2:#4fd0dc;--accent-soft:rgba(16,145,159,.2);--on-accent:#fff;
+  --accent:#8b6dff;--accent-2:#b5a3ff;--accent-soft:rgba(139,109,255,.2);--on-accent:#fff;
   --comet:#23a55a;--green:#23a55a;--yellow:#f0b232;--red:#f23f43;--blue:#00a8fc;
   --shadow:0 12px 32px rgba(0,0,0,.45);--glass:rgba(23,24,27,.92);
   --input:#111214;--code:#141518;
@@ -1234,3 +1234,30 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .is-arrow svg{width:28px;height:28px}
 @keyframes nudge{50%{transform:translate(-50%,6px)}}
 @media (min-width:900px) and (pointer:fine){.install-sheet{display:none}}
+
+/* ============ 1.12 — avatars load without a colored flash; mobile message sheet ============ */
+.av.has-img .crop img{opacity:0;transition:opacity .15s}
+.av.has-img .crop img.ok{opacity:1;transition:none}
+@media (hover:none) and (pointer:coarse){
+  .msg .toolbar,.msg:hover .toolbar{display:none!important}
+  .msg:hover{background:none}
+  .msg .react.add{display:none}
+  .messages .msg{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+  .msg.pressed,.msg.sheet-target{background:var(--bg-hover)!important}
+  .embed-x{display:grid}
+}
+.msg-sheet{position:fixed;left:0;right:0;bottom:0;max-height:80vh;overflow-y:auto;background:var(--bg-1);border-radius:18px 18px 0 0;padding:6px 12px calc(12px + env(safe-area-inset-bottom));
+  box-shadow:0 -10px 40px rgba(0,0,0,.5);animation:sheetUp .22s cubic-bezier(.2,.9,.3,1.1);transition:transform .15s}
+.ms-grab{width:40px;height:5px;border-radius:3px;background:var(--line-2);margin:4px auto 12px}
+.ms-reacts{display:flex;gap:8px;justify-content:space-between;margin-bottom:12px}
+.ms-reacts button{flex:1;height:52px;border-radius:14px;background:var(--bg-3);font-size:26px;display:grid;place-items:center;color:var(--text-2)}
+.ms-reacts button.on{background:var(--accent-soft);box-shadow:inset 0 0 0 2px var(--accent)}
+.ms-reacts button svg{width:26px;height:26px}
+.ms-reacts button:active,.ms-list button:active{transform:scale(.97)}
+.ms-list{background:var(--bg-2);border-radius:14px;overflow:hidden}
+.ms-list button{display:block;width:100%;text-align:left;padding:16px 18px;font-size:17px;font-weight:500;color:var(--text);border-top:1px solid var(--line)}
+.ms-list button:first-child{border-top:0}
+.ms-list button.danger{color:var(--red)}
+.ms-sep{height:8px;background:var(--bg-1)}
+.ms-sep+button{border-top:0}
+.ms-cancel{display:block;width:100%;margin-top:10px;padding:15px;border-radius:14px;background:var(--bg-3);font-size:17px;font-weight:600}

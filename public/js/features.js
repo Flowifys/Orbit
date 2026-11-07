@@ -320,3 +320,29 @@ function showInstallSheet() {
   };
 }
 window.addEventListener('load', maybeShowInstall);
+
+/* ---------- touch screens: message action sheet (press and hold a message) ---------- */
+function touchUI() { return matchMedia('(hover: none) and (pointer: coarse)').matches; }
+function messageSheet(m, items, msgEl) {
+  const L = layer(() => msgEl?.classList.remove('sheet-target'));
+  const list = items.filter(Boolean);
+  const el = h(`<div class="msg-sheet" role="dialog" aria-label="Message actions">
+    <div class="ms-grab"></div>
+    <div class="ms-reacts">${QUICK_REACTS.map(e => `<button data-q="${e}" class="${(m.reactions?.[e] || []).includes(S.me.id) ? 'on' : ''}">${e}</button>`).join('')}<button data-more title="More reactions">${I.smile}</button></div>
+    <div class="ms-list">${list.map((it, i) => it === '-' ? '<div class="ms-sep"></div>' : `<button data-i="${i}" class="${it[2] || ''}">${esc(it[0].replace(/<[^>]+>/g, '').trim())}</button>`).join('')}</div>
+    <button class="ms-cancel" data-cancel>Cancel</button></div>`);
+  L.set(el);
+  msgEl?.classList.add('sheet-target');
+  const close = () => L.close();
+  el.onclick = (e) => {
+    if (e.target.closest('[data-cancel]')) return close();
+    const q = e.target.closest('[data-q]'); if (q) { close(); return toggleReaction(m.id, q.dataset.q); }
+    if (e.target.closest('[data-more]')) { close(); return emojiPicker(msgEl || document.body, (em) => toggleReaction(m.id, em)); }
+    const b = e.target.closest('[data-i]'); if (b) { close(); list[Number(b.dataset.i)][1](); }
+  };
+  // swipe the sheet down to dismiss
+  let y0 = null;
+  el.addEventListener('touchstart', (e) => { if (el.scrollTop <= 0) y0 = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener('touchmove', (e) => { if (y0 == null) return; const d = e.touches[0].clientY - y0; if (d > 0) el.style.transform = `translateY(${d}px)`; }, { passive: true });
+  el.addEventListener('touchend', (e) => { if (y0 == null) return; const d = (e.changedTouches[0].clientY - y0); y0 = null; if (d > 90) close(); else el.style.transform = ''; });
+}

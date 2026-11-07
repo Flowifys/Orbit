@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Get Orbit</title>
 <meta name="description" content="Download Orbit for Windows, iPhone and Android, or open it in your browser.">
-<meta name="theme-color" content="#0b1517">
+<meta name="theme-color" content="#0e0b18">
 <link rel="icon" href="/logo.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -16,13 +16,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --ink:#0b1517;        /* deep space, a little blue-green */
-    --ink-2:#12201f;      /* raised surfaces */
-    --line:#203332;
-    --teal:#10919f;       /* Orbit accent */
-    --teal-hi:#4fd0dc;
-    --star:#eef6f6;       /* text */
-    --mist:#8aa3a6;       /* secondary text */
+    --ink:#0e0b18;        /* deep space, violet-black */
+    --ink-2:#181327;      /* raised surfaces */
+    --line:#2b2342;
+    --teal:#8b6dff;       /* Orbit purple */
+    --teal-hi:#b9a8ff;
+    --star:#f3f0ff;       /* text */
+    --mist:#a49cc0;       /* secondary text */
     --signal:#f2b84b;     /* "this is your device" */
     --display:"Bricolage Grotesque",ui-sans-serif,system-ui,sans-serif;
     --body:"Onest","Segoe UI",system-ui,sans-serif;
@@ -50,18 +50,18 @@
   .hero{display:grid;grid-template-columns:1.05fr .95fr;gap:24px;align-items:center;padding:28px 0 56px}
   h1{font:800 clamp(46px,7.2vw,92px)/.95 var(--display);letter-spacing:-.035em;max-width:9ch}
   .lede{font-size:19px;color:var(--mist);max-width:34ch;margin:22px 0 30px}
-  .cta{display:inline-flex;align-items:center;gap:12px;background:var(--teal);color:#fff;text-decoration:none;font:700 18px var(--display);padding:16px 26px;border-radius:999px;box-shadow:0 10px 30px -10px #10919fb0;transition:transform .15s,background .15s}
-  .cta:hover{background:#0d7f8b;transform:translateY(-1px)}
+  .cta{display:inline-flex;align-items:center;gap:12px;background:var(--teal);color:#fff;text-decoration:none;font:700 18px var(--display);padding:16px 26px;border-radius:999px;box-shadow:0 10px 30px -10px #8b6dffb0;transition:transform .15s,background .15s}
+  .cta:hover{background:#7657f0;transform:translateY(-1px)}
   .cta svg{width:22px;height:22px}
   .cta-sub{display:block;margin-top:14px;font-size:14px;color:var(--mist)}
   .cta-sub a{color:var(--teal-hi)}
 
   /* the orbit: the logo as a planet, each platform as a satellite */
   .sky{position:relative;aspect-ratio:1;max-width:480px;width:100%;justify-self:center}
-  .planet{position:absolute;inset:31%;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#1a3a3d,#0e1c1e 70%);box-shadow:0 0 0 1px var(--line),0 0 80px -10px #10919f80}
+  .planet{position:absolute;inset:31%;border-radius:50%;display:grid;place-items:center;background:radial-gradient(circle at 35% 30%,#2a2147,#130f22 70%);box-shadow:0 0 0 1px var(--line),0 0 80px -10px #8b6dff80}
   .planet img{width:64%;filter:drop-shadow(0 6px 20px #0008)}
-  .ring{position:absolute;left:2%;right:2%;top:33%;bottom:33%;border-radius:50%;border:1.5px dashed #2b4746;transform:rotate(-12deg)}
-  .ring.inner{left:14%;right:14%;top:39%;bottom:39%;border-style:solid;border-color:#1c2f2e}
+  .ring{position:absolute;left:2%;right:2%;top:33%;bottom:33%;border-radius:50%;border:1.5px dashed #3a2f5a;transform:rotate(-12deg)}
+  .ring.inner{left:14%;right:14%;top:39%;bottom:39%;border-style:solid;border-color:#241d38}
   .planet{z-index:2}
   .sats{position:absolute;inset:0}
   .sat{position:absolute;left:0;top:0;will-change:transform}
@@ -92,7 +92,7 @@
   .p-body p{color:var(--mist);margin-bottom:14px}
   .p-body p b{color:var(--star);font-weight:600}
   .btn{display:inline-flex;align-items:center;gap:10px;padding:12px 20px;border-radius:12px;font-weight:600;text-decoration:none;background:var(--teal);color:#fff}
-  .btn:hover{background:#0d7f8b}
+  .btn:hover{background:#7657f0}
   .btn.ghost{background:none;border:1px solid var(--line);color:var(--star)}
   .btn.ghost:hover{border-color:var(--teal)}
   .btn svg{width:18px;height:18px}
@@ -153,7 +153,7 @@
     <p>Your account works everywhere. Sign in once on each device.</p>
 
     <details class="plat" data-p="windows">
-      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="#4fd0dc"><path d="M3 5.5 10 4.5v7H3zM11 4.3 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z"/></svg></span>
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="#b9a8ff"><path d="M3 5.5 10 4.5v7H3zM11 4.3 21 3v8.5H11zM3 12.5h7v7l-7-1zM11 12.5h10V21l-10-1.4z"/></svg></span>
         <span class="p-name">Windows<span class="p-what">Desktop app with screen sharing and sound</span></span>
         <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="p-body">
@@ -164,7 +164,7 @@
     </details>
 
     <details class="plat" data-p="iphone">
-      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#4fd0dc" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></span>
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg></span>
         <span class="p-name">iPhone &amp; iPad<span class="p-what">Add Orbit to your Home Screen from Safari</span></span>
         <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="p-body">
@@ -179,7 +179,7 @@
     </details>
 
     <details class="plat" data-p="android">
-      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="#4fd0dc"><path d="M6 9h12v8a2 2 0 0 1-2 2h-1v3h-2v-3h-2v3H9v-3H8a2 2 0 0 1-2-2zM8.4 3.6l1.2 1.9A6 6 0 0 1 12 5a6 6 0 0 1 2.4.5l1.2-1.9.8.5-1.1 1.8A6 6 0 0 1 18 8H6a6 6 0 0 1 2.7-2.1L7.6 4.1z"/></svg></span>
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="#b9a8ff"><path d="M6 9h12v8a2 2 0 0 1-2 2h-1v3h-2v-3h-2v3H9v-3H8a2 2 0 0 1-2-2zM8.4 3.6l1.2 1.9A6 6 0 0 1 12 5a6 6 0 0 1 2.4.5l1.2-1.9.8.5-1.1 1.8A6 6 0 0 1 18 8H6a6 6 0 0 1 2.7-2.1L7.6 4.1z"/></svg></span>
         <span class="p-name">Android<span class="p-what">Install Orbit from Chrome in one tap</span></span>
         <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="p-body">
@@ -195,7 +195,7 @@
     </details>
 
     <details class="plat" data-p="web">
-      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#4fd0dc" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></span>
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></span>
         <span class="p-name">Mac, Linux &amp; any browser<span class="p-what">Nothing to download</span></span>
         <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
       <div class="p-body">

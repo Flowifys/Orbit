@@ -98,6 +98,7 @@ async function loadApp() {
   cacheFriends();
   await Promise.all(S.servers.map(s => fetchServer(s.id)));
   renderShell();
+  prefetchAvatars();
   connectSocket();
   if (S.pendingInvite) { const c = S.pendingInvite; S.pendingInvite = null; showInvite(c); }
   else {
@@ -791,7 +792,8 @@ function bindMessageList(box) {
     const sid = channelSid(key());
     const mine = m.author_id === S.me.id;
     const img = e.target.closest('img.att-img');
-    contextMenu(e, [
+    if (touchUI() && $('.msg-sheet')) return;
+    const items = ([
       ['Add reaction', () => emojiPicker(msgEl, (em) => toggleReaction(m.id, em))],
       mine && ['Edit message', () => { S.editing = m.id; refreshMessages(key()); }],
       ['Reply', () => startReply(m, box.closest('.chat, .thread-panel'))],
@@ -803,7 +805,21 @@ function bindMessageList(box) {
       ['Mark unread', () => { S.unread[S.view.channel] = { count: 1, mentions: 0, server_id: sid }; renderSidebar(); renderRail(); }],
       (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && '-', (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && ['Delete message', () => confirmModal('Delete Message', 'Are you sure you want to delete this message?', 'Delete', () => api('DELETE', '/api/messages/' + m.id)), 'danger'],
     ]);
+    // phones / tablets: big bottom sheet instead of a tiny menu
+    if (touchUI()) return messageSheet(m, items, msgEl);
+    contextMenu(e, items);
   });
+  // press and hold a message on touch screens (iOS never sends a contextmenu event)
+  let lp = null;
+  box.addEventListener('touchstart', (e) => {
+    const msgEl = e.target.closest('[data-mid]'); if (!msgEl || e.touches.length > 1 || e.target.closest('a, button, video, textarea, .poll, .audio-embed')) return;
+    const t = e.touches[0]; const x = t.clientX, y = t.clientY;
+    clearTimeout(lp?.timer);
+    lp = { x, y, timer: setTimeout(() => { lp = null; msgEl.classList.add('pressed'); setTimeout(() => msgEl.classList.remove('pressed'), 250); navigator.vibrate?.(10);
+      msgEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y })); }, 420) };
+  }, { passive: true });
+  const cancelLp = (e) => { if (!lp) return; if (e.type === 'touchmove') { const t = e.touches[0]; if (Math.abs(t.clientX - lp.x) < 10 && Math.abs(t.clientY - lp.y) < 10) return; } clearTimeout(lp.timer); lp = null; };
+  ['touchmove', 'touchend', 'touchcancel'].forEach(ev => box.addEventListener(ev, cancelLp, { passive: true }));
 }
 async function saveEdit(ta) {
   const id = Number(ta.dataset.edit); const v = ta.value.trim();

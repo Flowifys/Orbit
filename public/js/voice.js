@@ -381,7 +381,7 @@ function participants(cid) {
 }
 function tileColor(u) {
   // solid, muted card colour from the user's profile colour (no gradients)
-  const c = u.theme_primary || u.banner_color || u.accent || '#10919f';
+  const c = u.theme_primary || u.banner_color || u.accent || '#8b6dff';
   return `background:color-mix(in oklab,${c} 34%,var(--tile-bg))`;
 }
 function tileInner(p, sid, where) {
