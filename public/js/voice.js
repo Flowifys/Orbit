@@ -27,7 +27,7 @@ const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.
 
 const Voice = {
   channel: null, state: 'idle', muted: false, deaf: false, video: false, screen: false,
-  local: null, videoTrack: null, peers: new Map(), speaking: new Set(), focus: null, socket: null, volumes: {}, localMutes: new Set(),
+  local: null, videoTrack: null, peers: new Map(), speaking: new Set(), focus: null, socket: null, volumes: {}, localMutes: new Set(), screenVolumes: {}, screenMutes: new Set(),
   screenAudio: null, screenAudioStream: null, expanded: false, stripHidden: false, _localPreview: null,
   _analysers: new Map(), _raf: null,
 
@@ -168,8 +168,11 @@ const Voice = {
   applyMute() { this.local?.getAudioTracks().forEach(t => (t.enabled = !this.muted && !this.deaf)); },
   // one place that decides volume / mute / output device for everything we hear from a peer
   applyPeerAudio(p) {
-    const muted = this.deaf || this.localMutes.has(p.id), vol = Math.min(1, this.volumes[p.id] ?? 1);
-    for (const el of [p.audio, p.screenAudioEl]) {
+    const muted = this.deaf || this.localMutes.has(p.id);
+    const micVol = Math.min(1, this.volumes[p.id] ?? 1);
+    const scrVol = Math.min(1, this.screenVolumes[p.id] ?? (S.prefs.streamVolumes?.[p.id] ?? 1));
+    const pairs = [[p.audio, micVol], [p.screenAudioEl, this.screenMutes.has(p.id) ? 0 : scrVol]];
+    for (const [el, vol] of pairs) {
       if (!el) continue;
       el.muted = muted; el.volume = vol;
       if (S.prefs.speaker && el.setSinkId && el.sinkId !== S.prefs.speaker) el.setSinkId(S.prefs.speaker).catch(() => {});
@@ -181,6 +184,10 @@ const Voice = {
   },
   setUserVolume(id, v) { this.volumes[id] = v; if (v > 0) this.localMutes.delete(id); const p = this.peers.get(id); if (p) this.applyPeerAudio(p); },
   toggleUserMute(id) { const on = !this.localMutes.has(id); on ? this.localMutes.add(id) : this.localMutes.delete(id); const p = this.peers.get(id); if (p) this.applyPeerAudio(p); return on; },
+  // separate volume for a person's SCREEN-SHARE audio, independent of their mic
+  setStreamVolume(id, v) { this.screenVolumes[id] = v; if (v > 0) this.screenMutes.delete(id); S.prefs.streamVolumes = S.prefs.streamVolumes || {}; S.prefs.streamVolumes[id] = v; savePrefs(); const p = this.peers.get(id); if (p) this.applyPeerAudio(p); },
+  toggleStreamMute(id) { const on = !this.screenMutes.has(id); on ? this.screenMutes.add(id) : this.screenMutes.delete(id); const p = this.peers.get(id); if (p) this.applyPeerAudio(p); return on; },
+  hasStreamAudio(id) { const p = this.peers.get(id); return !!(p && p.screenAudioEl && p.screenAudioEl.srcObject); },
   toggleMute() {
     if (this.deaf && this.muted) { this.deaf = false; this.peers.forEach(p => this.applyPeerAudio(p)); }
     this.muted = !this.muted;

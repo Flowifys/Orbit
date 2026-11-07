@@ -25,11 +25,11 @@ const ACCENTS = ['#7c5cff', '#5b8def', '#2bb5a8', '#2fbf71', '#d4a72c', '#f0883e
 
 /* ================= USER SETTINGS ================= */
 function openUserSettings(first = 'account') {
-  settingsShell(`<h6>User settings</h6><button data-tab="account">My Account</button><button data-tab="profile">Profile</button><button data-tab="devices">Devices</button><hr>
+  settingsShell(`<h6>User settings</h6><button data-tab="account">My Account</button><button data-tab="profile">Profile</button><button data-tab="privacy">Privacy &amp; Safety</button><button data-tab="devices">Devices</button><hr>
     <button data-tab="connections">Connections</button><hr><h6>App settings</h6><button data-tab="appearance">Appearance</button><button data-tab="voice">Voice &amp; Video</button><button data-tab="notifications">Notifications</button><button data-tab="about">About</button><hr>
     <button class="danger" data-action="logout">Log out</button><p style="color:var(--dim);font-size:12px;padding:12px 10px">Orbit ${esc(S.info.version || '')}</p>`, (tab, body, close) => {
     if (tab === '@logout') return confirmModal('Log Out', 'Are you sure you want to log out?', 'Log Out', async () => logout());
-    ({ account: userAccount, profile: userProfile, connections: userConnections, appearance: userAppearance, devices: userDevices, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
+    ({ account: userAccount, profile: userProfile, privacy: userPrivacy, connections: userConnections, appearance: userAppearance, devices: userDevices, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
   }, first);
 }
 function userAccount(body) {
@@ -244,6 +244,36 @@ async function userVoice(body) {
     catch (er) { toast(mediaError(er, 'camera'), true); }
   };
 }
+function userPrivacy(body) {
+  const me = S.me;
+  const friends = (S.friends.friends || []).slice().sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const invis = new Set(me.invisible_to || []);
+  const blocked = S.friends.blocked || [];
+  const chip = (u) => `<button class="invis-chip ${invis.has(u.id) ? 'on' : ''}" data-invis="${esc(u.id)}">${avatar(u, 's24')}<span>${esc(u.display_name)}</span><span class="ic-check">${invis.has(u.id) ? I.check.replace('width="20" height="20"', 'width="14" height="14"') : ''}</span></button>`;
+  body.innerHTML = `<h2>Privacy &amp; Safety</h2>
+    <label class="row-toggle"><span class="rt">Send read receipts<small>Let people see when you’ve read their direct messages. Turning this off also hides their “seen” status from you.</small></span><span class="toggle"><input type="checkbox" data-priv="read_receipts" ${me.read_receipts ? 'checked' : ''}><span></span></span></label>
+    <label class="row-toggle"><span class="rt">Strict blocking<small>When on, people you’ve blocked can’t see your online status in shared servers, and their messages are hidden from you completely instead of collapsed.</small></span><span class="toggle"><input type="checkbox" data-priv="block_mode" ${me.block_mode === 'strict' ? 'checked' : ''}><span></span></span></label>
+    <h3>Appear offline to specific people</h3>
+    <p class="hint">Chosen friends always see you as offline, even when you’re online. Everyone else sees your real status.</p>
+    <div class="invis-grid">${friends.length ? friends.map(chip).join('') : '<p class="hint">Add some friends first.</p>'}</div>
+    ${blocked.length ? `<h3>Blocked users — ${blocked.length}</h3><div class="invis-grid">${blocked.map(u => `<button class="invis-chip" data-unblock="${esc(u.id)}">${avatar(u, 's24')}<span>${esc(u.display_name)}</span><span class="ic-x">${I.x.replace('width="20" height="20"', 'width="14" height="14"')}</span></button>`).join('')}</div>` : ''}`;
+  const savePriv = async (patch) => { try { const r = await api('PATCH', '/api/me/privacy', patch); Object.assign(S.me, r); } catch (e) { toast(e.message, true); } };
+  $$('[data-priv]', body).forEach(el => el.onchange = () => {
+    if (el.dataset.priv === 'block_mode') savePriv({ block_mode: el.checked ? 'strict' : 'standard' });
+    else savePriv({ [el.dataset.priv]: el.checked });
+  });
+  body.addEventListener('click', async (e) => {
+    const iv = e.target.closest('[data-invis]');
+    if (iv) {
+      const id = iv.dataset.invis; if (invis.has(id)) invis.delete(id); else invis.add(id);
+      iv.classList.toggle('on', invis.has(id)); $('.ic-check', iv).innerHTML = invis.has(id) ? I.check.replace('width="20" height="20"', 'width="14" height="14"') : '';
+      await savePriv({ invisible_to: [...invis] });
+      return;
+    }
+    const ub = e.target.closest('[data-unblock]');
+    if (ub) { await api('DELETE', `/api/friends/${ub.dataset.unblock}/block`).catch(x => toast(x.message, true)); userPrivacy(body); }
+  });
+}
 function userNotify(body) {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
   const pick = (kind, list, cur) => `<div class="sound-pick">${list.map(([id, name]) => `<button class="sound-opt ${cur === id ? 'on' : ''}" data-sound="${kind}" data-id="${id}"><span class="so-play" data-play="${id}">${I.play}</span><span class="so-name">${name}</span><span class="so-check">${cur === id ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''}</span></button>`).join('')}</div>`;
@@ -251,6 +281,9 @@ function userNotify(body) {
     <label class="row-toggle"><span class="rt">Desktop notifications<small>Get notified for direct messages and @mentions.${perm === 'denied' ? ' <b style="color:var(--red)">Blocked in your browser settings.</b>' : ''}</small></span><span class="toggle"><input type="checkbox" data-p="notify" ${S.prefs.notify ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Sounds<small>Play sounds for messages, calls, and voice join/leave.</small></span><span class="toggle"><input type="checkbox" data-p="sounds" ${S.prefs.sounds ? 'checked' : ''}><span></span></span></label>
     <h3>Notification sound</h3><p class="hint">Plays when you get a message. Tap to preview.</p>${pick('notifSound', NOTIFSOUNDS, S.prefs.notifSound)}
+    <h3>Direct messages <small class="note-hint">(optional override)</small></h3><p class="hint">A different sound just for DMs. “Default” uses the one above.</p>${pick('ns.dm', [['', 'Default'], ...NOTIFSOUNDS], S.prefs.notifSounds?.dm || '')}
+    <h3>@mentions <small class="note-hint">(optional override)</small></h3><p class="hint">A different sound when someone @mentions you.</p>${pick('ns.mention', [['', 'Default'], ...NOTIFSOUNDS], S.prefs.notifSounds?.mention || '')}
+    <p class="hint">Want a unique sound for one server? Right-click the server icon → <b>Notification sound</b>.</p>
     <h3>Ringtone</h3><p class="hint">Plays for incoming calls. Tap to preview.</p>${pick('ringtone', RINGTONES, S.prefs.ringtone)}
     <p class="hint" style="margin-top:16px">A random pair is chosen for you the first time — change them here anytime. Set your status to Do Not Disturb to silence everything.</p>`;
   $$('[data-p]', body).forEach(el => el.onchange = () => { S.prefs[el.dataset.p] = el.checked; savePrefs(); if (el.dataset.p === 'notify' && el.checked && perm === 'default') Notification.requestPermission(); });
@@ -261,8 +294,13 @@ function userNotify(body) {
     if (!opt) return;
     const kind = opt.dataset.sound, id = opt.dataset.id;
     if (preview) { try { preview.pause(); } catch {} }
-    preview = previewSound(id, kind === 'ringtone' ? 0.7 : 0.6);
-    if (!pl) { S.prefs[kind] = id; savePrefs(); $$(`[data-sound="${kind}"]`, body).forEach(b => { b.classList.toggle('on', b.dataset.id === id); $('.so-check', b).innerHTML = b.dataset.id === id ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''; }); }
+    if (id) preview = previewSound(id, kind === 'ringtone' ? 0.7 : 0.6);
+    if (!pl) {
+      if (kind.startsWith('ns.')) { S.prefs.notifSounds = S.prefs.notifSounds || { dm: '', mention: '', server: {} }; S.prefs.notifSounds[kind.slice(3)] = id; }
+      else S.prefs[kind] = id;
+      savePrefs();
+      $$(`[data-sound="${kind}"]`, body).forEach(b => { b.classList.toggle('on', b.dataset.id === id); $('.so-check', b).innerHTML = b.dataset.id === id ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''; });
+    }
   });
 }
 function userAbout(body) {

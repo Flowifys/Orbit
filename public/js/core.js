@@ -21,7 +21,7 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {} },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
@@ -38,7 +38,17 @@ if (!S.prefs.notifSound) S.prefs.notifSound = NOTIFSOUNDS[Math.floor(Math.random
 savePrefs();
 const soundUrl = (id) => '/sounds/' + id + '.mp3';
 let _notifAudio;
-function playNotif() { if (!S.prefs.sounds) return; try { _notifAudio = _notifAudio || new Audio(); _notifAudio.src = soundUrl(S.prefs.notifSound || 'notif1'); _notifAudio.volume = 0.6; _notifAudio.currentTime = 0; _notifAudio.play().catch(() => {}); } catch {} }
+// Pick the notification sound for this context: a per-server override, then DM / @mention overrides, then the default.
+function notifSoundFor(ctx) {
+  const ns = S.prefs.notifSounds || {};
+  if (ctx) {
+    if (ctx.serverId && ns.server && ns.server[ctx.serverId]) return ns.server[ctx.serverId];
+    if (ctx.type === 'dm' && ns.dm) return ns.dm;
+    if (ctx.type === 'mention' && ns.mention) return ns.mention;
+  }
+  return S.prefs.notifSound || 'notif1';
+}
+function playNotif(ctx) { if (!S.prefs.sounds) return; try { _notifAudio = _notifAudio || new Audio(); _notifAudio.src = soundUrl(notifSoundFor(ctx)); _notifAudio.volume = 0.6; _notifAudio.currentTime = 0; _notifAudio.play().catch(() => {}); } catch {} }
 function playSfx(name, vol) { if (!S.prefs.sounds) return; try { const a = new Audio('/sounds/' + name + '.mp3'); a.volume = vol ?? 0.5; a.play().catch(() => {}); } catch {} }
 function previewSound(id, vol) { try { const a = new Audio(soundUrl(id)); a.volume = vol ?? 0.6; a.play().catch(() => {}); return a; } catch {} }
 
@@ -166,6 +176,7 @@ function friendState(uid) {
 }
 const incomingCount = () => (S.friends.incoming || []).length;
 const isFriend = (uid) => friendState(uid) === 'friend';
+const isBlockedUser = (uid) => uid !== S.me?.id && (S.friends.blocked || []).some(u => u.id === uid);
 function activityLine(uidv) { const a = activityOf(uidv); return a && a.type === 'listening' ? `Listening to ${a.name}` : ''; }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 function gradFor(str) { return 'transparent'; }  // server initials sit on the rail's own neutral tile (no gradients)
@@ -196,6 +207,8 @@ ic('edit', '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1
 ic('trash', '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6"/>');
 ic('copy', '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>');
 ic('x', '<path d="M18 6 6 18M6 6l12 12"/>');
+ic('bookmark', '<path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>');
+ic('check', '<path d="M20 6 9 17l-5-5"/>');
 ic('chevron', '<path d="m6 9 6 6 6-6"/>');
 ic('menu', '<path d="M3 6h18M3 12h18M3 18h18"/>');
 ic('back', '<path d="m15 18-6-6 6-6"/>');

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.17.1';
+const VERSION = '1.18.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -111,13 +111,22 @@ function start(opts = {}) {
     CREATE TABLE IF NOT EXISTS reads(user_id TEXT, channel_id TEXT, last_id INTEGER, PRIMARY KEY(user_id,channel_id));
     CREATE TABLE IF NOT EXISTS friends(a TEXT, b TEXT, status TEXT, requester TEXT, created INTEGER, PRIMARY KEY(a,b));
     CREATE TABLE IF NOT EXISTS blocks(blocker TEXT, blocked TEXT, created INTEGER, PRIMARY KEY(blocker,blocked));
+    CREATE TABLE IF NOT EXISTS friend_notes(user_id TEXT, target_id TEXT, note TEXT, updated INTEGER, PRIMARY KEY(user_id,target_id));
+    CREATE TABLE IF NOT EXISTS invisible_to(user_id TEXT, target_id TEXT, PRIMARY KEY(user_id,target_id));
+    CREATE TABLE IF NOT EXISTS dm_receipts(channel_id TEXT, user_id TEXT, last_read INTEGER, updated INTEGER, PRIMARY KEY(channel_id,user_id));
+    CREATE TABLE IF NOT EXISTS bookmark_folders(id TEXT PRIMARY KEY, user_id TEXT, name TEXT, color TEXT, created INTEGER);
+    CREATE TABLE IF NOT EXISTS bookmarks(id TEXT PRIMARY KEY, user_id TEXT, message_id INTEGER, channel_id TEXT, folder_id TEXT, label TEXT, created INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id, created);
+    CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
   const chanCols = all0(db, "PRAGMA table_info(channels)").map(c => c.name);
   [['is_group', 'INTEGER DEFAULT 0'], ['gc_owner', 'TEXT'], ['gc_icon', 'TEXT']].forEach(([c, t]) => { if (!chanCols.includes(c)) db.exec(`ALTER TABLE channels ADD COLUMN ${c} ${t}`); });
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
-   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
+   ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -211,6 +220,24 @@ function start(opts = {}) {
     return { friends, incoming, outgoing, blocked };
   }
   function pushFriends(uidv) { io.to('u:' + uidv).emit('friends:refresh', friendsPayload(uidv)); }
+  const bookmarkFolders = (uidv) => all('SELECT id, name, color, created FROM bookmark_folders WHERE user_id=? ORDER BY created', uidv);
+  function chanLabel(ch, uidv) {
+    if (!ch) return '';
+    if (ch.type === 'dm' && !ch.is_group) { const other = all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id).find(x => x !== uidv); return '@' + (nameOf(other) || 'Direct message'); }
+    if (ch.is_group) return groupName(ch, uidv, all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id));
+    const srv = one('SELECT name FROM servers WHERE id=?', ch.server_id);
+    return '#' + (ch.name || 'channel') + (srv ? ' · ' + srv.name : '');
+  }
+  // Privacy: a user can appear offline to specific people (invisible_to), or go "strict" with blocked users.
+  const invisibleTo = (uidv, viewer) => uidv !== viewer && !!one('SELECT 1 FROM invisible_to WHERE user_id=? AND target_id=?', uidv, viewer);
+  const strictBlocks = (blocker, blocked) => isBlocked(blocker, blocked) && one('SELECT block_mode FROM users WHERE id=?', blocker)?.block_mode === 'strict';
+  // status of `uidv` as `viewer` should see it: hidden if invisible-to them, or if uidv strict-blocks them
+  function statusFor(uidv, viewer) {
+    let st = online.get(uidv)?.status || 'offline';
+    if (st === 'invisible') st = 'offline';
+    if (st !== 'offline' && (invisibleTo(uidv, viewer) || strictBlocks(uidv, viewer))) st = 'offline';
+    return st;
+  }
   const isMember = (sid, uidv) => !!one('SELECT 1 FROM members WHERE server_id=? AND user_id=?', sid, uidv);
   function permsOf(sid, uidv) {
     const s = one('SELECT owner_id FROM servers WHERE id=?', sid);
@@ -450,10 +477,12 @@ function start(opts = {}) {
 
   // ----- me / users -----
   app.get('/api/me', auth, wrap((req, res) => {
-    const me = { ...publicUser(req.user), email: req.user.email };
+    const me = { ...publicUser(req.user), email: req.user.email,
+      read_receipts: req.user.read_receipts == null ? 1 : req.user.read_receipts, block_mode: req.user.block_mode || 'standard',
+      invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
-    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id) });
+    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
   }));
   // ICE servers for voice/video. Add a TURN relay in Render -> Environment so calls work on strict networks:
   //   TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL   (any TURN provider)
@@ -1099,6 +1128,123 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // ----- privacy settings: read receipts, strict blocking, invisible-to-specific-people -----
+  app.patch('/api/me/privacy', auth, wrap((req, res) => {
+    const b = req.body || {};
+    if (b.read_receipts !== undefined) run('UPDATE users SET read_receipts=? WHERE id=?', b.read_receipts ? 1 : 0, req.user.id);
+    if (b.block_mode !== undefined && ['standard', 'strict'].includes(b.block_mode)) run('UPDATE users SET block_mode=? WHERE id=?', b.block_mode, req.user.id);
+    if (Array.isArray(b.invisible_to)) {
+      const fset = new Set(friendIds(req.user.id));
+      const wanted = [...new Set(b.invisible_to.filter(x => fset.has(x)))];
+      run('DELETE FROM invisible_to WHERE user_id=?', req.user.id);
+      const ins = db.prepare('INSERT OR IGNORE INTO invisible_to(user_id,target_id) VALUES(?,?)');
+      wanted.forEach(t => ins.run(req.user.id, t));
+      // anyone whose view of me changed needs a fresh presence ping
+      broadcastPresence(req.user.id);
+    }
+    const u = one('SELECT read_receipts, block_mode FROM users WHERE id=?', req.user.id);
+    res.json({ read_receipts: u.read_receipts == null ? 1 : u.read_receipts, block_mode: u.block_mode || 'standard',
+      invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id) });
+  }));
+
+  // ----- personal notes on friends (private to the author) -----
+  app.get('/api/notes/:uid', auth, wrap((req, res) => {
+    const r = one('SELECT note, updated FROM friend_notes WHERE user_id=? AND target_id=?', req.user.id, req.params.uid);
+    res.json({ note: r?.note || '', updated: r?.updated || 0 });
+  }));
+  app.put('/api/notes/:uid', auth, wrap((req, res) => {
+    const note = String(req.body?.note ?? '').slice(0, 2000);
+    if (!note.trim()) run('DELETE FROM friend_notes WHERE user_id=? AND target_id=?', req.user.id, req.params.uid);
+    else run('INSERT OR REPLACE INTO friend_notes(user_id,target_id,note,updated) VALUES(?,?,?,?)', req.user.id, req.params.uid, note, now());
+    res.json({ ok: true, note });
+  }));
+
+  // ----- message bookmarks with folders + searchable labels -----
+  app.get('/api/bookmarks', auth, wrap((req, res) => {
+    const rows = all('SELECT * FROM bookmarks WHERE user_id=? ORDER BY created DESC', req.user.id);
+    const items = rows.map(r => {
+      const m = one('SELECT * FROM messages WHERE id=?', r.message_id);
+      const ch = m ? chanRow(m.channel_id) : null;
+      const viewable = m && ch && canView(ch, req.user.id);
+      return { id: r.id, folder_id: r.folder_id || null, label: r.label || '', created: r.created,
+        message_id: r.message_id, channel_id: r.channel_id, missing: !viewable,
+        author: viewable ? getUser(m.author_id) : null,
+        content: viewable ? (m.content || '') : '', at: viewable ? m.created : 0,
+        where: ch ? chanLabel(ch, req.user.id) : '' };
+    });
+    res.json({ folders: bookmarkFolders(req.user.id), items });
+  }));
+  app.post('/api/bookmarks', auth, wrap((req, res) => {
+    const mid = Number(req.body?.message_id);
+    const m = one('SELECT * FROM messages WHERE id=?', mid);
+    if (!m) throw err(404, 'Message not found');
+    const ch = chanRow(m.channel_id);
+    if (!canView(ch, req.user.id)) throw err(403, 'No access');
+    const existing = one('SELECT id FROM bookmarks WHERE user_id=? AND message_id=?', req.user.id, mid);
+    const folder = req.body.folder_id ? one('SELECT id FROM bookmark_folders WHERE id=? AND user_id=?', req.body.folder_id, req.user.id)?.id || null : null;
+    const label = String(req.body.label || '').slice(0, 80);
+    if (existing) { run('UPDATE bookmarks SET folder_id=?, label=? WHERE id=?', folder, label, existing.id); return res.json({ ok: true, id: existing.id }); }
+    const id = uid();
+    run('INSERT INTO bookmarks(id,user_id,message_id,channel_id,folder_id,label,created) VALUES(?,?,?,?,?,?,?)', id, req.user.id, mid, m.channel_id, folder, label, now());
+    res.json({ ok: true, id });
+  }));
+  app.patch('/api/bookmarks/:id', auth, wrap((req, res) => {
+    const bm = one('SELECT * FROM bookmarks WHERE id=? AND user_id=?', req.params.id, req.user.id);
+    if (!bm) throw err(404, 'Not found');
+    const folder = req.body?.folder_id ? one('SELECT id FROM bookmark_folders WHERE id=? AND user_id=?', req.body.folder_id, req.user.id)?.id || null : null;
+    const label = req.body?.label !== undefined ? String(req.body.label).slice(0, 80) : bm.label;
+    run('UPDATE bookmarks SET folder_id=?, label=? WHERE id=?', req.body?.folder_id !== undefined ? folder : bm.folder_id, label, bm.id);
+    res.json({ ok: true });
+  }));
+  app.delete('/api/bookmarks/:id', auth, wrap((req, res) => {
+    run('DELETE FROM bookmarks WHERE id=? AND user_id=?', req.params.id, req.user.id); res.json({ ok: true });
+  }));
+  app.post('/api/bookmark-folders', auth, wrap((req, res) => {
+    const name = String(req.body?.name || '').trim().slice(0, 40);
+    if (!name) throw err(400, 'Name required');
+    if (all('SELECT 1 FROM bookmark_folders WHERE user_id=?', req.user.id).length >= 50) throw err(400, 'Too many folders');
+    const color = /^#[0-9a-f]{6}$/i.test(req.body?.color || '') ? req.body.color : '#7c5cff';
+    const id = uid();
+    run('INSERT INTO bookmark_folders(id,user_id,name,color,created) VALUES(?,?,?,?,?)', id, req.user.id, name, color, now());
+    res.json({ id, name, color });
+  }));
+  app.patch('/api/bookmark-folders/:id', auth, wrap((req, res) => {
+    const f = one('SELECT * FROM bookmark_folders WHERE id=? AND user_id=?', req.params.id, req.user.id);
+    if (!f) throw err(404, 'Not found');
+    const name = req.body?.name !== undefined ? String(req.body.name).trim().slice(0, 40) || f.name : f.name;
+    const color = /^#[0-9a-f]{6}$/i.test(req.body?.color || '') ? req.body.color : f.color;
+    run('UPDATE bookmark_folders SET name=?, color=? WHERE id=?', name, color, f.id);
+    res.json({ ok: true });
+  }));
+  app.delete('/api/bookmark-folders/:id', auth, wrap((req, res) => {
+    run('UPDATE bookmarks SET folder_id=NULL WHERE user_id=? AND folder_id=?', req.user.id, req.params.id);
+    run('DELETE FROM bookmark_folders WHERE id=? AND user_id=?', req.params.id, req.user.id);
+    res.json({ ok: true });
+  }));
+
+  // ----- temporary voice channel passes (time-limited access to a voice channel) -----
+  app.post('/api/channels/:id/voicepass', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || ch.type !== 'voice') throw err(404, 'Not a voice channel');
+    if (!has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'You can’t manage this channel');
+    const target = getUser(req.body?.user);
+    if (!target) throw err(404, 'User not found');
+    const minutes = Math.min(1440, Math.max(5, Number(req.body?.minutes) || 60));
+    const expires = now() + minutes * 60e3;
+    const id = uid();
+    run('DELETE FROM voice_passes WHERE channel_id=? AND user_id=?', ch.id, target.id);
+    run('INSERT INTO voice_passes(id,channel_id,user_id,granted_by,expires,created) VALUES(?,?,?,?,?,?)', id, ch.id, target.id, req.user.id, expires, now());
+    io.to('u:' + target.id).emit('voicepass', { channel_id: ch.id, server_id: ch.server_id, name: ch.name, expires, by: getUser(req.user.id) });
+    res.json({ ok: true, expires });
+  }));
+  app.delete('/api/channels/:id/voicepass/:uid', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'No access');
+    run('DELETE FROM voice_passes WHERE channel_id=? AND user_id=?', ch.id, req.params.uid);
+    res.json({ ok: true });
+  }));
+  const hasVoicePass = (cid, uidv) => !!one('SELECT 1 FROM voice_passes WHERE channel_id=? AND user_id=? AND expires>?', cid, uidv, now());
+
   // ----- link previews (embeds) -----
   // Fetches the page the link points to and reads its title/description/image. Refuses private,
   // local and cloud-metadata addresses (checked at connect time, so DNS tricks can't sneak past).
@@ -1560,8 +1706,27 @@ function start(opts = {}) {
     if (!canView(ch, req.user.id)) throw err(403, 'No access');
     const last = one('SELECT MAX(id) id FROM messages WHERE channel_id=?', ch.id)?.id || 0;
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, last);
+    markDmReceipt(ch, req.user.id, last);
     res.json({ ok: true });
   }));
+  // the other person's read position in a 1:1 DM (for showing "Seen" when you open the chat)
+  app.get('/api/channels/:id/receipt', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || ch.type !== 'dm' || ch.is_group || !canView(ch, req.user.id)) return res.json({});
+    const other = all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id).find(x => x !== req.user.id);
+    const r = other && one('SELECT last_read, updated FROM dm_receipts WHERE channel_id=? AND user_id=?', ch.id, other);
+    res.json(r ? { user_id: other, last_read: r.last_read, at: r.updated } : {});
+  }));
+  // Read receipts for 1:1 DMs: record how far the reader has read and tell the other person,
+  // but only if the reader hasn't turned receipts off (and they can't see yours if you've turned yours off).
+  function markDmReceipt(ch, uidv, lastId) {
+    if (!ch || ch.type !== 'dm' || ch.is_group || !lastId) return;
+    const sender = one('SELECT read_receipts FROM users WHERE id=?', uidv);
+    if (sender && sender.read_receipts === 0) return;
+    run('INSERT OR REPLACE INTO dm_receipts(channel_id,user_id,last_read,updated) VALUES(?,?,?,?)', ch.id, uidv, lastId, now());
+    all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id).filter(x => x !== uidv)
+      .forEach(other => io.to('u:' + other).emit('dm:receipt', { channel_id: ch.id, user_id: uidv, last_read: lastId, at: now() }));
+  }
 
   // download page + Windows installer link. Set WINDOWS_DOWNLOAD_URL on Render to point somewhere else.
   const WIN_URL = process.env.WINDOWS_DOWNLOAD_URL || opts.windowsDownloadUrl || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.exe';
@@ -1586,7 +1751,15 @@ function start(opts = {}) {
   const voice = new Map();  // channelId -> Map(userId -> {socket, muted, deaf, video, screen})
   const typing = new Map(); // channelId -> Map(userId -> timeout)
 
-  function presenceSnapshot() { const o = {}; for (const [k, v] of online) o[k] = v.status === 'invisible' ? 'offline' : v.status; return o; }
+  function presenceSnapshot(viewer) {
+    const o = {};
+    for (const [k, v] of online) {
+      let st = v.status === 'invisible' ? 'offline' : v.status;
+      if (viewer && st !== 'offline' && k !== viewer && (invisibleTo(k, viewer) || strictBlocks(k, viewer))) st = 'offline';
+      o[k] = st;
+    }
+    return o;
+  }
   function voiceSnapshot(uidv) {
     const o = {};
     for (const [cid, room] of voice) {
@@ -1611,7 +1784,7 @@ function start(opts = {}) {
     return [...set];
   }
   function broadcastUser(uidv) { const u = getUser(uidv); audienceOf(uidv).forEach(a => io.to('u:' + a).emit('user:update', u)); }
-  function broadcastPresence(uidv) { let st = online.get(uidv)?.status || 'offline'; if (st === 'invisible') st = 'offline'; audienceOf(uidv).forEach(a => io.to('u:' + a).emit('presence', { user_id: uidv, status: st })); }
+  function broadcastPresence(uidv) { audienceOf(uidv).forEach(a => io.to('u:' + a).emit('presence', { user_id: uidv, status: a === uidv ? (online.get(uidv)?.status === 'invisible' ? 'offline' : (online.get(uidv)?.status || 'offline')) : statusFor(uidv, a) })); }
   function stopTyping(cid, uidv) { const m = typing.get(cid); if (m && m.has(uidv)) { clearTimeout(m.get(uidv)); m.delete(uidv); } }
   function voiceBroadcast(cid) {
     const ch = chanRow(cid);
@@ -1644,10 +1817,9 @@ function start(opts = {}) {
     const entry = online.get(me) || { status: wanted, sockets: new Set() };
     entry.sockets.add(socket.id);
     online.set(me, entry);
-    if (entry.sockets.size === 1) { entry.status = wanted; broadcastPresenceSafe(); }
-    function broadcastPresenceSafe() { if (entry.status === 'invisible') { const st = entry.status; entry.status = 'offline'; broadcastPresence(me); entry.status = st; } else broadcastPresence(me); }
+    if (entry.sockets.size === 1) { entry.status = wanted; broadcastPresence(me); }
 
-    socket.on('presence', (st) => { if (!['online', 'idle', 'dnd', 'invisible'].includes(st)) return; entry.status = st; broadcastPresenceSafe(); });
+    socket.on('presence', (st) => { if (!['online', 'idle', 'dnd', 'invisible'].includes(st)) return; entry.status = st; broadcastPresence(me); });
     socket.on('typing', ({ channel_id } = {}) => {
       const ch = chanRow(channel_id);
       if (!canView(ch, me)) return;
@@ -1661,7 +1833,8 @@ function start(opts = {}) {
     // voice / video signaling (mesh WebRTC)
     socket.on('voice:join', ({ channel_id, muted, deaf } = {}, ack) => {
       const ch = chanRow(channel_id);
-      const ok = ch && canView(ch, me) && (ch.type === 'dm' || (ch.type === 'voice' && has(ch.server_id, me, P.CONNECT)));
+      const pass = ch && ch.type === 'voice' && hasVoicePass(ch.id, me);
+      const ok = ch && (pass || (canView(ch, me) && (ch.type === 'dm' || (ch.type === 'voice' && has(ch.server_id, me, P.CONNECT)))));
       if (!ok) return ack && ack({ error: 'You can’t join this voice channel' });
       if (ch.type === 'voice' && timedOutUntil(ch.server_id, me)) return ack && ack({ error: 'You’re timed out in this server' });
       leaveVoice(me);

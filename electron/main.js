@@ -1,7 +1,7 @@
 // Orbit desktop app. Opens straight to Orbit — no setup screen.
 // It connects to the server address in electron/config.json ("serverUrl").
 // If that is empty, it runs a private Orbit server inside the app so it still works offline/for testing.
-const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -54,6 +54,9 @@ function createWindow(url) {
     webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
   });
   win.once('ready-to-show', () => win.show());
+  // Belt-and-suspenders: in dev mode Windows shows electron.exe's default atom icon in the taskbar,
+  // so set the window icon explicitly from the PNG (works in dev and packaged).
+  try { const ico = nativeImage.createFromPath(path.join(__dirname, 'icon-tile.png')); if (!ico.isEmpty()) win.setIcon(ico); } catch {}
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Orbit', submenu: [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'quit' }] },
     { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },

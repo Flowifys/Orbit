@@ -833,3 +833,111 @@ function moveToCategoryMenu(e, cid) {
   const to = (pid) => { const groups = treeGroups(sd); groups.forEach(g => (g.list = g.list.filter(x => x !== cid))); groups.find(g => g.id === pid).list.push(cid); saveTree(sd, groups); };
   setTimeout(() => contextMenu(e, [['No category (top of list)', () => to(null)], '-', ...cats.map(c => [esc(c.name), () => to(c.id)])]), 0);
 }
+
+/* ================= BOOKMARKS (saved messages with folders + search) ================= */
+// A light index of which message ids are saved, so the message menu can toggle instantly.
+let _bmIndex = new Set();
+async function loadBookmarkIndex() {
+  try { const d = await api('GET', '/api/bookmarks'); S.bookmarks = d; S.bookmarkFolders = d.folders || []; _bmIndex = new Set((d.items || []).map(x => x.message_id)); }
+  catch { _bmIndex = new Set(); }
+}
+const isBookmarked = (mid) => _bmIndex.has(mid);
+async function saveBookmark(m, opts = {}) {
+  try {
+    await api('POST', '/api/bookmarks', { message_id: m.id, folder_id: opts.folder_id || null, label: opts.label || '' });
+    _bmIndex.add(m.id); toast('Saved to bookmarks');
+    if ($('.bookmarks-hub')) await refreshBookmarks();
+  } catch (e) { toast(e.message, true); }
+}
+async function removeBookmarkByMsg(mid) {
+  const item = (S.bookmarks?.items || []).find(x => x.message_id === mid);
+  if (!item) { // not loaded — fetch then remove
+    try { const d = await api('GET', '/api/bookmarks'); S.bookmarks = d; const it = (d.items || []).find(x => x.message_id === mid); if (it) await api('DELETE', '/api/bookmarks/' + it.id); } catch {}
+  } else { try { await api('DELETE', '/api/bookmarks/' + item.id); } catch (e) { return toast(e.message, true); } }
+  _bmIndex.delete(mid); toast('Removed bookmark');
+  if ($('.bookmarks-hub')) await refreshBookmarks();
+}
+async function refreshBookmarks() {
+  const d = await api('GET', '/api/bookmarks').catch(() => null); if (!d) return;
+  S.bookmarks = d; S.bookmarkFolders = d.folders || []; _bmIndex = new Set((d.items || []).map(x => x.message_id));
+  const hub = $('.bookmarks-hub'); if (hub) renderBookmarksInto(hub);
+}
+let _bmFilter = { folder: 'all', q: '' };
+let _bmClose = null;
+function openBookmarks() {
+  _bmFilter = { folder: 'all', q: '' };
+  const { el, close } = modal(`<button class="x icon-btn" data-close>${I.x}</button>
+    <div class="mh" style="text-align:left"><h2>Bookmarks</h2><p>Your saved messages, organized into folders.</p></div>
+    <div class="bookmarks-hub"></div>`, null, 'wide');
+  _bmClose = close;
+  renderBookmarksInto($('.bookmarks-hub', el));
+  refreshBookmarks();
+}
+function renderBookmarksInto(hub) {
+  const d = S.bookmarks || { folders: [], items: [] };
+  const folders = d.folders || [];
+  const q = _bmFilter.q.trim().toLowerCase();
+  let items = d.items || [];
+  if (_bmFilter.folder === 'none') items = items.filter(x => !x.folder_id);
+  else if (_bmFilter.folder !== 'all') items = items.filter(x => x.folder_id === _bmFilter.folder);
+  if (q) items = items.filter(x => (x.label || '').toLowerCase().includes(q) || (x.content || '').toLowerCase().includes(q) || (x.author?.display_name || '').toLowerCase().includes(q) || (x.where || '').toLowerCase().includes(q));
+  const chip = (id, name, color) => `<button class="bm-chip ${_bmFilter.folder === id ? 'on' : ''}" data-folder="${esc(id)}"><span class="dot" style="background:${esc(color || 'var(--accent)')}"></span>${esc(name)}</button>`;
+  hub.innerHTML = `
+    <div class="bm-bar">
+      <input class="bm-search" placeholder="Search bookmarks…" value="${esc(_bmFilter.q)}">
+      <button class="btn small bm-newfolder">New folder</button>
+    </div>
+    <div class="bm-chips">
+      <button class="bm-chip ${_bmFilter.folder === 'all' ? 'on' : ''}" data-folder="all">All</button>
+      ${folders.map(f => chip(f.id, f.name, f.color)).join('')}
+      <button class="bm-chip ${_bmFilter.folder === 'none' ? 'on' : ''}" data-folder="none">Unfiled</button>
+    </div>
+    <div class="bm-list">
+      ${items.length ? items.map(bmCardHtml).join('') : `<div class="bm-empty">No bookmarks here yet. Right-click (or long-press) any message and choose <b>Save message</b>.</div>`}
+    </div>`;
+  const search = $('.bm-search', hub);
+  search.oninput = () => { _bmFilter.q = search.value; const list = $('.bm-list', hub); if (list) { // re-filter only
+    renderBookmarksInto(hub); const s2 = $('.bm-search', hub); s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
+  $$('.bm-chip', hub).forEach(c => c.onclick = () => { _bmFilter.folder = c.dataset.folder; renderBookmarksInto(hub); });
+  $('.bm-newfolder', hub).onclick = () => newBookmarkFolder();
+  $$('.bm-card', hub).forEach(card => {
+    const id = card.dataset.bm;
+    card.querySelector('[data-jump]')?.addEventListener('click', () => { const it = (S.bookmarks.items || []).find(x => x.id === id); if (it && !it.missing) { _bmClose && _bmClose(); selectChannel(it.channel_id); setTimeout(() => jumpTo(it.message_id), 300); } });
+    card.querySelector('[data-bm-folder]')?.addEventListener('click', (e) => moveBookmarkMenu(e, id));
+    card.querySelector('[data-bm-label]')?.addEventListener('click', () => labelBookmark(id));
+    card.querySelector('[data-bm-del]')?.addEventListener('click', async () => { await api('DELETE', '/api/bookmarks/' + id).catch(() => {}); const it = (S.bookmarks.items || []).find(x => x.id === id); if (it) _bmIndex.delete(it.message_id); await refreshBookmarks(); });
+  });
+}
+function bmCardHtml(it) {
+  const folder = (S.bookmarkFolders || []).find(f => f.id === it.folder_id);
+  const who = it.author ? esc(it.author.display_name) : 'Unknown';
+  const body = it.missing ? `<i class="bm-missing">This message is no longer available.</i>` : esc((it.content || '').slice(0, 280)) || '<i>(no text)</i>';
+  return `<div class="bm-card" data-bm="${esc(it.id)}">
+    <div class="bm-head"><b>${who}</b><span class="bm-where">${esc(it.where || '')}</span>${it.at ? `<span class="bm-when">${esc(fmtDay(it.at))}</span>` : ''}</div>
+    ${it.label ? `<div class="bm-tag">${esc(it.label)}</div>` : ''}
+    <div class="bm-body">${body}</div>
+    <div class="bm-actions">
+      ${it.missing ? '' : `<button class="link-btn" data-jump>Jump</button>`}
+      <button class="link-btn" data-bm-folder>${folder ? `<span class="dot" style="background:${esc(folder.color)}"></span>${esc(folder.name)}` : 'Add to folder'}</button>
+      <button class="link-btn" data-bm-label>${it.label ? 'Edit label' : 'Add label'}</button>
+      <button class="link-btn danger" data-bm-del>Remove</button>
+    </div>
+  </div>`;
+}
+async function newBookmarkFolder() {
+  const name = await promptModal('New folder', 'Folder name', '', 'Create');
+  if (!name) return;
+  try { await api('POST', '/api/bookmark-folders', { name }); await refreshBookmarks(); } catch (e) { toast(e.message, true); }
+}
+function moveBookmarkMenu(e, id) {
+  const folders = S.bookmarkFolders || [];
+  const items = [['No folder', () => setBmFolder(id, null)], '-', ...folders.map(f => [f.name, () => setBmFolder(id, f.id)]), '-', ['+ New folder…', async () => { await newBookmarkFolder(); }]];
+  contextMenu(e, items);
+}
+async function setBmFolder(id, folder_id) { try { await api('PATCH', '/api/bookmarks/' + id, { folder_id }); await refreshBookmarks(); } catch (x) { toast(x.message, true); } }
+async function labelBookmark(id) {
+  const it = (S.bookmarks.items || []).find(x => x.id === id);
+  const label = await promptModal('Label', 'A short searchable label', it?.label || '', 'Save');
+  if (label === null) return;
+  try { await api('PATCH', '/api/bookmarks/' + id, { label }); await refreshBookmarks(); } catch (x) { toast(x.message, true); }
+}

@@ -96,6 +96,8 @@ async function loadApp() {
   if (data.session_token) { S.token = data.session_token; try { localStorage.setItem('orbit-token', S.token); } catch {} }   // device now shows in Settings → Devices
   S.me = data.me; S.users[S.me.id] = S.me;
   S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {}; S.friends = data.friends || S.friends;
+  S.bookmarkFolders = data.bookmarkFolders || [];
+  loadBookmarkIndex();
   S.dms.forEach(d => { if (d.user) S.users[d.user.id] = d.user; (d.members || []).forEach(m => S.users[m.id] = { ...S.users[m.id], ...m }); });
   cacheFriends();
   await Promise.all(S.servers.map(s => fetchServer(s.id)));
@@ -172,6 +174,18 @@ function connectSocket() {
     renderRail();
     if (S.view.channel === entry.id) renderTopbar();
   });
+  socket.on('dm:receipt', ({ channel_id, user_id, last_read, at }) => {
+    S.receipts = S.receipts || {};
+    S.receipts[channel_id] = { user_id, last_read, at };
+    if (S.view.channel === channel_id) renderReceipt(channel_id);
+  });
+  socket.on('voicepass', ({ channel_id, server_id, name, expires, by }) => {
+    S.voicePasses = S.voicePasses || {};
+    S.voicePasses[channel_id] = { expires, server_id, name };
+    const mins = Math.max(1, Math.round((expires - Date.now()) / 60000));
+    toast(`${by?.display_name || 'Someone'} gave you ${mins} min access to 🔊 ${name}`);
+    playNotif({ type: 'mention', serverId: server_id });
+  });
   socket.on('voice:state', ({ channel_id, users }) => {
     // stop ringing once you're in that call (from any device) or once everyone has left it
     if (Voice.ringing === channel_id && (!users.length || users.some(u => u.user_id === S.me.id))) Voice.stopRing();
@@ -225,6 +239,16 @@ function renderRail() {
     else if ('join' in b.dataset) joinServerModal();
   };
   rail.oncontextmenu = (e) => { const b = e.target.closest('.rail-btn[data-s]'); if (b && b.dataset.s !== '@me') { e.preventDefault(); serverRailMenu(e, b.dataset.s); } const dm = e.target.closest('.rail-btn[data-dm]'); if (dm) { e.preventDefault(); const d = S.dms.find(x => x.id === dm.dataset.dm); if (d && d.user) profilePopout(d.user.id, dm); } };
+  // mobile: long-press a server icon to open its management menu (no right-click on touch)
+  let rlp = null;
+  rail.addEventListener('touchstart', (e) => {
+    const b = e.target.closest('.rail-btn[data-s]'); if (!b || b.dataset.s === '@me' || e.touches.length > 1) return;
+    const t = e.touches[0], x = t.clientX, y = t.clientY;
+    clearTimeout(rlp?.timer);
+    rlp = { x, y, timer: setTimeout(() => { rlp = null; navigator.vibrate?.(10); serverRailMenu({ clientX: x, clientY: y, preventDefault() {} }, b.dataset.s); }, 420) };
+  }, { passive: true });
+  const rcancel = (e) => { if (!rlp) return; if (e.type === 'touchmove') { const t = e.touches[0]; if (Math.abs(t.clientX - rlp.x) < 10 && Math.abs(t.clientY - rlp.y) < 10) return; } clearTimeout(rlp.timer); rlp = null; };
+  ['touchmove', 'touchend', 'touchcancel'].forEach(ev => rail.addEventListener(ev, rcancel, { passive: true }));
   bindTips(rail);
 }
 let tipEl;
@@ -277,6 +301,7 @@ function renderSidebar() {
     side.innerHTML = `<button class="side-search" data-find>Find or start a conversation</button>
       <div class="side-list">
         <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">Friends</span>${incomingCount() ? `<span class="badge">${incomingCount()}</span>` : ''}</button>
+        <button class="dm-item" data-bookmarks><span class="icon-btn" style="width:32px">${I.bookmark || I.star || I.hash}</span><span class="nm">Bookmarks</span></button>
         <div class="cat"><span>Direct messages</span><button data-find title="New message">+</button></div>
         ${S.dms.length ? S.dms.map(d => { const un = S.unread[d.id]; const inCall = (S.voice[d.id] || []).length;
           if (d.type === 'group') return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un && !isMuted(d.id) ? 'unread' : ''} ${isMuted(d.id) ? 'muted' : ''}" data-dm="${d.id}">${groupAvatar(d, 's32')}<span class="nm">${esc(d.name || 'Group chat')}<small>${d.member_count} members</small></span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`;
@@ -308,6 +333,7 @@ function renderSidebar() {
     const t = e.target;
     if (t.closest('[data-find]')) return newDmModal();
     if (t.closest('[data-home]')) { S.view.channel = null; saveView(); renderSidebar(); renderMain(); showMainMobile(); return; }
+    if (t.closest('[data-bookmarks]')) { openBookmarks(); return; }
     const dm = t.closest('[data-dm]'); if (dm) { selectChannel(dm.dataset.dm); showMainMobile(); return; }
     if (t.closest('[data-invite]')) { e.stopPropagation(); return inviteModal(S.view.server); }
     const ed = t.closest('[data-edit]'); if (ed) { e.stopPropagation(); return channelSettingsModal(ed.dataset.edit); }
@@ -388,10 +414,20 @@ function serverRailMenu(e, sid) {
     ['Edit Server Profile', () => nickModal(sid)],
     unread && [`Mark As Read ${I.check}`, () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
     [isMuted(sid) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sid, sd.name)],
+    [`Notification sound ${I.bell || ''}`, () => serverNotifSoundMenu(sid, sd.name)],
     ['Copy Server Name', () => copy(sd.name)],
     '-', !owner && ['Leave Server', () => confirmModal('Leave server', `Are you sure you want to leave <b>${esc(sd.name)}</b>? You won’t be able to rejoin unless you are re-invited.`, 'Leave Server', async () => { await api('POST', `/api/servers/${sid}/leave`); }), 'danger'],
     owner && ['Delete Server', () => confirmModal('Delete server', `Delete <b>${esc(sd.name)}</b>? This cannot be undone and removes it for everyone.`, 'Delete', () => api('DELETE', '/api/servers/' + sid)), 'danger'],
   ].filter(Boolean), '', 230);
+}
+function serverNotifSoundMenu(sid, name) {
+  S.prefs.notifSounds = S.prefs.notifSounds || { dm: '', mention: '', server: {} };
+  S.prefs.notifSounds.server = S.prefs.notifSounds.server || {};
+  const cur = S.prefs.notifSounds.server[sid] || '';
+  const set = (id) => { if (id) S.prefs.notifSounds.server[sid] = id; else delete S.prefs.notifSounds.server[sid]; savePrefs(); if (id) previewSound(id, 0.6); toast(`Sound for ${name}: ${id ? (NOTIFSOUNDS.find(n => n[0] === id)?.[1] || id) : 'Default'}`); };
+  const opts = [['', 'Default'], ...NOTIFSOUNDS];
+  const r = { clientX: innerWidth / 2 - 100, clientY: 140 };
+  contextMenu(r, opts.map(([id, nm]) => [`${cur === id ? '✓ ' : ''}${nm}`, () => set(id)]), '', 200);
 }
 function serverMenu(anchor) {
   const sd = curServer(); const r = anchor.getBoundingClientRect();
@@ -562,7 +598,8 @@ function callUserMenu(e, uid) {
     ${self ? '' : `<button data-message>${I.message} Message</button>${friendRow}
     <hr>
     <button data-mute><span>${muted ? 'Unmute' : 'Mute'} for me</span><span class="check ${muted ? 'on' : ''}">${muted ? '✓' : ''}</span></button>
-    <div class="vol-row"><span>Volume</span><input type="range" min="0" max="150" value="${vol}"><b class="vol-val">${vol}%</b></div>
+    <div class="vol-row"><span>Voice</span><input type="range" class="vol-voice" min="0" max="150" value="${vol}"><b class="vol-val">${vol}%</b></div>
+    ${Voice.hasStreamAudio(uid) ? `<div class="vol-row"><span>Screen audio</span><input type="range" class="vol-screen" min="0" max="150" value="${Math.round((Voice.screenVolumes[uid] ?? (S.prefs.streamVolumes?.[uid] ?? 1)) * 100)}"><b class="vol-val2">${Math.round((Voice.screenVolumes[uid] ?? (S.prefs.streamVolumes?.[uid] ?? 1)) * 100)}%</b></div>` : ''}
     <hr>
     <button class="danger" data-block>Block</button>`}
   </div>`);
@@ -578,8 +615,10 @@ function callUserMenu(e, uid) {
   el.querySelector('[data-block]')?.addEventListener('click', () => { L.close(); confirmModal('Block user', `Block <b>${esc(u.display_name)}</b>?`, 'Block', () => api('POST', `/api/friends/${uid}/block`)); });
   const mb = el.querySelector('[data-mute]');
   if (mb) mb.onclick = () => { const on = Voice.toggleUserMute(uid); mb.querySelector('span:last-child').className = 'check ' + (on ? 'on' : ''); mb.querySelector('span:last-child').textContent = on ? '✓' : ''; mb.querySelector('span:first-child').textContent = (on ? 'Unmute' : 'Mute') + ' for me'; };
-  const range = el.querySelector('input[type=range]');
+  const range = el.querySelector('.vol-voice');
   if (range) range.oninput = () => { Voice.setUserVolume(uid, Number(range.value) / 100); el.querySelector('.vol-val').textContent = range.value + '%'; };
+  const srange = el.querySelector('.vol-screen');
+  if (srange) srange.oninput = () => { Voice.setStreamVolume(uid, Number(srange.value) / 100); el.querySelector('.vol-val2').textContent = srange.value + '%'; };
 }
 function friendMenu(e, uid) {
   const r = e.target.closest('[data-fmenu]').getBoundingClientRect();
@@ -660,7 +699,24 @@ async function openChannel(cid) {
   if (!S.messages[key]) await loadMessages(key);
   else refreshMessages(key, true);
   markRead(cid);
+  const ch0 = findChannel(cid);
+  if (ch0 && ch0.type === 'dm' && !ch0.is_group && ch0.type !== 'group') {
+    S.receipts = S.receipts || {};
+    api('GET', `/api/channels/${cid}/receipt`).then(r => { if (r && r.last_read) { S.receipts[cid] = r; if (S.view.channel === cid) renderReceipt(cid); } }).catch(() => {});
+  }
   const ta = $('.chat .composer textarea'); if (ta && window.innerWidth > 760) ta.focus();
+}
+// "Seen" indicator under your last DM message (only when the other person has read it and has receipts on)
+function renderReceipt(cid) {
+  const box = containersFor(cid)[0]; if (!box) return;
+  box.querySelector('.read-receipt')?.remove();
+  const r = (S.receipts || {})[cid]; if (!r || !r.last_read) return;
+  const list = S.messages[cid] || [];
+  const myLast = [...list].reverse().find(m => m.author_id === S.me.id);
+  if (!myLast || r.last_read < myLast.id) return;
+  const when = new Date(r.at || Date.now()).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const el = h(`<div class="read-receipt" title="Seen ${esc(when)}">${I.check || '✓'} Seen</div>`);
+  box.appendChild(el);
 }
 async function loadMessages(key, older) {
   if (S.loading[key]) return;
@@ -693,6 +749,7 @@ function refreshMessages(key, toBottom, keepTop) {
     if (ed) { ed.focus(); ed.setSelectionRange(ed.value.length, ed.value.length); autoGrow(ed); }
     $$('img', box).forEach(img => !img.complete && img.addEventListener('load', () => { if (toBottom || atBottom) box.scrollTop = box.scrollHeight; }, { once: true }));
   });
+  if (!String(key).startsWith('t:') && S.receipts && S.receipts[key]) renderReceipt(key);
 }
 function channelSid(key) { if (String(key).startsWith('t:')) return S.thread ? findChannel(S.thread.channel_id)?.server_id : null; return findChannel(key)?.server_id || null; }
 function messageListHtml(key) {
@@ -713,13 +770,24 @@ function messageListHtml(key) {
   let prev = null, lastDay = '';
   const lastRead = S.readMarker?.[key];
   let markerShown = false;
+  const strict = S.me?.block_mode === 'strict';
+  const shown = S.shownBlocked = S.shownBlocked || {};
+  let blockedRun = 0;
+  const flushBlocked = () => { if (blockedRun) { html += `<div class="blocked-run" data-key="${esc(String(key))}">${blockedRun} blocked message${blockedRun > 1 ? 's' : ''} <button class="link-btn show-blocked">show</button></div>`; blockedRun = 0; prev = null; } };
   for (const m of list) {
+    // Blocked users: strict mode hides their messages entirely; standard collapses them into a "show" run.
+    if (isBlockedUser(m.author_id) && !shown[m.id]) {
+      if (strict) { prev = null; continue; }
+      blockedRun++; continue;
+    }
+    flushBlocked();
     const day = new Date(m.created).toDateString();
     if (day !== lastDay) { html += `<div class="divider date"><span>${fmtDay(m.created)}</span></div>`; lastDay = day; prev = null; }
     if (lastRead && !markerShown && m.id > lastRead && m.author_id !== S.me.id) { html += `<div class="divider new">New</div>`; markerShown = true; prev = null; }
     html += messageHtml(m, sid, prev);
     prev = m;
   }
+  flushBlocked();
   return html;
 }
 function messageHtml(m, sid, prev, isParent) {
@@ -779,6 +847,7 @@ function bindMessageList(box) {
     const [m] = mid ? findMsg(mid) : [null];
     const sid = channelSid(key());
     if (t.closest('.spoiler')) return t.closest('.spoiler').classList.add('shown');
+    if (t.closest('.show-blocked')) { const run = t.closest('.blocked-run'); const list = S.messages[key()] || []; S.shownBlocked = S.shownBlocked || {}; list.forEach(mm => { if (isBlockedUser(mm.author_id)) S.shownBlocked[mm.id] = 1; }); refreshMessages(key()); return; }
     const mention = t.closest('.mention[data-uid]'); if (mention) return profilePopout(mention.dataset.uid, mention);
     const nm = t.closest('.name[data-uid], .left .av'); if (nm) return profilePopout(nm.dataset.uid, nm);
     const favBtn = t.closest('[data-fav]'); if (favBtn) { e.stopPropagation(); const on = toggleGifFav(favBtn.dataset.fav, $('img', favBtn.closest('.att-gif'))); favBtn.classList.toggle('on', on); toast(on ? 'Added to GIF favorites' : 'Removed from favorites'); return; }
@@ -821,6 +890,7 @@ function bindMessageList(box) {
       ['Reply', () => startReply(m, box.closest('.chat, .thread-panel'))],
       !m.thread_id && !key().startsWith('t:') && ['Create thread', () => openThread(m)],
       canPinIn(m.channel_id) && !m._pending && (m.pinned ? ['Unpin message', () => api('DELETE', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))] : ['Pin message', () => api('PUT', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))]),
+      !m._pending && (isBookmarked(m.id) ? ['Remove bookmark', () => removeBookmarkByMsg(m.id)] : ['Save message', () => saveBookmark(m)]),
       ['Copy text', () => copy(m.content)],
       ['Copy message ID', () => copy(String(m.id))],
       img && ['Copy image link', () => copy(location.origin + img.getAttribute('src'))],
@@ -896,7 +966,10 @@ function onMessageNew(m) {
   if (mentioned && S.prefs.status !== 'dnd' && !viewing) notify(m, ch);
 }
 function notify(m, ch) {
-  playNotif();
+  const ctx = ch.type === 'dm' ? { type: 'dm' }
+    : ((m.mentions || []).includes(S.me.id) || m.mention_everyone) ? { type: 'mention', serverId: ch.server_id || null }
+    : { type: 'message', serverId: ch.server_id || null };
+  playNotif(ctx);
   if (!S.prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   const sid = ch.server_id;
   const title = ch.type === 'dm' ? nameIn(null, m.author_id) : ch.type === 'group' ? `${nameIn(null, m.author_id)} (${ch.name || 'Group chat'})` : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
@@ -1231,6 +1304,7 @@ function profileCardHtml(u, opts = {}) {
       ${!preview ? `<section><h5>Member since</h5><div class="since">${new Date(u.created || Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? `<span class="since-sep"></span>${esc(S.serverData[sid].name)}: ${new Date(mem.joined).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></section>` : ''}
       ${mem ? `<section><h5>Roles</h5><div class="role-tags">${roles.map(r => `<span class="role-tag"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}${can(PERM.MANAGE_ROLES, sid) ? `<button data-unrole="${r.id}" title="Remove role">✕</button>` : ''}</span>`).join('')}${can(PERM.MANAGE_ROLES, sid) ? `<button class="role-tag add" data-roles>+ Add role</button>` : ''}${!roles.length && !can(PERM.MANAGE_ROLES, sid) ? '<span class="none">No roles</span>' : ''}</div></section>` : ''}
       ${u.mutual_servers?.length && !self ? `<section><h5>Mutual servers</h5><div class="since">${u.mutual_servers.map(s => esc(s.name)).join(', ')}</div></section>` : ''}
+      ${!self && !preview ? `<section class="note-sec"><h5>Note <small class="note-hint">(only you can see this)</small></h5><textarea class="note-box" rows="1" placeholder="Add a note…" maxlength="2000"></textarea></section>` : ''}
     </div>
     ${preview ? '' : self ? `<div class="actions"><button class="btn secondary" data-editp>${I.edit} Edit profile</button></div>`
       : `${friendActionRow(u.id)}<div class="actions"><input class="msgbox" placeholder="Message @${esc(u.username)}"><button class="icon-btn" data-call title="Call">${I.phone}</button><button class="icon-btn" data-mod title="More">•••</button></div>`}
@@ -1272,6 +1346,17 @@ async function profilePopout(uidv, anchor, side) {
     const d = await openDM(uidv);
     if (d) { const f = new FormData(); f.append('content', text); upload(`/api/channels/${d.id}/messages`, f).catch(x => toast(x.message, true)); }
   };
+  // private note: load current value, autosize, save on change
+  const note = $('.note-box', el);
+  if (note) {
+    const grow = () => { note.style.height = 'auto'; note.style.height = Math.min(160, note.scrollHeight) + 'px'; };
+    api('GET', '/api/notes/' + uidv).then(r => { note.value = r.note || ''; grow(); }).catch(() => {});
+    let saved = null;
+    const save = () => { const v = note.value.trim(); if (v === saved) return; saved = v; api('PUT', '/api/notes/' + uidv, { note: v }).catch(() => {}); };
+    note.addEventListener('input', grow);
+    note.addEventListener('blur', save);
+    note.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); toast('Note saved'); } });
+  }
 }
 const audioPlayers = {};
 function audioEmbedAction(embed, e) {
@@ -1316,6 +1401,24 @@ function modal(html, setup, cls = '') {
   setup && setup(m, close);
   setTimeout(() => $('input:not([type=checkbox]):not([type=file]),textarea', m)?.focus(), 30);
   return { el: m, close };
+}
+function promptModal(title, label, value = '', okText = 'Save') {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (v) => { if (settled) return; settled = true; resolve(v); };
+    const { el, close } = modal(`<div class="mh" style="text-align:left"><h2>${esc(title)}</h2></div>
+      <div class="mb"><div class="field"><label>${esc(label)}</label><input class="input" name="v" value="${esc(value)}" maxlength="80"></div></div>
+      <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>${esc(okText)}</button></div>`, (m) => {
+      const inp = $('[name=v]', m);
+      const ok = () => { const v = inp.value.trim(); finish(v); close(); };
+      $('[data-ok]', m).onclick = ok;
+      inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); ok(); } };
+    });
+    // resolve null if closed any other way (Cancel, backdrop, Esc)
+    const wrap = el.closest('.modal-wrap');
+    const mo = new MutationObserver(() => { if (!document.body.contains(wrap)) { mo.disconnect(); finish(null); } });
+    mo.observe(document.body, { childList: true });
+  });
 }
 function confirmModal(title, html, okText, fn) {
   modal(`<div class="mh" style="text-align:left"><h2>${esc(title)}</h2></div><div class="mb" style="color:var(--text-2)">${html}</div>
