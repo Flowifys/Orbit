@@ -290,7 +290,7 @@ function renderSidebar() {
         <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
         ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
         <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
-      </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (Voice.speaking.has(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live">LIVE</span>' : ''}${p.video ? I.video : ''}${p.deaf ? I.deaf : p.muted ? I.micOff : ''}</span></div>`).join('')}</div>` : ''}`;
+      </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (Voice.speaking.has(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live" aria-label="Streaming live">LIVE</span>' : ''}${p.video ? srIcon(I.video, 'Camera on') : ''}${p.deaf ? srIcon(I.deaf, 'Deafened') : p.muted ? srIcon(I.micOff, 'Muted') : ''}</span></div>`).join('')}</div>` : ''}`;
     };
     const head = `<div class="side-head" data-smenu><span class="sh-icon">${serverIcon(sd)}</span><span class="t">${esc(sd.name)}</span>${I.chevron}</div>`;
     side.innerHTML = `${sd.banner ? `<div class="side-banner" style="background-image:url('${esc(sd.banner)}')">${head}</div>` : head}
@@ -337,7 +337,7 @@ function renderSidebar() {
 }
 function userPanelHtml() {
   const st = S.prefs.status === 'invisible' ? 'offline' : S.prefs.status;
-  return `<div class="user-panel"><button class="me" data-status>${avatar({ ...S.me, id: '__me' }, 's32').replace('</div>', `<i class="st ${st}"></i></div>`)}<span class="who"><b>${esc(S.me.display_name)}</b><span>${esc(activityLine(S.me.id) || S.me.status_text || S.me.username)}</span></span></button>
+  return `<div class="user-panel"><button class="me" data-status aria-label="Your profile and status: ${STATUS_NAME[S.prefs.status] || 'Online'}">${avatar({ ...S.me, id: '__me' }, 's32').replace('</div>', `${stDot(st)}</div>`)}<span class="who"><b>${esc(S.me.display_name)}</b><span>${esc(activityLine(S.me.id) || S.me.status_text || S.me.username)}</span></span></button>
     <button class="icon-btn ${Voice.muted ? 'active' : ''}" data-mute title="${Voice.muted ? 'Unmute' : 'Mute'}">${Voice.muted ? I.micOff : I.mic}</button>
     <button class="icon-btn ${Voice.deaf ? 'active' : ''}" data-deaf title="${Voice.deaf ? 'Undeafen' : 'Deafen'}">${Voice.deaf ? I.deaf : I.headphones}</button>
     <button class="icon-btn" data-settings title="User settings">${I.gear}</button></div>`;

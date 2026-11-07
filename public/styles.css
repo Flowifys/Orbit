@@ -1344,3 +1344,24 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .rail-item .badge{position:absolute;right:-4px;bottom:-4px;box-shadow:0 0 0 3px var(--bg-0);border:0;pointer-events:none}
 .rail-btn[data-dm] .av{width:48px;height:48px}
 .rail-item.active .rail-btn.home img,.rail-btn.home:hover img{filter:brightness(0) invert(1)}
+
+/* ============ 1.14 — status shapes (not just color) for colorblind users ============ */
+/* --ring = the color behind the dot, so the cut-outs match their surroundings */
+.av .st{--ring:var(--bg-1);border-color:var(--ring)!important}
+.main .av .st,.members .av .st,.home-view .av .st,.messages .av .st{--ring:var(--bg-2)}
+.user-panel .av .st{--ring:var(--bg-0)}
+.dm-item.active .av .st,.mem:hover .av .st{--ring:color-mix(in oklab,var(--bg-1) 85%,white)}
+.profile-card .av .st,.popout .av .st{--ring:var(--bg-1)}
+.profile-card.themed .avwrap .av .st{--ring:var(--card-a)}
+.st.online{background:var(--green)!important}
+.st.idle{background:radial-gradient(circle at 26% 26%,var(--ring) 0 40%,var(--yellow) 41%)!important}   /* moon */
+.st.dnd{background:linear-gradient(var(--ring),var(--ring)) center/62% 24% no-repeat,var(--red)!important}  /* dash */
+.st.offline{background:radial-gradient(circle,var(--ring) 0 36%,var(--dim) 37%)!important}            /* hollow ring */
+.status-menu .dot,.self-menu .dot{position:relative}
+.sr-ico{display:inline-flex}
+.sr-ico svg{width:14px;height:14px}
+.tile .label .sr-ico svg{width:14px;height:14px;color:var(--red)}
+.st-solo{position:relative;width:12px;height:12px;flex:none;display:inline-block}
+.st-solo .st{position:absolute;inset:0;width:12px;height:12px;border:0!important;border-radius:50%;--ring:var(--bg-1)}
+.self-menu .st-solo .st{--ring:color-mix(in oklab,var(--bg-0) 70%,var(--bg-1))}
+.self-menu>button .st-solo,.sm-statuses .st-solo{flex:none!important}

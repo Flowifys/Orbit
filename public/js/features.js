@@ -207,7 +207,7 @@ async function selfProfilePopout(anchor) {
   const L = layer();
   const el = h(`<div class="popout self-pop"><div class="profile-card ${u.theme_primary ? 'themed' : ''} fx-${esc(u.effect || 'none')}" style="${themeStyle(u)}">
       ${bannerHtml(u)}
-      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [a-z]+">/, `<i class="st ${st === 'invisible' ? 'offline' : st}">`)}</div>
+      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [^>]*><\/i>/, stDot(st))}</div>
       <button class="status-bubble" data-cstatus>${u.status_text ? esc(u.status_text) : `<span class="sb-ph">${I.smile.replace('width="20" height="20"', 'width="14" height="14"')} What’s on your mind?</span>`}</button>
       ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
       <div class="inner self-inner">
@@ -218,8 +218,8 @@ async function selfProfilePopout(anchor) {
         <div class="self-menu">
           <button data-sm="edit">${I.edit}<span>Edit Profile</span></button>
           <div class="sm-sep"></div>
-          <button data-sm="status" class="sm-status"><i class="dot" style="background:${cur[2]}"></i><span>${cur[1]}</span>${I.chevron}</button>
-          <div class="sm-statuses hidden">${STATUS.map(([k, l, c, d]) => `<button data-st="${k}" class="${k === st ? 'on' : ''}"><i class="dot" style="background:${c}"></i><span>${l}${d ? `<small>${d}</small>` : ''}</span></button>`).join('')}</div>
+          <button data-sm="status" class="sm-status"><span class="st-solo">${stDot(st)}</span><span>${cur[1]}</span>${I.chevron}</button>
+          <div class="sm-statuses hidden">${STATUS.map(([k, l, c, d]) => `<button data-st="${k}" class="${k === st ? 'on' : ''}"><span class="st-solo">${stDot(k)}</span><span>${l}${d ? `<small>${d}</small>` : ''}</span></button>`).join('')}</div>
           <div class="sm-sep"></div>
           <button data-sm="copy">${I.copy}<span>Copy User ID</span></button>
           <button data-sm="settings">${I.gear}<span>User Settings</span></button>
@@ -346,3 +346,20 @@ function messageSheet(m, items, msgEl) {
   el.addEventListener('touchmove', (e) => { if (y0 == null) return; const d = e.touches[0].clientY - y0; if (d > 0) el.style.transform = `translateY(${d}px)`; }, { passive: true });
   el.addEventListener('touchend', (e) => { if (y0 == null) return; const d = (e.changedTouches[0].clientY - y0); y0 = null; if (d > 90) close(); else el.style.transform = ''; });
 }
+
+/* ---------- accessibility: every icon-only control gets a spoken name ---------- */
+// Buttons that only show an icon get their tooltip (title / data-tip) as an aria-label, rail servers
+// and DM bubbles are announced by name, and unread badges say what they count.
+function a11yPass(root) {
+  if (!root || !root.querySelectorAll) return;
+  root.querySelectorAll('button, [role="button"], a.icon-btn').forEach(b => {
+    if (b.hasAttribute('aria-label')) return;
+    const name = b.getAttribute('title') || b.closest('[data-tip]')?.getAttribute('data-tip');
+    if (name && !b.textContent.trim()) b.setAttribute('aria-label', name);
+    else if (name && b.closest('.rail-item')) b.setAttribute('aria-label', name);
+  });
+  root.querySelectorAll('.badge:not([aria-label])').forEach(bd => { const n = bd.textContent.trim(); if (n) bd.setAttribute('aria-label', `${n} unread`); });
+  root.querySelectorAll('.tile[data-tile]:not([aria-label])').forEach(t => t.setAttribute('aria-label', t.querySelector('.ln')?.textContent || 'Participant'));
+}
+new MutationObserver((list) => { for (const m of list) m.addedNodes.forEach(n => n.nodeType === 1 && a11yPass(n)); }).observe(document.documentElement, { childList: true, subtree: true });
+a11yPass(document);

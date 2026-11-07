@@ -120,9 +120,14 @@ const cropStyle = (c) => c ? `object-position:${c.x}% ${c.y}%;transform-origin:$
 const AV_LOADED = new Set();
 // warm the cache with everyone's profile picture so lists render instantly
 function prefetchAvatars() { const seen = new Set(); for (const u of Object.values(S.users)) { if (u && u.avatar && !seen.has(u.avatar) && !AV_LOADED.has(u.avatar) && seen.size < 300) { seen.add(u.avatar); const i = new Image(); i.decoding = 'async'; i.onload = () => AV_LOADED.add(u.avatar); i.src = u.avatar; } } }
+// status dot: different SHAPE per status (not just color) + a spoken label for screen readers
+const STATUS_NAME = { online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline', invisible: 'Invisible' };
+function stDot(s) { const k = s === 'invisible' ? 'offline' : (STATUS_NAME[s] ? s : 'offline'); return `<i class="st ${k}" role="img" aria-label="${STATUS_NAME[s] || 'Offline'}" title="${STATUS_NAME[s] || 'Offline'}"></i>`; }
+// small inline icon with a spoken label (muted, deafened, live…)
+function srIcon(svg, label) { return `<span class="sr-ico" role="img" aria-label="${label}" title="${label}">${svg}</span>`; }
 function avatar(u, cls = '', withStatus = false) {
   u = typeof u === 'string' ? user(u) : u;
-  const st = withStatus ? `<i class="st ${statusOf(u.id)}"></i>` : '';
+  const st = withStatus ? stDot(statusOf(u.id)) : '';
   const a = u.accent || '#8b6dff';
   // people with a picture get a neutral placeholder (no colored flash while it loads); no lazy-loading for avatars
   const known = u.avatar && AV_LOADED.has(u.avatar);
@@ -166,7 +171,7 @@ function serverIcon(s) { return s.icon ? `<img src="${esc(s.icon)}" alt="">` : `
 
 /* ---------- icons ---------- */
 const I = {};
-const ic = (name, d, vb = '0 0 24 24') => (I[name] = `<svg viewBox="${vb}" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`);
+const ic = (name, d, vb = '0 0 24 24') => (I[name] = `<svg viewBox="${vb}" width="20" height="20" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`);
 ic('hash', '<path d="M5 9h14M4 15h14M10 3 8 21M16 3l-2 18"/>');
 ic('speaker', '<path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>');
 ic('lock', '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>');

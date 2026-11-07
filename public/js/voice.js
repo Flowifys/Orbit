@@ -395,7 +395,7 @@ function tileInner(p, sid, where) {
   if (vid) tools.push(`<button data-fs title="Full screen">${I.fs}</button>`);
   return `<div class="tile ${vid ? 'has-video' : ''} ${Voice.speaking.has(p.user_id) ? 'speaking' : ''}" data-speak="${p.user_id}" data-tile="${p.user_id}" style="${vid ? '' : tileColor(u)}">
       <div class="vid-holder"></div>${vid ? '' : avatar(u, 's96')}
-      <span class="label">${p.deaf ? I.deaf : p.muted ? I.micOff : ''}<span class="ln">${esc(sid ? nameIn(sid, p.user_id) : u.display_name)}${isMe ? ' (you)' : ''}</span>${p.screen ? '<span class="live">LIVE</span>' : ''}</span>
+      <span class="label">${p.deaf ? srIcon(I.deaf, 'Deafened') : p.muted ? srIcon(I.micOff, 'Muted') : ''}<span class="ln">${esc(sid ? nameIn(sid, p.user_id) : u.display_name)}${isMe ? ' (you)' : ''}</span>${p.screen ? '<span class="live">LIVE</span>' : ''}</span>
       <div class="tile-tools">${tools.join('')}</div></div>`;
 }
 // Fit n 16:9 tiles into a box as large as possible without overlap (Discord-style grid)
