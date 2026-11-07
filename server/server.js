@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.17.0';
+const VERSION = '1.17.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -117,7 +117,7 @@ function start(opts = {}) {
   [['is_group', 'INTEGER DEFAULT 0'], ['gc_owner', 'TEXT'], ['gc_icon', 'TEXT']].forEach(([c, t]) => { if (!chanCols.includes(c)) db.exec(`ALTER TABLE channels ADD COLUMN ${c} ${t}`); });
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
-   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -151,6 +151,17 @@ function start(opts = {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY, server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, name TEXT, url TEXT, creator TEXT, created INTEGER);
     CREATE TABLE IF NOT EXISTS poll_votes(message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, user_id TEXT, opt INTEGER, PRIMARY KEY(message_id,user_id,opt));
     CREATE INDEX IF NOT EXISTS idx_msg_pins ON messages(channel_id, pinned);`);
+  const backupDir = path.join(dataDir, 'backups');
+  function makeBackup(file) { fs.mkdirSync(backupDir, { recursive: true }); try { fs.unlinkSync(file); } catch {} db.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`); return file; }
+  function dailyBackup() {
+    try {
+      const day = new Date().toISOString().slice(0, 10), file = path.join(backupDir, `orbit-${day}.db`);
+      if (!fs.existsSync(file)) { makeBackup(file); log('Backup saved:', path.basename(file)); }
+      const old = fs.readdirSync(backupDir).filter(f => /^orbit-\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort().slice(0, -7);
+      old.forEach(f => fs.unlink(path.join(backupDir, f), () => {}));
+    } catch (e) { log('Backup failed:', e.message); }
+  }
+  setTimeout(function loop() { dailyBackup(); setTimeout(loop, 6 * 3600e3).unref?.(); }, 15000).unref?.();
   const q = (sql) => db.prepare(sql);
   const one = (sql, ...a) => q(sql).get(...a);
   const all = (sql, ...a) => q(sql).all(...a);
@@ -158,6 +169,7 @@ function start(opts = {}) {
   const tx = (fn) => { db.exec('BEGIN'); try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } };
 
   // ---------- helpers ----------
+  const likeEsc = (v) => String(v).replace(/[\\%_]/g, '\\$&');
   const pj = (v, d) => { try { return v ? JSON.parse(v) : d; } catch { return d; } };
   const publicUser = (u) => u && ({ id: u.id, username: u.username, display_name: u.display_name || u.username, avatar: u.avatar,
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
@@ -250,7 +262,7 @@ function start(opts = {}) {
         attachments: JSON.parse(r.attachments || '[]'), mentions: JSON.parse(r.mentions || '[]'), mention_everyone: !!r.mention_everyone,
         edited: r.edited, created: r.created, system: !!r.system, reactions: rx,
         reply: rep ? { id: rep.id, author_id: rep.author_id, content: rep.content.slice(0, 200), has_attachments: rep.attachments !== '[]' } : (r.reply_to ? { id: r.reply_to, deleted: true } : null),
-        thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []), poll: pollOf(r), sticker: pj(r.sticker, null), title: r.title || null };
+        thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []).map(e => e && ({ ...e, image: proxied(e.image) })), poll: pollOf(r), sticker: pj(r.sticker, null), title: r.title || null };
     });
   }
   const msgById = (id) => fmtMessages(all('SELECT * FROM messages WHERE id=?', id))[0];
@@ -292,7 +304,7 @@ function start(opts = {}) {
     const out = {};
     const servers = all('SELECT server_id FROM members WHERE user_id=?', uidv).map(r => r.server_id);
     const chans = [];
-    servers.forEach(sid => all(`SELECT * FROM channels WHERE server_id=? AND type='text'`, sid).forEach(c => canView(c, uidv) && chans.push(c)));
+    servers.forEach(sid => all(`SELECT * FROM channels WHERE server_id=? AND type IN ('text','forum')`, sid).forEach(c => canView(c, uidv) && chans.push(c)));
     all(`SELECT c.* FROM channels c JOIN dm_members d ON d.channel_id=c.id WHERE d.user_id=?`, uidv).forEach(c => chans.push(c));
     for (const c of chans) {
       const r = one('SELECT last_id FROM reads WHERE user_id=? AND channel_id=?', uidv, c.id);
@@ -328,7 +340,14 @@ function start(opts = {}) {
   const err = (status, message) => Object.assign(new Error(message), { status });
   // A token carries a session id (sid). Logging a device out deletes its session, which makes its token stop working.
   // Tokens from before sessions existed (no sid) keep working; /api/me hands those devices a new token with a session.
-  const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim().slice(0, 64);
+  const clientIp = (req) => { const xf = String(req.headers['x-forwarded-for'] || '').split(',').map(x => x.trim()).filter(Boolean); return (xf.length ? xf[xf.length - 1] : String(req.socket?.remoteAddress || '')).slice(0, 64); };
+  // simple in-memory rate limits (reset when the server restarts, which is fine for this)
+  const buckets = new Map();
+  function hit(key, max, windowMs) { const t = now(); let b = buckets.get(key); if (!b || b.reset < t) { b = { n: 0, reset: t + windowMs }; buckets.set(key, b); } b.n++; return b.n > max ? b.reset - t : 0; }
+  function peekOver(key, max) { const b = buckets.get(key); return b && b.reset > now() && b.n >= max ? b.reset - now() : 0; }
+  const waitText = (ms) => { const s2 = Math.ceil(ms / 1000); return s2 > 90 ? `${Math.ceil(s2 / 60)} minutes` : `${s2} seconds`; };
+  function limit(key, max, windowMs, what) { const w = hit(key, max, windowMs); if (w) throw err(429, `${what} Try again in ${waitText(w)}.`); }
+  setInterval(() => { const t = now(); for (const [k, b] of buckets) if (b.reset < t) buckets.delete(k); }, 10 * 60e3).unref?.();
   function newSession(uidv, req) {
     const sid = uid();
     const client = ['desktop', 'app', 'web'].includes(req.body?.client || req.headers['x-orbit-client']) ? (req.body?.client || req.headers['x-orbit-client']) : 'web';
@@ -339,6 +358,7 @@ function start(opts = {}) {
     const p = jwt.verify(t, SECRET);
     const u = one('SELECT * FROM users WHERE id=?', p.id); if (!u) throw 0;
     if (p.sid && !one('SELECT 1 FROM sessions WHERE id=? AND user_id=?', p.sid, u.id)) throw 0;   // this device was logged out
+    if (!p.sid && u.tokens_after) { const issued = (p.iat || 0) > 1e12 ? p.iat : (p.iat || 0) * 1000; if (issued < u.tokens_after) throw 0; }   // old-style login revoked
     return { u, sid: p.sid || null };
   }
   const seenAt = new Map();
@@ -369,6 +389,7 @@ function start(opts = {}) {
   app.get('/api/info', (req, res) => res.json({ name: 'Orbit', version: VERSION, email_verification: emailEnabled, max_upload_mb: maxUpload / 1048576, spotify: !!SPOTIFY_ID, gif: !!GIPHY_KEY }));
   app.post('/api/auth/register', wrap(async (req, res) => {
     const { email, username, password, display_name } = req.body || {};
+    limit('reg:' + clientIp(req), 5, 3600e3, 'Too many new accounts from your network.');
     if (!emailRe.test(email || '')) throw err(400, 'Enter a valid email');
     if (!userRe.test(username || '')) throw err(400, 'Username must be 2–32 letters, numbers, _ or .');
     if (!password || password.length < 6) throw err(400, 'Password must be at least 6 characters');
@@ -383,6 +404,7 @@ function start(opts = {}) {
   }));
   app.post('/api/auth/verify', wrap((req, res) => {
     const { email, code } = req.body || {};
+    limit('code:' + String(email || '').toLowerCase(), 10, 15 * 60e3, 'Too many code attempts.');
     checkCode(email, code, 'verify');
     const u = one('SELECT * FROM users WHERE email=?', email);
     if (!u) throw err(404, 'Account not found');
@@ -390,30 +412,39 @@ function start(opts = {}) {
     res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/resend', wrap(async (req, res) => {
+    limit('mail:' + String(req.body?.email || '').toLowerCase(), 3, 15 * 60e3, 'Too many emails sent.'); limit('mailip:' + clientIp(req), 10, 3600e3, 'Too many emails sent.');
     const u = one('SELECT * FROM users WHERE email=?', req.body?.email || '');
     if (u && !u.verified) await sendCode(u.email, newCode(u.email, 'verify'), 'verify');
     res.json({ ok: true });
   }));
   app.post('/api/auth/login', wrap(async (req, res) => {
     const { email, password } = req.body || {};
+    // slow down password guessing: 8 wrong tries per account and 30 per network, per 15 minutes
+    const acctKey = 'fail:' + String(email || '').toLowerCase(), ipKey = 'failip:' + clientIp(req);
+    const wait = peekOver(acctKey, 8) || peekOver(ipKey, 30);
+    if (wait) throw err(429, `Too many wrong passwords. Try again in ${waitText(wait)}.`);
     const u = one('SELECT * FROM users WHERE email=? OR username=?', email || '', email || '');
-    if (!u || !bcrypt.compareSync(password || '', u.pass)) throw err(401, 'Wrong email or password');
+    if (!u || !bcrypt.compareSync(password || '', u.pass)) { hit(acctKey, 8, 15 * 60e3); hit(ipKey, 30, 15 * 60e3); throw err(401, 'Wrong email or password'); }
+    buckets.delete(acctKey);
     if (!u.verified && emailEnabled) { await sendCode(u.email, newCode(u.email, 'verify'), 'verify'); return res.json({ needs_verification: true, email: u.email }); }
     res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/forgot', wrap(async (req, res) => {
+    limit('mail:' + String(req.body?.email || '').toLowerCase(), 3, 15 * 60e3, 'Too many emails sent.'); limit('mailip:' + clientIp(req), 10, 3600e3, 'Too many emails sent.');
     const u = one('SELECT * FROM users WHERE email=?', req.body?.email || '');
     if (u) await sendCode(u.email, newCode(u.email, 'reset'), 'reset');
     res.json({ ok: true, email_enabled: emailEnabled });
   }));
   app.post('/api/auth/reset', wrap((req, res) => {
     const { email, code, password } = req.body || {};
+    limit('code:' + String(email || '').toLowerCase(), 10, 15 * 60e3, 'Too many code attempts.');
     if (!password || password.length < 6) throw err(400, 'Password must be at least 6 characters');
     checkCode(email, code, 'reset');
     const u = one('SELECT * FROM users WHERE email=?', email);
     if (!u) throw err(404, 'Account not found');
     run('UPDATE users SET pass=?, verified=1 WHERE id=?', bcrypt.hashSync(password, 10), u.id);
     all('SELECT id FROM sessions WHERE user_id=?', u.id).forEach(x => endSession(x.id));   // reset = log out everywhere else
+    revokeLegacy(u.id);
     res.json({ token: token(u, req) });
   }));
 
@@ -424,11 +455,38 @@ function start(opts = {}) {
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
     res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id) });
   }));
+  // ICE servers for voice/video. Add a TURN relay in Render -> Environment so calls work on strict networks:
+  //   TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL   (any TURN provider)
+  //   or CF_TURN_KEY_ID + CF_TURN_API_TOKEN          (Cloudflare Realtime TURN, free tier)
+  //   or METERED_DOMAIN + METERED_API_KEY            (Metered.ca)
+  let iceCache = null;
+  async function iceServers() {
+    const list = [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
+    const E = process.env;
+    if (E.TURN_URLS && E.TURN_USERNAME && E.TURN_CREDENTIAL) list.push({ urls: E.TURN_URLS.split(',').map(x => x.trim()).filter(Boolean), username: E.TURN_USERNAME, credential: E.TURN_CREDENTIAL });
+    if (iceCache && iceCache.at > now() - 6 * 3600e3) return [...list, ...iceCache.servers];
+    let extra = [];
+    try {
+      if (E.CF_TURN_KEY_ID && E.CF_TURN_API_TOKEN) {
+        const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(E.CF_TURN_KEY_ID)}/credentials/generate`, { method: 'POST', headers: { Authorization: 'Bearer ' + E.CF_TURN_API_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ ttl: 86400 }), signal: AbortSignal.timeout(5000) });
+        const j = await r.json(); const s2 = j.iceServers; if (s2) extra = Array.isArray(s2) ? s2 : [s2];
+      } else if (E.METERED_DOMAIN && E.METERED_API_KEY) {
+        const r = await fetch(`https://${E.METERED_DOMAIN}/api/v1/turn/credentials?apiKey=${encodeURIComponent(E.METERED_API_KEY)}`, { signal: AbortSignal.timeout(5000) });
+        const j = await r.json(); if (Array.isArray(j)) extra = j;
+      }
+    } catch (e) { log('TURN credentials failed:', e.message); }
+    if (extra.length) iceCache = { servers: extra, at: now() };
+    return [...list, ...extra];
+  }
+  app.get('/api/ice', auth, wrap(async (req, res) => { res.json({ iceServers: await iceServers() }); }));
   // devices you're logged in on
   app.get('/api/sessions', auth, wrap((req, res) => {
     res.json(all('SELECT id, created, last_seen, ua, client, ip FROM sessions WHERE user_id=? ORDER BY last_seen DESC', req.user.id)
       .map(x => ({ ...x, ip: undefined, current: x.id === req.sid })));
   }));
+  // old-style logins (before Devices existed) have no session to delete, so revoking "everything else" also bumps this
+  const revokeLegacy = (uidv) => run('UPDATE users SET tokens_after=? WHERE id=?', now(), uidv);
+  setTimeout(function pruneSessions() { run('DELETE FROM sessions WHERE last_seen<?', now() - 61 * 864e5); setTimeout(pruneSessions, 12 * 3600e3).unref?.(); }, 5000).unref?.();
   function endSession(sid) { run('DELETE FROM sessions WHERE id=?', sid); seenAt.delete(sid); io.in('sess:' + sid).disconnectSockets(true); }
   app.delete('/api/sessions/:id', auth, wrap((req, res) => {
     const x = one('SELECT id FROM sessions WHERE id=? AND user_id=?', req.params.id, req.user.id);
@@ -437,7 +495,7 @@ function start(opts = {}) {
   }));
   app.delete('/api/sessions', auth, wrap((req, res) => {   // log out every other device
     const rows = all('SELECT id FROM sessions WHERE user_id=? AND id<>?', req.user.id, req.sid || '');
-    rows.forEach(x => endSession(x.id)); res.json({ ok: true, count: rows.length });
+    rows.forEach(x => endSession(x.id)); revokeLegacy(req.user.id); res.json({ ok: true, count: rows.length });
   }));
   app.post('/api/logout', auth, wrap((req, res) => { if (req.sid) endSession(req.sid); res.json({ ok: true }); }));
   app.patch('/api/me', auth, wrap((req, res) => {
@@ -452,6 +510,7 @@ function start(opts = {}) {
       if (b.new_password.length < 6) throw err(400, 'Password must be at least 6 characters');
       run('UPDATE users SET pass=? WHERE id=?', bcrypt.hashSync(b.new_password, 10), u.id);
       all('SELECT id FROM sessions WHERE user_id=? AND id<>?', u.id, req.sid || '').forEach(x => endSession(x.id));   // changing your password logs out your other devices
+      revokeLegacy(u.id);
     }
     const f = (k, max) => (b[k] !== undefined ? String(b[k]).slice(0, max) : u[k]);
     const accent = /^#[0-9a-f]{6}$/i.test(b.accent || '') ? b.accent : u.accent;
@@ -486,6 +545,15 @@ function start(opts = {}) {
     run(`UPDATE users SET ${req.params.kind}=?, ${req.params.kind}_crop=? WHERE id=?`, fileUrl(req.file), req.body?.crop ? (() => { try { const c = JSON.parse(req.body.crop); return JSON.stringify({ z: Math.min(4, Math.max(1, +c.z || 1)), x: Math.min(100, Math.max(0, +c.x)), y: Math.min(100, Math.max(0, +c.y)) }); } catch { return null; } })() : null, req.user.id);
     broadcastUser(req.user.id);
     res.json(getUser(req.user.id));
+  }));
+  // staff: download a fresh copy of the whole database (keep it somewhere safe, off Render)
+  app.get('/api/admin/backup', auth, wrap((req, res) => {
+    if (!STAFF.has((req.user.username || '').toLowerCase())) throw err(403, 'Only Orbit staff can download backups');
+    limit('backup:' + req.user.id, 5, 3600e3, 'Too many backups.');
+    const file = makeBackup(path.join(backupDir, 'download-latest.db'));
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="orbit-backup-${new Date().toISOString().slice(0, 10)}.db"`);
+    res.sendFile(file);
   }));
   // staff give / take away badges. Body: { badge: 'og' | 'trusted', on: true | false }
   app.put('/api/users/:id/badges', auth, wrap((req, res) => {
@@ -1053,16 +1121,23 @@ function start(opts = {}) {
       opts.all ? cb(null, list) : cb(null, list[0].address, list[0].family);
     });
   }
-  function fetchLimited(url, max = 600 * 1024, hops = 0) {
+  function fetchLimited(url, max = 600 * 1024, hops = 0, wantImage = false) {
     return new Promise((resolve, reject) => {
       let u; try { u = new URL(url); } catch { return reject(new Error('bad url')); }
       if (!/^https?:$/.test(u.protocol) || (u.port && !['80', '443', '8080', '8443'].includes(u.port))) return reject(new Error('bad url'));
       if (net.isIP(u.hostname.replace(/^\[|\]$/g, '')) && privateIp(u.hostname.replace(/^\[|\]$/g, ''))) return reject(new Error('blocked'));
       const mod = u.protocol === 'https:' ? httpsMod : httpMod;
       const rq = mod.get(u, { lookup: safeLookup, timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OrbitLinkPreview/1.0)', Accept: 'text/html,application/xhtml+xml,image/*;q=0.8,*/*;q=0.5', 'Accept-Language': 'en' } }, (r) => {
-        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) { r.resume(); if (hops >= 4) return reject(new Error('too many redirects')); return resolve(fetchLimited(new URL(r.headers.location, u).href, max, hops + 1)); }
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) { r.resume(); if (hops >= 4) return reject(new Error('too many redirects')); return resolve(fetchLimited(new URL(r.headers.location, u).href, max, hops + 1, wantImage)); }
         if (r.statusCode !== 200) { r.resume(); return reject(new Error('status ' + r.statusCode)); }
         const type = String(r.headers['content-type'] || '');
+        if (wantImage) {
+          if (!/^image\/(png|jpe?g|gif|webp|avif)/i.test(type)) { r.destroy(); return reject(new Error('not an image')); }   // never SVG (it can run scripts)
+          let size = 0; const chunks = [];
+          r.on('data', (c) => { size += c.length; if (size > max) { r.destroy(new Error('too big')); return; } chunks.push(c); });
+          r.on('end', () => resolve({ url: u.href, type, buf: Buffer.concat(chunks) }));
+          r.on('error', reject); return;
+        }
         if (/^image\//.test(type)) { r.destroy(); return resolve({ url: u.href, type, body: '' }); }
         if (!/html/.test(type)) { r.destroy(); return reject(new Error('not html')); }
         let size = 0; const chunks = [];
@@ -1097,6 +1172,24 @@ function start(opts = {}) {
     for (const m of String(content || '').matchAll(/(<)?(https?:\/\/[^\s<>]+[^\s<>.,:;"')\]!?])(>)?/g)) { if (m[1] && m[3]) continue; if (!out.includes(m[2])) out.push(m[2]); }
     return out.slice(0, 3);
   }
+  // link preview images are loaded through Orbit, so other websites never see who is viewing the message.
+  // The URL is signed so this can't be used as an open proxy.
+  const proxySig = (u) => crypto.createHmac('sha256', SECRET).update('img:' + u).digest('base64url').slice(0, 22);
+  const proxied = (u) => (u && /^https?:\/\//.test(u) ? `/embed-img?u=${encodeURIComponent(Buffer.from(u).toString('base64url'))}&s=${proxySig(u)}` : u);
+  const imgCache = new Map();
+  app.get('/embed-img', wrap(async (req, res) => {
+    let u = ''; try { u = Buffer.from(String(req.query.u || ''), 'base64url').toString('utf8'); } catch {}
+    if (!u || String(req.query.s || '') !== proxySig(u)) return res.status(403).end();
+    let hit2 = imgCache.get(u);
+    if (!hit2 || hit2.at < now() - 3600e3) {
+      try { const r = await fetchLimited(u, 8 * 1024 * 1024, 0, true); hit2 = { type: r.type, buf: r.buf, at: now() }; }
+      catch { return res.status(404).end(); }
+      imgCache.set(u, hit2); let total = 0; for (const [k, v] of [...imgCache].reverse()) { total += v.buf.length; if (total > 60e6) imgCache.delete(k); }
+    }
+    res.setHeader('Content-Type', hit2.type); res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.end(hit2.buf);
+  }));
   const embedCache = new Map();
   async function embedFor(url) {
     const hit = embedCache.get(url); if (hit && hit.at > now() - 30 * 60e3) return hit.e;
@@ -1109,7 +1202,8 @@ function start(opts = {}) {
     embedCache.set(url, { e, at: now() }); if (embedCache.size > 500) embedCache.delete(embedCache.keys().next().value);
     return e;
   }
-  function unfurlLater(id, content) {
+  function unfurlLater(id, content, authorId) {
+    if (authorId && hit('unfurl:' + authorId, 20, 60e3)) return;   // someone spamming links: skip previews for a minute
     const urls = linksIn(content).filter(u => !/^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(u));
     if (!urls.length) return;
     Promise.all(urls.map(embedFor)).then(list => {
@@ -1145,6 +1239,13 @@ function start(opts = {}) {
     const before = Number(req.query.before) || 9e15;
     const limit = Math.min(Number(req.query.limit) || 50, 100);
     const thread = req.query.thread ? Number(req.query.thread) : null;
+    if (ch.type === 'forum' && !thread && req.query.sort === 'active') {
+      // forum posts, most recently active first (a new reply bumps an old post back to the top)
+      const offset = Math.max(0, Number(req.query.offset) || 0);
+      const posts = all(`SELECT m.*, COALESCE((SELECT MAX(r.created) FROM messages r WHERE r.thread_id=m.id), m.created) AS act FROM messages m
+        WHERE m.channel_id=? AND m.thread_id IS NULL AND m.system=0 ORDER BY act DESC LIMIT ? OFFSET ?`, ch.id, limit, offset);
+      return res.json(fmtMessages(posts));
+    }
     const rows = thread
       ? all('SELECT * FROM messages WHERE channel_id=? AND thread_id=? AND id<? ORDER BY id DESC LIMIT ?', ch.id, thread, before, limit)
       : all('SELECT * FROM messages WHERE channel_id=? AND thread_id IS NULL AND id<? ORDER BY id DESC LIMIT ?', ch.id, before, limit);
@@ -1166,6 +1267,7 @@ function start(opts = {}) {
     const ch = chanRow(req.params.id);
     const cleanup = () => (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
     if (!canView(ch, req.user.id) || !['text', 'dm', 'forum'].includes(ch.type)) { cleanup(); throw err(403, 'No access'); }
+    if (hit('send:' + req.user.id, 25, 10e3)) { cleanup(); throw err(429, 'You’re sending messages too fast. Slow down a little.'); }
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
     if (ch.type !== 'dm') {
@@ -1218,7 +1320,7 @@ function start(opts = {}) {
     const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll,sticker,title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
       ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null, sticker ? JSON.stringify(sticker) : null, title);
     const msg = msgById(Number(r.lastInsertRowid));
-    unfurlLater(msg.id, content);
+    unfurlLater(msg.id, content, req.user.id);
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, msg.id);
     emitToChannel(ch, 'message:new', msg);
     if (thread) emitToChannel(ch, 'message:update', msgById(thread.id));
@@ -1229,6 +1331,9 @@ function start(opts = {}) {
   app.patch('/api/messages/:id', auth, wrap((req, res) => {
     const m = one('SELECT * FROM messages WHERE id=?', req.params.id);
     if (!m || m.author_id !== req.user.id) throw err(403, 'You can only edit your own messages');
+    { const ch0 = chanRow(m.channel_id);
+      if (!canView(ch0, req.user.id)) throw err(403, 'You no longer have access to this channel');
+      if (ch0.type !== 'dm' && timedOutUntil(ch0.server_id, req.user.id)) throw err(403, 'You’re timed out in this server'); }
     if (req.body?.title !== undefined && m.title != null) {
       const t = String(req.body.title || '').trim().slice(0, 100); if (!t) throw err(400, 'Give your post a title');
       run('UPDATE messages SET title=? WHERE id=?', t, m.id);
@@ -1242,7 +1347,7 @@ function start(opts = {}) {
     const linksChanged = linksIn(content).join() !== linksIn(m.content).join();
     if (linksChanged) run(`UPDATE messages SET embeds='[]' WHERE id=?`, m.id);
     emitToChannel(ch, 'message:update', msgById(m.id));
-    if (linksChanged) unfurlLater(m.id, content);
+    if (linksChanged) unfurlLater(m.id, content, req.user.id);
     res.json({ ok: true });
   }));
   function deleteMessage(id) {
@@ -1260,6 +1365,7 @@ function start(opts = {}) {
     const ch = chanRow(m.channel_id);
     const mod = ch.type !== 'dm' && has(ch.server_id, req.user.id, P.MANAGE_MESSAGES);
     if (m.author_id !== req.user.id && !mod) throw err(403, 'Missing permission');
+    if (!mod && !canView(ch, req.user.id)) throw err(403, 'You no longer have access to this channel');
     deleteMessage(m.id);
     res.json({ ok: true });
   }));
@@ -1393,13 +1499,13 @@ function start(opts = {}) {
   // inbox: recent @mentions and replies to you, from every server and DM you can still see
   app.get('/api/inbox', auth, wrap((req, res) => {
     const me = req.user.id; const before = Number(req.query.before) || 9e15;
-    const rows = all(`SELECT * FROM messages WHERE author_id<>? AND system=0 AND id<? AND created>? AND (mentions LIKE ? OR mention_everyone=1) ORDER BY id DESC LIMIT 400`,
-      me, before, now() - 60 * 864e5, `%"${me}"%`);
+    const rows = all(`SELECT * FROM messages WHERE author_id<>? AND system=0 AND id<? AND created>? AND (mentions LIKE ? ESCAPE '\\' OR mention_everyone=1) ORDER BY id DESC LIMIT ?`,
+      me, before, now() - 60 * 864e5, `%"${likeEsc(me)}"%`, Math.min(400, Math.max(1, Number(req.query.limit) || 400)));
     const seen = new Map(), out = [];
     for (const r of rows) {
       if (!seen.has(r.channel_id)) seen.set(r.channel_id, canView(chanRow(r.channel_id), me));
       if (seen.get(r.channel_id)) out.push(r);
-      if (out.length >= 40) break;
+      if (out.length >= Math.min(40, Number(req.query.limit) || 40)) break;
     }
     res.json(fmtMessages(out));
   }));
@@ -1422,7 +1528,7 @@ function start(opts = {}) {
     if (text) { where.push(`content LIKE ? ESCAPE '\\'`); args.push('%' + text.replace(/[%_\\]/g, '\\$&') + '%'); }
     const userId = (v) => { v = String(v || '').replace(/^@/, ''); const u = one('SELECT id FROM users WHERE id=? OR username=? COLLATE NOCASE', v, v); return u ? u.id : '__none__'; };
     if (Q.from) { where.push('author_id=?'); args.push(userId(Q.from)); }
-    if (Q.mentions) { where.push('mentions LIKE ?'); args.push(`%"${userId(Q.mentions)}"%`); }
+    if (Q.mentions) { where.push(`mentions LIKE ? ESCAPE '\\'`); args.push(`%"${likeEsc(userId(Q.mentions))}"%`); }
     const HAS = { image: `attachments LIKE '%"type":"image/%'`, video: `attachments LIKE '%"type":"video/%'`, audio: `attachments LIKE '%"type":"audio/%'`,
       voice: `attachments LIKE '%"voice":true%'`, file: `attachments<>'[]'`, link: `(content LIKE '%http://%' OR content LIKE '%https://%')`,
       embed: `embeds<>'[]'`, poll: 'poll IS NOT NULL', sticker: 'sticker IS NOT NULL' };

@@ -7,6 +7,22 @@ function mediaError(e, what) {
   if (n === 'NotFoundError' || n === 'DevicesNotFoundError' || n === 'OverconstrainedError') return `No ${what} was found. Plug one in, or pick a different one in Settings → Voice & Video.`;
   return `Couldn’t start your ${what}${e && e.message ? ': ' + e.message : ''}.`;
 }
+// outgoing-call ringback: a soft two-tone beep, drawn with Web Audio (no sound file needed)
+const Ringback = {
+  ctx: null, timer: null, stopAt: 0,
+  start(onTimeout) {
+    if (this.timer || !S.prefs.sounds) return;
+    try { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); this.ctx.resume?.(); } catch { return; }
+    const ring = () => {
+      const c = this.ctx, t = c.currentTime, g = c.createGain(); g.connect(c.destination);
+      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(0.06, t + 0.05); g.gain.setValueAtTime(0.06, t + 1.3); g.gain.linearRampToValueAtTime(0, t + 1.4);
+      [440, 480].forEach(f => { const o = c.createOscillator(); o.frequency.value = f; o.connect(g); o.start(t); o.stop(t + 1.45); });
+    };
+    ring(); this.timer = setInterval(ring, 3500);
+    this.stopAt = setTimeout(() => { this.stop(); onTimeout && onTimeout(); }, 45000);
+  },
+  stop() { clearInterval(this.timer); clearTimeout(this.stopAt); this.timer = null; try { this.ctx?.close(); } catch {} this.ctx = null; },
+};
 const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] };
 
 const Voice = {
@@ -17,7 +33,7 @@ const Voice = {
 
   bindSocket(sock) {
     this.socket = sock;
-    sock.on('voice:peer-joined', ({ user_id }) => { if (this.channel) this.addPeer(user_id, true); });
+    sock.on('voice:peer-joined', ({ user_id }) => { Ringback.stop(); if (this.channel) this.addPeer(user_id, true); });
     sock.on('voice:peer-left', ({ user_id }) => this.removePeer(user_id));
     sock.on('voice:left', ({ channel_id }) => { if (this.channel === channel_id && this.state !== 'leaving') this.cleanup(); });
     sock.on('voice:signal', ({ from, data }) => this.onSignal(from, data));
@@ -42,12 +58,18 @@ const Voice = {
     }
     this.applyMute();
     this.watchSpeaking(S.me.id, this.local);
+    // relay (TURN) servers from Orbit's server, so calls also work on strict networks
+    if (!this._iceAt || this._iceAt < Date.now() - 30 * 60e3) { try { this.ice = await api('GET', '/api/ice'); this._iceAt = Date.now(); } catch {} }
+    if (this.channel !== channelId) return;
     this.socket.emit('voice:join', { channel_id: channelId, muted: this.muted, deaf: this.deaf }, (res) => {
       if (!res || res.error) { toast(res?.error || 'Couldn’t join voice', true); this.cleanup(); return; }
       if (this.channel !== channelId) return;
       this.state = 'connected'; this.joinedAt = Date.now();
       playSfx('join');
       res.peers.forEach(p => this.addPeer(p, false));
+      // you started a DM / group call and nobody's in it yet: play a ringback tone until someone picks up
+      const ch = findChannel(channelId);
+      if (!res.peers.length && ch && (ch.type === 'dm' || ch.type === 'group')) Ringback.start(() => { if (this.channel === channelId && !this.peers.size) toast('No answer'); });
       if (opts.video) this.toggleCamera();
       rerenderVoiceUi();
     });
@@ -60,6 +82,7 @@ const Voice = {
     this.cleanup();
   },
   cleanup() {
+    Ringback.stop();
     for (const id of [...this.peers.keys()]) this.removePeer(id, true);
     this.local?.getTracks().forEach(t => t.stop());
     this.videoTrack?.stop(); this.screenAudio?.stop();
@@ -73,7 +96,7 @@ const Voice = {
 
   addPeer(id, polite) {
     if (id === S.me.id || this.peers.has(id)) return this.peers.get(id);
-    const pc = new RTCPeerConnection(ICE);
+    const pc = new RTCPeerConnection(this.ice || ICE);
     const peer = { id, pc, polite: S.me.id > id, makingOffer: false, ignoreOffer: false, stream: new MediaStream(), audio: new Audio(), videoStream: null,
       screenStreamId: null, screenAudioEl: null, screenAudioSender: null };
     peer.audio.autoplay = true;

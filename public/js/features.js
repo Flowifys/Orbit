@@ -115,7 +115,7 @@ function quickSwitcher() {
   if ($('.qs-modal')) return;
   const items = [];
   S.dms.forEach(d => items.push({ id: d.id, kind: 'dm', name: d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name, sub: d.type === 'group' ? 'Group' : '@' + d.user.username, html: d.type === 'group' ? groupAvatar(d, 's24') : avatar(d.user, 's24'), unread: !!S.unread[d.id] }));
-  Object.values(S.serverData).forEach(sd => sd.channels.forEach(c => items.push({ id: c.id, kind: c.type, name: c.name, sub: sd.name, html: `<span class="qs-ico">${c.type === 'voice' ? I.speaker : c.private ? I.lock : I.hash}</span>`, unread: !!S.unread[c.id] })));
+  Object.values(S.serverData).forEach(sd => sd.channels.filter(c => c.type !== 'category').forEach(c => items.push({ id: c.id, kind: c.type, name: c.name, sub: sd.name, html: `<span class="qs-ico">${c.type === 'voice' ? I.speaker : c.private ? I.lock : c.type === 'forum' ? I.forum : I.hash}</span>`, unread: !!S.unread[c.id] })));
   Object.values(S.serverData).forEach(sd => items.push({ id: sd.id, kind: 'server', name: sd.name, sub: 'Server', html: `<span class="qs-srv">${serverIcon(sd)}</span>` }));
   (S.friends.friends || []).forEach(u => { if (!items.find(i => i.kind === 'dm' && i.sub === '@' + u.username)) items.push({ id: u.id, kind: 'friend', name: u.display_name, sub: '@' + u.username, html: avatar(u, 's24') }); });
   const score = (it, q) => { const n = it.name.toLowerCase(), s2 = (it.sub || '').toLowerCase(); if (!q) return it.unread ? 3 : 1; if (n.startsWith(q)) return 10; if (n.includes(q)) return 6; if (s2.includes(q)) return 3; let i = 0; for (const ch of n) if (ch === q[i]) i++; return i === q.length ? 2 : 0; };
@@ -460,6 +460,9 @@ function renameCategoryModal(c) {
 }
 
 /* ---------- inbox ---------- */
+async function checkInbox() {
+  try { const [top] = await api('GET', '/api/inbox?limit=1'); if (top && top.id > (S.prefs.inboxSeen || 0)) { S.inboxUnread = true; $('.inbox-btn')?.classList.add('has-new'); } } catch {}
+}
 async function inboxPopout(anchor) {
   S.inboxUnread = false; $('.inbox-btn')?.classList.remove('has-new');
   const L = layer();
@@ -468,6 +471,7 @@ async function inboxPopout(anchor) {
   const r = anchor.getBoundingClientRect(); place(el, r.right - 440, r.bottom + 8);
   let rows = [];
   try { rows = await api('GET', '/api/inbox'); } catch (e) { toast(e.message, true); }
+  if (rows[0]) { S.prefs.inboxSeen = Math.max(S.prefs.inboxSeen || 0, rows[0].id); savePrefs(); }
   const where = (m) => { const ch = findChannel(m.channel_id); if (!ch) return ''; return ch.type === 'dm' ? `@${ch.name}` : ch.type === 'group' ? ch.name : `#${ch.name} · ${S.serverData[ch.server_id]?.name || ''}`; };
   $('.pp-list', el).innerHTML = rows.length ? rows.map(m => { const sid = findChannel(m.channel_id)?.server_id || null;
       return `<div class="pp-item ib-item" data-go="${m.id}" data-cid="${m.channel_id}" data-thread="${m.thread_id || ''}"><div class="ib-where">${esc(where(m))}</div>${messageHtml({ ...m, thread: null }, sid, null, true)}
@@ -552,7 +556,7 @@ async function startVoiceRecording(comp, cid, threadId, state) {
   const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported?.(t)) || '';
   const rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 64000 } : undefined);
   const chunks = [], levels = []; let cancelled = false; const t0 = Date.now();
-  const ctx = new (window.AudioContext || window.webkitAudioContext)(); const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(); ctx.resume?.().catch(() => {}); const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
   const bar = h(`<div class="rec-bar"><button class="icon-btn danger" data-rcancel title="Delete recording">${I.trash}</button><span class="rec-dot"></span><span class="rec-time">0:00</span><div class="rec-wave"></div><button class="send-btn ready" data-rsend title="Send voice message">${I.arrow}</button></div>`);
   $('.cbox', comp).classList.add('recording'); $('.cbox', comp).appendChild(bar);
   const wave = $('.rec-wave', bar);
@@ -726,7 +730,7 @@ function renderForum(cid) {
     ${S.hasMore[cid] ? '<button class="btn secondary block" data-fmore>Load older posts</button>' : ''}</div>`;
   view.onclick = (e) => {
     if (e.target.closest('[data-newpost]')) return newPostModal(cid);
-    if (e.target.closest('[data-fmore]')) return loadMessages(cid, true);
+    if (e.target.closest('[data-fmore]')) return loadForumPosts(cid, true);
     const p = e.target.closest('[data-post]'); if (p) { const m = (S.messages[cid] || []).find(x => x.id === Number(p.dataset.post)); if (m) { $$('.fp.open', view).forEach(x => x.classList.remove('open')); p.classList.add('open'); openThread(m); } }
   };
   $('[data-fsort]', view).onchange = (e) => { S.forumSort[cid] = e.target.value; renderForum(cid); };
@@ -794,4 +798,38 @@ async function renderDmProfile(box, ch) {
   if (!dmProfileCache[id] || dmProfileCache[id]._at < Date.now() - 60e3) {
     try { const u = await api('GET', '/api/users/' + id); dmProfileCache[id] = { ...u, _at: Date.now() }; S.users[id] = { ...S.users[id], ...u }; if (u.activity) S.activities[id] = u.activity; draw(); } catch {}
   }
+}
+
+/* ---------- forum posts load newest-activity first ---------- */
+async function loadForumPosts(cid, more) {
+  if (S.loading[cid]) return; S.loading[cid] = true;
+  const have = more ? (S.messages[cid] || []).filter(m => m.title).length : 0;
+  try {
+    const rows = await api('GET', `/api/channels/${cid}/messages?sort=active&limit=50&offset=${have}`);
+    const list = more ? (S.messages[cid] || []) : [];
+    rows.forEach(r => { if (!list.find(x => x.id === r.id)) list.push(r); });
+    S.messages[cid] = list; S.hasMore[cid] = rows.length === 50;
+  } catch (e) { toast(e.message, true); S.messages[cid] = S.messages[cid] || []; }
+  S.loading[cid] = false; renderForum(cid);
+}
+
+/* ---------- move channels without drag & drop (phones, keyboards) ---------- */
+async function saveTree(sd, groups) {
+  const body = groups.flatMap(g => [...(g.id ? [{ id: g.id, parent_id: null }] : []), ...g.list.map(id => ({ id, parent_id: g.id }))]).map((o, i) => ({ ...o, position: i }));
+  body.forEach(o => { const c = sd.channels.find(x => x.id === o.id); if (c) { c.position = o.position; if (c.type !== 'category') c.parent_id = o.parent_id; } });
+  renderSidebar();
+  try { await api('PUT', `/api/servers/${sd.id}/channels/order`, body); } catch (x) { toast(x.message, true); await fetchServer(sd.id); renderSidebar(); }
+}
+function treeGroups(sd) { const t = channelTree(sd); return [{ id: null, list: t.loose.map(c => c.id) }, ...t.cats.map(x => ({ id: x.cat.id, list: x.list.map(c => c.id) }))]; }
+function moveChannel(cid, dir) {
+  const sd = S.serverData[findChannel(cid)?.server_id]; if (!sd) return;
+  const groups = treeGroups(sd), g = groups.find(x => x.list.includes(cid)); const i = g.list.indexOf(cid), j = i + dir;
+  if (j < 0 || j >= g.list.length) return toast(dir < 0 ? 'Already at the top of its category' : 'Already at the bottom of its category');
+  [g.list[i], g.list[j]] = [g.list[j], g.list[i]]; saveTree(sd, groups);
+}
+function moveToCategoryMenu(e, cid) {
+  const sd = S.serverData[findChannel(cid)?.server_id]; if (!sd) return;
+  const cats = channelTree(sd).cats.map(x => x.cat);
+  const to = (pid) => { const groups = treeGroups(sd); groups.forEach(g => (g.list = g.list.filter(x => x !== cid))); groups.find(g => g.id === pid).list.push(cid); saveTree(sd, groups); };
+  setTimeout(() => contextMenu(e, [['No category (top of list)', () => to(null)], '-', ...cats.map(c => [esc(c.name), () => to(c.id)])]), 0);
 }

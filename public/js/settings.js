@@ -270,6 +270,20 @@ function userAbout(body) {
     <h3>Keyboard shortcuts</h3><div style="color:var(--text-2);font-size:14px;line-height:2">
     <b>Ctrl+K</b> — find or start a conversation<br><b>Ctrl+Shift+M</b> — toggle mute<br><b>Ctrl+Shift+D</b> — toggle deafen<br><b>↑</b> in an empty message box — edit your last message<br><b>Shift+Enter</b> — new line<br><b>Shift+click</b> delete — delete without confirming</div>
     <h3>Formatting</h3><div style="color:var(--text-2);font-size:14px;line-height:2">**bold** · *italic* · __underline__ · ~~strike~~ · ||spoiler|| · \`code\` · \`\`\`code block\`\`\` · &gt; quote · @mention</div>`;
+  if (S.me.staff) {
+    body.insertAdjacentHTML('beforeend', `<div class="danger-zone" style="border-color:var(--line-2)"><div class="grow"><b>Database backup</b><small>Download a full copy of Orbit’s data (accounts, servers, messages). Orbit also keeps 7 daily copies on the server, but save one somewhere else every so often in case Render’s disk is ever lost.</small></div><button class="btn primary" data-backup>${I.download} Download backup</button></div>`);
+    $('[data-backup]', body).onclick = async (e) => {
+      const b = e.currentTarget; b.disabled = true; b.textContent = 'Preparing…';
+      try {
+        const r = await fetch('/api/admin/backup', { headers: { Authorization: 'Bearer ' + S.token } });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Backup failed');
+        const url = URL.createObjectURL(await r.blob()); const a = document.createElement('a');
+        a.href = url; a.download = `orbit-backup-${new Date().toISOString().slice(0, 10)}.db`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 5000);
+        toast('Backup downloaded');
+      } catch (x) { toast(x.message, true); }
+      b.disabled = false; b.innerHTML = `${I.download} Download backup`;
+    };
+  }
 }
 
 /* ================= SERVER SETTINGS ================= */

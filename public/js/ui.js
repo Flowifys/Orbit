@@ -101,6 +101,7 @@ async function loadApp() {
   await Promise.all(S.servers.map(s => fetchServer(s.id)));
   renderShell();
   prefetchAvatars();
+  checkInbox();
   connectSocket();
   if (S.pendingInvite) { const c = S.pendingInvite; S.pendingInvite = null; showInvite(c); }
   else {
@@ -334,6 +335,8 @@ function renderSidebar() {
       can(PERM.CREATE_INVITE) && ['Invite people', () => inviteModal(S.view.server)],
       ['Copy channel link', () => copy(location.origin + '/app/' + c.id)],
       can(PERM.MANAGE_CHANNELS) && '-', can(PERM.MANAGE_CHANNELS) && ['Edit channel', () => channelSettingsModal(c.id)],
+      can(PERM.MANAGE_CHANNELS) && ['Move up', () => moveChannel(c.id, -1)], can(PERM.MANAGE_CHANNELS) && ['Move down', () => moveChannel(c.id, 1)],
+      can(PERM.MANAGE_CHANNELS) && ['Move to category…', () => moveToCategoryMenu(e, c.id)],
       can(PERM.MANAGE_CHANNELS) && ['Delete channel', () => deleteChannel(c), 'danger'],
     ]);
   };
@@ -418,7 +421,7 @@ function renderMain() {
     return;
   }
   if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
-  if (ch.type === 'forum') { content.innerHTML = `<div class="forum-view" data-forum="${ch.id}"></div>`; renderForum(ch.id); if (!S.messages[ch.id]) loadMessages(ch.id); markRead(ch.id); return; }
+  if (ch.type === 'forum') { content.innerHTML = `<div class="forum-view" data-forum="${ch.id}"></div>`; renderForum(ch.id); if (!S.messages[ch.id]) loadForumPosts(ch.id); markRead(ch.id); return; }
   content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${S.membersOpen ? `<aside class="members ${ch.type === 'dm' ? 'dm-panel' : ''}"></aside>` : ''}`;
   renderMembers();
   bindComposer($('.chat .composer', content), ch.id, null);
@@ -653,6 +656,7 @@ function banMember(sid, uidv) {
 async function openChannel(cid) {
   const key = cid;
   renderTyping();
+  if (findChannel(cid)?.type === 'forum') { if (!S.messages[key]) await loadForumPosts(cid); markRead(cid); return; }
   if (!S.messages[key]) await loadMessages(key);
   else refreshMessages(key, true);
   markRead(cid);
@@ -1400,9 +1404,9 @@ function channelSettingsModal(cid) {
   let roles = [...c.allowed_roles];
   modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>${c.type === 'voice' ? '🔊' : '#'} ${esc(c.name)}</h2><p>Channel settings</p></div>
     <div class="mb"><div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
-    ${c.type === 'text' ? `<div class="field"><label>Channel topic</label><textarea class="input" name="topic" maxlength="300" placeholder="Let everyone know how to use this channel!">${esc(c.topic || '')}</textarea></div>` : ''}
+    ${c.type === 'text' || c.type === 'forum' ? `<div class="field"><label>${c.type === 'forum' ? 'Post guidelines' : 'Channel topic'}</label><textarea class="input" name="topic" maxlength="300" placeholder="Let everyone know how to use this channel!">${esc(c.topic || '')}</textarea></div>` : ''}
     <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles (and admins) can view it.</small></span><span class="toggle"><input type="checkbox" name="priv" ${c.private ? 'checked' : ''}><span></span></span></label>
-    <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div>${c.type === 'text' ? `<div class="field" style="margin-top:14px"><label>Slowmode</label><select class="input" name="slow">${SLOW_OPTS.map(([v, l]) => `<option value="${v}" ${v === (c.slowmode || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select><p class="hint" style="margin:6px 0 0">Members can send one message per this interval. People who can manage messages or channels aren’t limited.</p></div>` : ''}</div>
+    <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div>${c.type === 'text' || c.type === 'forum' ? `<div class="field" style="margin-top:14px"><label>Slowmode</label><select class="input" name="slow">${SLOW_OPTS.map(([v, l]) => `<option value="${v}" ${v === (c.slowmode || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select><p class="hint" style="margin:6px 0 0">Members can send one message per this interval. People who can manage messages or channels aren’t limited.</p></div>` : ''}</div>
     <div class="mf"><button class="btn danger" data-del>Delete Channel</button><span class="sp"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
     $('[name=priv]', m).onchange = (e) => $('.roles-pick', m).classList.toggle('hidden', !e.target.checked);
     $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
