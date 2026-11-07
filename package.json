@@ -1,0 +1,58 @@
+{
+  "name": "orbit",
+  "version": "1.2.0",
+  "description": "Orbit chat",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node server/server.js",
+    "desktop": "electron ."
+  },
+  "keywords": [],
+  "author": "Orbit",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "express": "^5.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.5.0",
+    "nodemailer": "^10.3.1",
+    "socket.io": "^4.8.4"
+  },
+  "productName": "Orbit",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "build": {
+    "appId": "app.orbit.chat",
+    "productName": "Orbit",
+    "files": [
+      "electron/**",
+      "server/**",
+      "public/**",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "electron/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "compression": "maximum",
+    "portable": {
+      "artifactName": "Orbit.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  }
+}

@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: orbit
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/info
+    disk:
+      name: orbit-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: ORBIT_DATA
+        value: /data
+      - key: JWT_SECRET
+        generateValue: true
+      - key: SPOTIFY_CLIENT_ID
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false

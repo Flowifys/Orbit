@@ -1,0 +1,1191 @@
+'use strict';
+/* Orbit UI: auth, shell, sidebar, chat, members, popouts, modals */
+const LOGO = '/logo.png';
+let socket = null;
+
+/* ================= AUTH ================= */
+function renderAuth(mode = 'login', ctx = {}) {
+  const root = $('#root');
+  const invite = ctx.invite || S.pendingInvite;
+  const titles = {
+    login: ['Welcome back!', invite ? 'Log in to accept your invite.' : 'We’re so excited to see you again!'],
+    register: ['Create an account', invite ? 'Sign up to accept your invite.' : 'Join Orbit in a few seconds.'],
+    verify: ['Check your email', `We sent a 6-digit code to ${esc(ctx.email || '')}.`],
+    forgot: ['Reset your password', 'Enter your email and we’ll send you a code.'],
+    reset: ['Choose a new password', `Enter the code sent to ${esc(ctx.email || '')}.`],
+  };
+  const [t, sub] = titles[mode];
+  let fields = '';
+  if (mode === 'login') fields = `
+    <div class="field"><label>Email or username <span class="req">*</span></label><input class="input" name="email" autocomplete="username" required></div>
+    <div class="field"><label>Password <span class="req">*</span></label><input class="input" name="password" type="password" autocomplete="current-password" required></div>
+    <div style="margin:-6px 0 14px"><button type="button" class="btn ghost sm" style="padding:0" data-go="forgot">Forgot your password?</button></div>
+    <button class="btn primary block">Log In</button>
+    <div class="switch">Need an account? <button type="button" data-go="register">Register</button></div>`;
+  if (mode === 'register') fields = `
+    <div class="field"><label>Email <span class="req">*</span></label><input class="input" name="email" type="email" autocomplete="email" required></div>
+    <div class="field"><label>Display name</label><input class="input" name="display_name" maxlength="32" placeholder="How others see you"></div>
+    <div class="field"><label>Username <span class="req">*</span></label><input class="input" name="username" autocomplete="username" maxlength="32" pattern="[a-zA-Z0-9_.]{2,32}" required placeholder="letters, numbers, _ and ."></div>
+    <div class="field"><label>Password <span class="req">*</span></label><input class="input" name="password" type="password" autocomplete="new-password" minlength="6" required></div>
+    <button class="btn primary block">Continue</button>
+    <div class="switch"><button type="button" data-go="login">Already have an account?</button></div>`;
+  if (mode === 'verify') fields = `
+    <div class="field"><label>Verification code</label><input class="input code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></div>
+    <button class="btn primary block">Verify</button>
+    <div class="switch">Didn’t get it? <button type="button" data-resend>Resend code</button> · <button type="button" data-go="login">Back to login</button></div>`;
+  if (mode === 'forgot') fields = `
+    <div class="field"><label>Email</label><input class="input" name="email" type="email" required></div>
+    <button class="btn primary block">Send code</button>
+    <div class="switch"><button type="button" data-go="login">Back to login</button></div>`;
+  if (mode === 'reset') fields = `
+    <div class="field"><label>Code</label><input class="input code-input" name="code" inputmode="numeric" maxlength="6" required></div>
+    <div class="field"><label>New password</label><input class="input" name="password" type="password" minlength="6" autocomplete="new-password" required></div>
+    <button class="btn primary block">Reset password</button>
+    <div class="switch"><button type="button" data-go="login">Back to login</button></div>`;
+  root.innerHTML = `<div class="auth"><form class="auth-card" novalidate>
+    <div class="auth-logo"><img src="${LOGO}" alt=""><span>Orbit</span></div>
+    <h1>${t}</h1><p class="sub">${sub}</p>
+    ${invite && (mode === 'login' || mode === 'register') ? `<div class="note">You’ve been invited to join a server.</div>` : ''}
+    ${ctx.note ? `<div class="note">${esc(ctx.note)}</div>` : ''}
+    <div class="err hidden"></div>${fields}</form></div>`;
+  const form = $('.auth-card');
+  const errBox = $('.err', form);
+  const showErr = (m) => { errBox.textContent = m; errBox.classList.remove('hidden'); };
+  form.querySelectorAll('[data-go]').forEach(b => b.onclick = () => renderAuth(b.dataset.go, { email: ctx.email }));
+  const rs = $('[data-resend]', form);
+  if (rs) rs.onclick = async () => { await api('POST', '/api/auth/resend', { email: ctx.email }).catch(() => {}); toast('A new code is on its way.'); };
+  setTimeout(() => $('input', form)?.focus(), 30);
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const d = Object.fromEntries(new FormData(form));
+    const btn = $('button.primary', form); btn.disabled = true;
+    try {
+      let r;
+      if (mode === 'login') r = await api('POST', '/api/auth/login', d, { noLogout: true });
+      if (mode === 'register') r = await api('POST', '/api/auth/register', d, { noLogout: true });
+      if (mode === 'verify') r = await api('POST', '/api/auth/verify', { email: ctx.email, code: d.code });
+      if (mode === 'forgot') { const x = await api('POST', '/api/auth/forgot', d); return renderAuth('reset', { email: d.email, note: x.email_enabled ? '' : 'Email isn’t set up on this server, so the code was written to the server’s log. Ask whoever runs the server for it.' }); }
+      if (mode === 'reset') r = await api('POST', '/api/auth/reset', { email: ctx.email, code: d.code, password: d.password });
+      if (r?.needs_verification) return renderAuth('verify', { email: r.email });
+      if (r?.token) { S.token = r.token; try { localStorage.setItem('orbit-token', r.token); } catch {} loadApp(); }
+    } catch (ex) { showErr(ex.message); btn.disabled = false; }
+  };
+}
+
+function logout() {
+  try { localStorage.removeItem('orbit-token'); } catch {}
+  S.token = null;
+  if (window.Voice) Voice.leave();
+  if (socket) { socket.disconnect(); socket = null; }
+  location.href = '/';
+}
+
+/* ================= BOOT ================= */
+async function boot() {
+  const m = location.pathname.match(/^\/invite\/([\w-]+)/);
+  if (m) { S.pendingInvite = m[1]; history.replaceState(null, '', '/'); }
+  try { S.token = localStorage.getItem('orbit-token'); } catch {}
+  S.info = await api('GET', '/api/info').catch(() => ({}));
+  if (S.token) loadApp(); else renderAuth(S.pendingInvite ? 'register' : 'login');
+}
+
+async function loadApp() {
+  let data;
+  try { data = await api('GET', '/api/me'); } catch (e) { if (!S.token) return; $('#root').innerHTML = `<div class="auth"><div class="auth-card"><h1>Can’t connect</h1><p class="sub">${esc(e.message)}</p><button class="btn primary block" onclick="location.reload()">Retry</button></div></div>`; return; }
+  S.me = data.me; S.users[S.me.id] = S.me;
+  S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {};
+  S.dms.forEach(d => (S.users[d.user.id] = d.user));
+  await Promise.all(S.servers.map(s => fetchServer(s.id)));
+  renderShell();
+  connectSocket();
+  if (S.pendingInvite) { const c = S.pendingInvite; S.pendingInvite = null; showInvite(c); }
+  else {
+    let last = null; try { last = JSON.parse(localStorage.getItem('orbit-view') || 'null'); } catch {}
+    if (last && last.server !== '@me' && S.serverData[last.server]) selectServer(last.server, last.channel);
+    else if (last && last.server === '@me' && last.channel && S.dms.find(d => d.id === last.channel)) selectChannel(last.channel);
+    else selectServer('@me');
+  }
+  if ('Notification' in window && Notification.permission === 'default' && S.prefs.notify) setTimeout(() => Notification.requestPermission().catch(() => {}), 1500);
+}
+async function fetchServer(sid) {
+  const sd = await api('GET', '/api/servers/' + sid);
+  S.serverData[sid] = sd;
+  sd.members.forEach(m => (S.users[m.id] = { ...S.users[m.id], ...pickUser(m) }));
+  const i = S.servers.findIndex(s => s.id === sid);
+  const sum = { id: sd.id, name: sd.name, icon: sd.icon, owner_id: sd.owner_id };
+  if (i >= 0) S.servers[i] = sum; else S.servers.push(sum);
+  return sd;
+}
+const pickUser = (m) => { const { nick, joined, roles, ...u } = m; if (u.activity) S.activities[u.id] = u.activity; return u; };
+
+/* ================= SOCKET ================= */
+function connectSocket() {
+  socket = io({ auth: { token: S.token, status: S.prefs.status } });
+  let wasDown = false;
+  socket.on('connect', () => { $('.offline-banner')?.remove(); if (wasDown) { wasDown = false; resync(); } });
+  socket.on('disconnect', () => { wasDown = true; if (!$('.offline-banner')) $('.main')?.prepend(h('<div class="offline-banner">Reconnecting…</div>')); });
+  socket.on('connect_error', (e) => { if (e.message === 'unauthorized') logout(); });
+  socket.on('message:new', onMessageNew);
+  socket.on('message:update', (m) => { upsertMessage(m); });
+  socket.on('message:delete', ({ id, channel_id, thread_id }) => {
+    const key = thread_id ? 't:' + thread_id : channel_id;
+    if (S.messages[key]) { S.messages[key] = S.messages[key].filter(x => x.id !== id); refreshMessages(key); }
+    if (S.thread && S.thread.id === id) closeThread();
+  });
+  socket.on('typing', ({ channel_id, user_id }) => {
+    if (user_id === S.me.id) return;
+    S.typing[channel_id] = S.typing[channel_id] || {};
+    S.typing[channel_id][user_id] = Date.now() + 9000;
+    renderTyping();
+  });
+  socket.on('activity', ({ user_id, activity }) => { if (activity) S.activities[user_id] = activity; else delete S.activities[user_id]; renderMembers(); const card = $(`.profile-card[data-card="${user_id}"] .activity-slot`); if (card) card.innerHTML = activityHtml(user_id); if (S.view.server === '@me' && !S.view.channel) renderMain(); if (user_id === S.me.id) renderUserPanel(); });
+  socket.on('presence', ({ user_id, status }) => { S.presence[user_id] = status; if (user_id === S.me.id) return renderUserPanel(); softRefresh(); });
+  socket.on('user:update', (u) => { S.users[u.id] = { ...S.users[u.id], ...u }; Object.values(S.serverData).forEach(sd => { const m = sd.members.find(x => x.id === u.id); if (m) Object.assign(m, u); });
+    S.dms.forEach(d => { if (d.user.id === u.id) d.user = u; }); if (u.id === S.me.id) S.me = { ...S.me, ...u }; softRefresh(true); });
+  socket.on('server:refresh', async ({ server_id }) => { await fetchServer(server_id).catch(() => {}); if (S.view.server === server_id) { const c = curChannel(); if (!c) selectServer(server_id); } softRefresh(true); });
+  socket.on('server:added', async ({ server_id }) => { if (!S.serverData[server_id]) { await fetchServer(server_id); renderRail(); } });
+  socket.on('server:removed', ({ server_id, reason }) => {
+    const name = S.serverData[server_id]?.name;
+    delete S.serverData[server_id]; S.servers = S.servers.filter(s => s.id !== server_id);
+    if (Voice.channel && findChannel(Voice.channel) == null) Voice.leave();
+    if (reason === 'kicked' || reason === 'banned') toast(`You were ${reason} from ${name || 'a server'}.`, true);
+    if (S.view.server === server_id) selectServer('@me'); else renderRail();
+  });
+  socket.on('dm:activity', ({ channel_id, user: u }) => {
+    S.users[u.id] = { ...S.users[u.id], ...u };
+    let d = S.dms.find(x => x.id === channel_id);
+    if (!d) { d = { id: channel_id, type: 'dm', user: u, last_id: 0, last_at: Date.now() }; S.dms.unshift(d); }
+    d.last_at = Date.now();
+    S.dms.sort((a, b) => b.last_at - a.last_at);
+    if (S.view.server === '@me') renderSidebar();
+    renderRail();
+  });
+  socket.on('voice:state', ({ channel_id, users }) => {
+    const prev = (S.voice[channel_id] || []).map(u => u.user_id);
+    if (users.length) S.voice[channel_id] = users; else delete S.voice[channel_id];
+    if (Voice.channel === channel_id) {
+      const now = users.map(u => u.user_id);
+      if (now.some(u => !prev.includes(u) && u !== S.me.id)) beep('join');
+      if (prev.some(u => !now.includes(u) && u !== S.me.id)) beep('leave');
+    }
+    renderSidebar(); renderVoiceArea();
+  });
+  Voice.bindSocket(socket);
+}
+async function resync() {
+  try {
+    const data = await api('GET', '/api/me');
+    S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice;
+    await Promise.all(S.servers.map(s => fetchServer(s.id)));
+    Object.keys(S.messages).forEach(k => delete S.messages[k]);
+    renderShell(); selectChannel(S.view.channel, true);
+  } catch {}
+}
+setInterval(() => { let changed = false; const t = Date.now(); for (const c in S.typing) for (const u in S.typing[c]) if (S.typing[c][u] < t) { delete S.typing[c][u]; changed = true; } if (changed) renderTyping(); }, 2000);
+
+/* ================= SHELL ================= */
+function renderShell() {
+  $('#root').innerHTML = `<div class="app"><nav class="rail"></nav><aside class="sidebar"></aside><main class="main"></main></div>`;
+  renderRail(); renderSidebar(); renderMain();
+}
+const softRefresh = debounce((full) => { renderSidebar(); renderMembers(); if (full) { renderRail(); renderTopbar(); refreshMessages(S.view.channel); if (S.thread) refreshMessages('t:' + S.thread.id); } renderVoiceArea(); }, 60);
+
+function unreadForServer(sid) { let c = 0, m = 0; for (const [, u] of Object.entries(S.unread)) if (u.server_id === sid) { c += u.count; m += u.mentions; } return { c, m }; }
+function renderRail() {
+  const rail = $('.rail'); if (!rail) return;
+  const dmUnread = S.dms.filter(d => S.unread[d.id]);
+  const dmMentions = dmUnread.reduce((a, d) => a + (S.unread[d.id].mentions || 0), 0);
+  rail.innerHTML = `
+    <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${dmMentions}</span>` : ''}</div>
+    ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
+    <div class="rail-sep"></div>
+    ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${u.m}</span>` : ''}</div>`; }).join('')}
+    <div class="rail-item" data-tip="Add a Server"><button class="rail-btn action" data-add>${I.plus}</button></div>
+    <div class="rail-item" data-tip="Join with an invite"><button class="rail-btn action" data-join>${I.compass}</button></div>`;
+  rail.onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.s) selectServer(b.dataset.s);
+    else if (b.dataset.dm) { S.view.server = '@me'; selectChannel(b.dataset.dm); }
+    else if ('add' in b.dataset) createServerModal();
+    else if ('join' in b.dataset) joinServerModal();
+  };
+  bindTips(rail);
+}
+let tipEl;
+function bindTips(root) {
+  $$('[data-tip]', root).forEach(el => {
+    el.onmouseenter = () => { tipEl?.remove(); const r = el.getBoundingClientRect(); tipEl = h(`<div class="tip">${esc(el.dataset.tip)}</div>`); document.body.appendChild(tipEl);
+      tipEl.style.left = (r.right + 10) + 'px'; tipEl.style.top = (r.top + r.height / 2 - tipEl.offsetHeight / 2) + 'px'; };
+    el.onmouseleave = () => { tipEl?.remove(); tipEl = null; };
+  });
+}
+
+function selectServer(sid, channelId) {
+  tipEl?.remove();
+  closeThread(true);
+  if (sid === '@me') {
+    S.view = { server: '@me', channel: null };
+    if (channelId && S.dms.find(d => d.id === channelId)) S.view.channel = channelId;
+  } else {
+    const sd = S.serverData[sid]; if (!sd) return;
+    const text = sd.channels.filter(c => c.type === 'text');
+    const pick = channelId && sd.channels.find(c => c.id === channelId && c.type === 'text') ? channelId : (S.lastChannel[sid] && text.find(c => c.id === S.lastChannel[sid]) ? S.lastChannel[sid] : text[0]?.id || null);
+    S.view = { server: sid, channel: pick };
+  }
+  saveView();
+  renderRail(); renderSidebar(); renderMain();
+  if (S.view.channel) openChannel(S.view.channel);
+}
+function selectChannel(cid, force) {
+  const ch = findChannel(cid);
+  if (!ch) return selectServer('@me');
+  if (ch.type === 'voice') { S.view.server = ch.server_id; S.view.channel = cid; saveView(); renderSidebar(); renderMain(); return; }
+  const serverChanged = (ch.server_id || '@me') !== S.view.server;
+  if (!force && !serverChanged && S.view.channel === cid) { showMainMobile(); return; }
+  S.view = { server: ch.server_id || '@me', channel: cid };
+  if (ch.server_id) S.lastChannel[ch.server_id] = cid;
+  closeThread(true);
+  saveView();
+  if (serverChanged) renderRail();
+  renderSidebar(); renderMain();
+  openChannel(cid);
+}
+function saveView() { try { localStorage.setItem('orbit-view', JSON.stringify(S.view)); } catch {} }
+function showMainMobile() { $('.app')?.classList.add('show-main'); }
+
+/* ================= SIDEBAR ================= */
+function renderSidebar() {
+  const side = $('.sidebar'); if (!side) return;
+  const scroll = $('.side-list', side)?.scrollTop || 0;
+  if (S.view.server === '@me') {
+    side.innerHTML = `<button class="side-search" data-find>Find or start a conversation</button>
+      <div class="side-list">
+        <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">People</span></button>
+        <div class="cat"><span>Direct messages</span><button data-find title="New message">+</button></div>
+        ${S.dms.length ? S.dms.map(d => { const un = S.unread[d.id]; const inCall = (S.voice[d.id] || []).length;
+          return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${avatar(d.user, 's32', true)}<span class="nm">${esc(d.user.display_name)}${d.user.status_text ? `<small>${esc(d.user.status_text)}</small>` : ''}</span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`; }).join('')
+          : `<p style="color:var(--dim);font-size:13px;padding:8px">No conversations yet. Click someone’s name to message them.</p>`}
+      </div>${voiceBarHtml()}${userPanelHtml()}`;
+  } else {
+    const sd = curServer(); if (!sd) return;
+    const text = sd.channels.filter(c => c.type === 'text'), voice = sd.channels.filter(c => c.type === 'voice');
+    const chanBtn = (c) => {
+      const un = S.unread[c.id];
+      const icon = c.type === 'voice' ? I.speaker : I.hash;
+      const people = c.type === 'voice' ? (S.voice[c.id] || []) : [];
+      return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && S.view.channel !== c.id ? 'unread' : ''}" data-ch="${c.id}">
+        <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
+        ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
+        <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
+      </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (Voice.speaking.has(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live">LIVE</span>' : ''}${p.video ? I.video : ''}${p.deaf ? I.deaf : p.muted ? I.micOff : ''}</span></div>`).join('')}</div>` : ''}`;
+    };
+    const head = `<div class="side-head" data-smenu><span class="sh-icon">${serverIcon(sd)}</span><span class="t">${esc(sd.name)}</span>${I.chevron}</div>`;
+    side.innerHTML = `${sd.banner ? `<div class="side-banner" style="background-image:url('${esc(sd.banner)}')">${head}</div>` : head}
+      <div class="side-list">
+        <div class="cat"><span>Text channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="text" title="Create channel">+</button>` : ''}</div>
+        ${text.map(chanBtn).join('')}
+        <div class="cat"><span>Voice channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="voice" title="Create channel">+</button>` : ''}</div>
+        ${voice.map(chanBtn).join('')}
+      </div>${voiceBarHtml()}${userPanelHtml()}`;
+  }
+  const list = $('.side-list', side); if (list) list.scrollTop = scroll;
+  side.onclick = (e) => {
+    const t = e.target;
+    if (t.closest('[data-find]')) return newDmModal();
+    if (t.closest('[data-home]')) { S.view.channel = null; saveView(); renderSidebar(); renderMain(); showMainMobile(); return; }
+    const dm = t.closest('[data-dm]'); if (dm) { selectChannel(dm.dataset.dm); showMainMobile(); return; }
+    if (t.closest('[data-invite]')) { e.stopPropagation(); return inviteModal(S.view.server); }
+    const ed = t.closest('[data-edit]'); if (ed) { e.stopPropagation(); return channelSettingsModal(ed.dataset.edit); }
+    const nw = t.closest('[data-new]'); if (nw) return createChannelModal(nw.dataset.new);
+    const vu = t.closest('.vc-user'); if (vu) return profilePopout(vu.dataset.uid, vu);
+    const ch = t.closest('[data-ch]');
+    if (ch) { const c = findChannel(ch.dataset.ch); if (c.type === 'voice') { if (Voice.channel !== c.id) Voice.join(c.id); S.view.channel = c.id; saveView(); renderSidebar(); renderMain(); showMainMobile(); } else { selectChannel(c.id); showMainMobile(); } return; }
+    if (t.closest('[data-smenu]')) return serverMenu(t.closest('[data-smenu]'));
+    voiceBarClick(e); userPanelClick(e);
+  };
+  side.oncontextmenu = (e) => {
+    const ch = e.target.closest('[data-ch]'); if (!ch) return;
+    e.preventDefault();
+    const c = findChannel(ch.dataset.ch);
+    contextMenu(e, [
+      S.unread[c.id] && ['Mark as read', () => markRead(c.id, true)],
+      can(PERM.CREATE_INVITE) && ['Invite people', () => inviteModal(S.view.server)],
+      ['Copy channel link', () => copy(location.origin + '/app/' + c.id)],
+      can(PERM.MANAGE_CHANNELS) && '-', can(PERM.MANAGE_CHANNELS) && ['Edit channel', () => channelSettingsModal(c.id)],
+      can(PERM.MANAGE_CHANNELS) && ['Delete channel', () => deleteChannel(c), 'danger'],
+    ]);
+  };
+}
+function userPanelHtml() {
+  const st = S.prefs.status === 'invisible' ? 'offline' : S.prefs.status;
+  return `<div class="user-panel"><button class="me" data-status>${avatar({ ...S.me, id: '__me' }, 's32').replace('</div>', `<i class="st ${st}"></i></div>`)}<span class="who"><b>${esc(S.me.display_name)}</b><span>${esc(activityLine(S.me.id) || S.me.status_text || S.me.username)}</span></span></button>
+    <button class="icon-btn ${Voice.muted ? 'active' : ''}" data-mute title="${Voice.muted ? 'Unmute' : 'Mute'}">${Voice.muted ? I.micOff : I.mic}</button>
+    <button class="icon-btn ${Voice.deaf ? 'active' : ''}" data-deaf title="${Voice.deaf ? 'Undeafen' : 'Deafen'}">${Voice.deaf ? I.deaf : I.headphones}</button>
+    <button class="icon-btn" data-settings title="User settings">${I.gear}</button></div>`;
+}
+function renderUserPanel() { const p = $('.user-panel'); if (p) p.outerHTML = userPanelHtml(); }
+function userPanelClick(e) {
+  if (e.target.closest('[data-mute]')) Voice.toggleMute();
+  else if (e.target.closest('[data-deaf]')) Voice.toggleDeaf();
+  else if (e.target.closest('[data-settings]')) openUserSettings();
+  else if (e.target.closest('[data-status]')) statusMenu(e.target.closest('[data-status]'));
+}
+function statusMenu(anchor) {
+  const opts = [['online', 'Online', 'var(--green)'], ['idle', 'Idle', 'var(--yellow)'], ['dnd', 'Do Not Disturb', 'var(--red)'], ['invisible', 'Invisible', '#5d5c6b']];
+  const r = anchor.getBoundingClientRect();
+  const items = [['View profile', () => profilePopout(S.me.id, anchor)], ['Edit profile', () => openUserSettings('profile')], '-',
+    ...opts.map(([k, l, c]) => [`<span><span class="dot" style="background:${c}"></span>${l}</span>${S.prefs.status === k ? I.check : ''}`, () => { S.prefs.status = k; savePrefs(); socket.emit('presence', k); renderUserPanel(); }]),
+    '-', ['Set custom status', () => customStatusModal()], ['Log out', logout, 'danger']];
+  contextMenu({ clientX: r.left, clientY: r.top - 8, above: true }, items, 'status-menu');
+}
+function voiceBarHtml() {
+  if (!Voice.channel) return '';
+  const ch = findChannel(Voice.channel);
+  const where = ch ? (ch.type === 'dm' ? 'Call with ' + ch.name : `${ch.name} / ${S.serverData[ch.server_id]?.name || ''}`) : '';
+  return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}</b><span data-goto-voice>${esc(where)}</span></div>
+    <button class="icon-btn" data-vleave title="Disconnect">${I.hangup}</button></div>
+    <div class="row2"><button data-vcam class="${Voice.video ? 'on' : ''}" title="Camera">${Voice.video ? I.video : I.videoOff}</button><button data-vscreen class="${Voice.screen ? 'on' : ''}" title="Share screen">${I.screen}</button></div></div>`;
+}
+function voiceBarClick(e) {
+  if (e.target.closest('[data-vleave]')) Voice.leave();
+  else if (e.target.closest('[data-vcam]')) Voice.toggleCamera();
+  else if (e.target.closest('[data-vscreen]')) Voice.toggleScreen();
+  else if (e.target.closest('[data-goto-voice]')) { const ch = findChannel(Voice.channel); if (ch) { if (ch.type === 'dm') selectChannel(ch.id); else { S.view = { server: ch.server_id, channel: ch.id }; renderRail(); renderSidebar(); renderMain(); } showMainMobile(); } }
+}
+function serverMenu(anchor) {
+  const sd = curServer(); const r = anchor.getBoundingClientRect();
+  const owner = sd.owner_id === S.me.id;
+  contextMenu({ clientX: r.left + 8, clientY: r.bottom + 4 }, [
+    can(PERM.CREATE_INVITE) && [`Invite People ${I.invite}`, () => inviteModal(sd.id)],
+    (can(PERM.MANAGE_SERVER) || can(PERM.MANAGE_ROLES) || can(PERM.KICK) || can(PERM.BAN)) && [`Server Settings ${I.gear}`, () => openServerSettings(sd.id)],
+    can(PERM.MANAGE_CHANNELS) && [`Create Channel ${I.plus}`, () => createChannelModal('text')],
+    ['Edit Server Profile', () => nickModal(sd.id)],
+    ['Mark all as read', () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
+    '-', !owner && ['Leave Server', () => confirmModal('Leave server', `Are you sure you want to leave <b>${esc(sd.name)}</b>? You won’t be able to rejoin unless you are re-invited.`, 'Leave Server', async () => { await api('POST', `/api/servers/${sd.id}/leave`); }), 'danger'],
+  ], '', 240);
+}
+
+/* ================= MAIN ================= */
+function renderMain() {
+  const main = $('.main'); if (!main) return;
+  const ch = curChannel();
+  main.innerHTML = `<header class="topbar"></header><div class="content"></div>`;
+  renderTopbar();
+  const content = $('.content', main);
+  if (!ch) {
+    if (S.view.server === '@me') return renderHome(content);
+    content.innerHTML = `<div class="empty" style="margin:auto"><img src="${LOGO}" alt=""><b>No text channels</b><span>${can(PERM.MANAGE_CHANNELS) ? 'Create one with the + next to Text Channels.' : 'There’s nothing you can see here yet.'}</span></div>`;
+    return;
+  }
+  if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
+  content.innerHTML = `<div class="chat">${ch.type === 'dm' ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${ch.type !== 'dm' && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
+  renderMembers();
+  bindComposer($('.chat .composer', content), ch.id, null);
+  bindMessageList($('.messages', content));
+  renderVoiceArea();
+}
+function renderTopbar() {
+  const bar = $('.topbar'); if (!bar) return;
+  const ch = curChannel();
+  const back = `<button class="icon-btn mobile-only" data-back>${I.back}</button>`;
+  if (!ch) { bar.innerHTML = `${back}<span class="ico">${I.users}</span><span class="title">People</span><span class="spacer"></span>`; }
+  else if (ch.type === 'dm') {
+    const u = S.users[ch.user.id] || ch.user;
+    bar.innerHTML = `${back}${avatar(u, 's24', false)}<span class="title" data-uid="${u.id}" style="cursor:pointer">${esc(u.display_name)}</span><span class="topic" style="cursor:default">@${esc(u.username)} · ${statusLabel(statusOf(u.id))}</span>
+      <button class="icon-btn" data-call title="Start voice call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
+      <input class="search" placeholder="Search" data-search>`;
+  } else if (ch.type === 'voice') {
+    bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span>`;
+  } else {
+    bar.innerHTML = `${back}<span class="ico">${ch.private ? I.lock : I.hash}</span><span class="title">${esc(ch.name)}</span>
+      <span class="topic" data-topic title="${esc(ch.topic || '')}">${esc(ch.topic || (can(PERM.MANAGE_CHANNELS) ? 'Add a channel topic' : ''))}</span>
+      ${S.thread ? '' : ''}<button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button>
+      <input class="search" placeholder="Search" data-search>`;
+  }
+  bar.onclick = (e) => {
+    if (e.target.closest('[data-back]')) return $('.app').classList.remove('show-main');
+    if (e.target.closest('[data-members]')) { S.membersOpen = !S.membersOpen; const m = $('.members'); if (window.innerWidth <= 1100) { if (m) m.classList.toggle('force'); else { S.membersOpen = true; renderMain(); setTimeout(() => $('.members')?.classList.add('force')); } } else renderMain(); return; }
+    if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
+    if (e.target.closest('[data-call]')) return Voice.join(ch.id);
+    if (e.target.closest('[data-vcall]')) return Voice.join(ch.id, { video: true });
+    const t = e.target.closest('[data-uid]'); if (t) profilePopout(t.dataset.uid, t);
+  };
+  const search = $('[data-search]', bar);
+  if (search) search.onkeydown = (e) => { if (e.key === 'Enter' && search.value.trim()) runSearch(ch.id, search.value.trim()); if (e.key === 'Escape') { search.value = ''; $('.search-results')?.remove(); } };
+}
+const statusLabel = (s) => ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' }[s] || 'Offline');
+
+function renderHome(content) {
+  const people = new Map();
+  Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
+  S.dms.forEach(d => d.user.id !== S.me.id && people.set(d.user.id, S.users[d.user.id] || d.user));
+  const list = [...people.values()].sort((a, b) => (statusOf(a.id) === 'offline') - (statusOf(b.id) === 'offline') || a.display_name.localeCompare(b.display_name));
+  const online = list.filter(u => statusOf(u.id) !== 'offline');
+  const listening = online.filter(u => activityOf(u.id));
+  const hr = new Date().getHours();
+  const greet = hr < 5 ? 'Up late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  const card = (u) => { const a = activityOf(u.id); return `<button class="person" data-uid="${u.id}" style="${themeStyle(u)}">
+      <span class="p-banner">${bannerHtml(u, 'pb')}</span>${avatar(u, 's56', true)}
+      <b style="${nameStyle(u)}">${esc(u.display_name)}</b><small>${a ? `${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(a.title)}` : esc(u.status_text || statusLabel(statusOf(u.id)))}</small>
+      <span class="p-actions"><span class="icon-btn" data-msg="${u.id}" title="Message">${I.message}</span><span class="icon-btn" data-callu="${u.id}" title="Call">${I.phone}</span></span></button>`; };
+  content.innerHTML = `<div class="home-view">
+    <section class="home-hero"><div class="hh-text"><h1>${greet}, ${esc(S.me.display_name)}</h1><p>${online.length ? `${online.length} ${online.length === 1 ? 'person you know is' : 'people you know are'} online right now.` : 'Nobody you know is online yet.'}</p></div><img class="hh-logo" src="${LOGO}" alt=""></section>
+    <div class="quick">
+      <button class="q" data-add><span class="qi" style="background:linear-gradient(135deg,#8b6dff,#5b3ee0)">${I.plus}</span><b>Create a server</b><small>Start a space for your friends</small></button>
+      <button class="q" data-join><span class="qi" style="background:linear-gradient(135deg,#5ee0d6,#2a8fa0)">${I.compass}</span><b>Join with an invite</b><small>Paste a link someone sent you</small></button>
+      <button class="q" data-find><span class="qi" style="background:linear-gradient(135deg,#ff8ab3,#c0457a)">${I.message}</span><b>Message someone</b><small>Search people you share a server with</small></button>
+    </div>
+    ${listening.length ? `<h2>Listening now</h2><div class="people">${listening.map(card).join('')}</div>` : ''}
+    ${list.length ? `<h2>Online — ${online.length}</h2>${online.length ? `<div class="people">${online.filter(u => !activityOf(u.id)).map(card).join('')}</div>` : '<p class="muted-note">When people come online they’ll show up here.</p>'}
+      ${list.length > online.length ? `<h2>Offline — ${list.length - online.length}</h2><div class="people off">${list.filter(u => statusOf(u.id) === 'offline').map(card).join('')}</div>` : ''}`
+      : `<p class="muted-note">Create or join a server, and the people you meet show up here.</p>`}
+  </div>`;
+  content.onclick = async (e) => {
+    const m = e.target.closest('[data-msg]'); if (m) { e.stopPropagation(); return openDM(m.dataset.msg); }
+    const c = e.target.closest('[data-callu]'); if (c) { e.stopPropagation(); const d = await openDM(c.dataset.callu); if (d) Voice.join(d.id); return; }
+    if (e.target.closest('[data-add]')) return createServerModal();
+    if (e.target.closest('[data-join]')) return joinServerModal();
+    if (e.target.closest('[data-find]')) return newDmModal();
+    const r = e.target.closest('[data-uid]'); if (r) profilePopout(r.dataset.uid, r);
+  };
+}
+async function openDM(userId) {
+  try {
+    const d = await api('POST', '/api/dms', { user_id: userId });
+    S.users[d.user.id] = { ...S.users[d.user.id], ...d.user };
+    if (!S.dms.find(x => x.id === d.id)) S.dms.unshift(d);
+    S.view.server = '@me';
+    selectChannel(d.id, true);
+    renderRail();
+    showMainMobile();
+    return d;
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ================= MEMBERS ================= */
+function renderMembers() {
+  const box = $('.members'); const sd = curServer(); if (!box || !sd) return;
+  const ch = curChannel();
+  let mem = sd.members;
+  if (ch && ch.private) mem = mem.filter(m => m.id === sd.owner_id || (sd.roles.some(r => m.roles.includes(r.id) && ch.allowed_roles.includes(r.id))) || sd.roles.some(r => m.roles.includes(r.id) && (r.perms & PERM.ADMIN)));
+  const online = mem.filter(m => statusOf(m.id) !== 'offline'), offline = mem.filter(m => statusOf(m.id) === 'offline');
+  const hoisted = sd.roles.filter(r => r.hoist && !r.is_default).sort((a, b) => b.position - a.position);
+  const groups = [];
+  const used = new Set();
+  hoisted.forEach(r => { const g = online.filter(m => !used.has(m.id) && m.roles.includes(r.id)); g.forEach(m => used.add(m.id)); if (g.length) groups.push([r.name, g]); });
+  const rest = online.filter(m => !used.has(m.id)); if (rest.length) groups.push(['Online', rest]);
+  if (offline.length) groups.push(['Offline', offline]);
+  const sortName = (a, b) => nameIn(sd.id, a.id).localeCompare(nameIn(sd.id, b.id));
+  box.innerHTML = groups.map(([t, list]) => `<h4>${esc(t)} — ${list.length}</h4>` + list.sort(sortName).map(m => {
+    const color = colorIn(sd.id, m.id);
+    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
+  }).join('')).join('');
+  box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
+  box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (b) { e.preventDefault(); memberMenu(e, sd.id, b.dataset.uid); } };
+}
+function memberMenu(e, sid, uidv) {
+  const sd = S.serverData[sid];
+  const self = uidv === S.me.id;
+  contextMenu(e, [
+    ['Profile', () => profilePopout(uidv, null)], !self && ['Message', () => openDM(uidv)], !self && ['Call', async () => { const d = await openDM(uidv); if (d) Voice.join(d.id); }],
+    ['Mention', () => { const ta = $('.chat .composer textarea'); if (ta) { ta.value += `@${user(uidv).username} `; ta.focus(); } }],
+    ['Copy username', () => copy(user(uidv).username)],
+    can(PERM.MANAGE_ROLES, sid) && '-', can(PERM.MANAGE_ROLES, sid) && ['Edit roles', () => memberRolesModal(sid, uidv)],
+    !self && uidv !== sd.owner_id && can(PERM.KICK, sid) && ['Kick ' + nameIn(sid, uidv), () => kickMember(sid, uidv), 'danger'],
+    !self && uidv !== sd.owner_id && can(PERM.BAN, sid) && ['Ban ' + nameIn(sid, uidv), () => banMember(sid, uidv), 'danger'],
+  ]);
+}
+function kickMember(sid, uidv) { confirmModal(`Kick ${esc(nameIn(sid, uidv))}`, `They can rejoin with a new invite.`, 'Kick', () => api('POST', `/api/servers/${sid}/kick/${uidv}`)); }
+function banMember(sid, uidv) {
+  modal(`<div class="mh"><h2>Ban ${esc(nameIn(sid, uidv))}</h2><p>They won’t be able to rejoin unless you unban them.</p></div>
+    <div class="mb"><div class="field"><label>Reason</label><input class="input" name="reason" maxlength="200"></div>
+    <label class="row-toggle"><span class="rt">Delete their messages from the last 24 hours</span><span class="toggle"><input type="checkbox" name="del"><span></span></span></label></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn danger" data-ok>Ban</button></div>`, (m, close) => {
+    $('[data-ok]', m).onclick = async () => { try { await api('POST', `/api/servers/${sid}/ban/${uidv}`, { reason: $('[name=reason]', m).value, delete_messages: $('[name=del]', m).checked }); close(); } catch (e) { toast(e.message, true); } };
+  });
+}
+
+/* ================= MESSAGES ================= */
+async function openChannel(cid) {
+  const key = cid;
+  renderTyping();
+  if (!S.messages[key]) await loadMessages(key);
+  else refreshMessages(key, true);
+  markRead(cid);
+  const ta = $('.chat .composer textarea'); if (ta && window.innerWidth > 760) ta.focus();
+}
+async function loadMessages(key, older) {
+  if (S.loading[key]) return;
+  const isThread = key.startsWith('t:');
+  const cid = isThread ? S.thread?.channel_id : key;
+  if (!cid) return;
+  S.loading[key] = true;
+  const list = S.messages[key] || [];
+  const before = older && list.length ? list[0].id : '';
+  try {
+    const rows = await api('GET', `/api/channels/${cid}/messages?limit=50${before ? '&before=' + before : ''}${isThread ? '&thread=' + key.slice(2) : ''}`);
+    S.messages[key] = older ? [...rows, ...list] : rows;
+    S.hasMore[key] = rows.length === 50;
+  } catch (e) { toast(e.message, true); S.messages[key] = S.messages[key] || []; }
+  S.loading[key] = false;
+  refreshMessages(key, !older, older);
+}
+function containersFor(key) { return $$(`.messages[data-key="${CSS.escape(String(key))}"]`); }
+function refreshMessages(key, toBottom, keepTop) {
+  if (!key) return;
+  containersFor(key).forEach(box => {
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+    const oldHeight = box.scrollHeight, oldTop = box.scrollTop;
+    box.innerHTML = messageListHtml(key);
+    if (keepTop) box.scrollTop = box.scrollHeight - oldHeight + oldTop;
+    else if (toBottom || atBottom) box.scrollTop = box.scrollHeight;
+    else box.scrollTop = oldTop;
+    const ed = $('.edit-box', box);
+    if (ed) { ed.focus(); ed.setSelectionRange(ed.value.length, ed.value.length); autoGrow(ed); }
+    $$('img', box).forEach(img => !img.complete && img.addEventListener('load', () => { if (toBottom || atBottom) box.scrollTop = box.scrollHeight; }, { once: true }));
+  });
+}
+function channelSid(key) { if (String(key).startsWith('t:')) return S.thread ? findChannel(S.thread.channel_id)?.server_id : null; return findChannel(key)?.server_id || null; }
+function messageListHtml(key) {
+  const list = S.messages[key] || [];
+  const isThread = String(key).startsWith('t:');
+  const ch = isThread ? findChannel(S.thread.channel_id) : findChannel(key);
+  const sid = ch?.server_id || null;
+  let html = '';
+  if (isThread) {
+    html += `<div class="parent">${S.thread.parent ? messageHtml(S.thread.parent, sid, null, true) : ''}</div>`;
+    html += `<div class="divider">${list.length} ${list.length === 1 ? 'reply' : 'replies'}</div>`;
+  } else if (S.hasMore[key]) html += `<div class="loader">Loading older messages…</div>`;
+  else if (ch) {
+    if (ch.type === 'dm') html += `<div class="ch-welcome">${avatar(ch.user, 's80')}<h2 style="margin-top:12px">${esc(ch.user.display_name)}</h2><p>This is the beginning of your direct message history with <b>@${esc(ch.user.username)}</b>.</p></div>`;
+    else html += `<div class="ch-welcome"><div class="big orbit-ring">${ch.private ? I.lock : I.hash}</div><h2>Welcome to #${esc(ch.name)}!</h2><p>This is the start of the #${esc(ch.name)} channel.${ch.topic ? ' ' + esc(ch.topic) : ''}</p></div>`;
+  }
+  let prev = null, lastDay = '';
+  const lastRead = S.readMarker?.[key];
+  let markerShown = false;
+  for (const m of list) {
+    const day = new Date(m.created).toDateString();
+    if (day !== lastDay) { html += `<div class="divider date"><span>${fmtDay(m.created)}</span></div>`; lastDay = day; prev = null; }
+    if (lastRead && !markerShown && m.id > lastRead && m.author_id !== S.me.id) { html += `<div class="divider new">New</div>`; markerShown = true; prev = null; }
+    html += messageHtml(m, sid, prev);
+    prev = m;
+  }
+  return html;
+}
+function messageHtml(m, sid, prev, isParent) {
+  if (m.system) return `<div class="msg system head" data-mid="${m.id}"><div class="left">${I.arrow}</div><div class="body"><div class="text">${esc(m.content)} <span class="ts" style="font-size:12px;color:var(--dim);font-style:normal">${fmtDate(m.created)}</span></div></div></div>`;
+  const u = user(m.author_id);
+  const grouped = prev && !prev.system && prev.author_id === m.author_id && m.created - prev.created < 7 * 60e3 && !m.reply;
+  const mentioned = m.author_id !== S.me.id && (m.mention_everyone || (m.mentions || []).includes(S.me.id));
+  const color = sid ? colorIn(sid, m.author_id) : null;
+  const sd = sid && S.serverData[sid];
+  const mine = m.author_id === S.me.id;
+  const canManage = sid ? can(PERM.MANAGE_MESSAGES, sid) : false;
+  const editing = S.editing === m.id;
+  const reply = m.reply ? (m.reply.deleted ? `<div class="reply-ref"><span><i>Original message was deleted</i></span></div>`
+    : `<div class="reply-ref" data-jump="${m.reply.id}">${avatar(m.reply.author_id, '')}<b style="${sid && colorIn(sid, m.reply.author_id) ? 'color:' + colorIn(sid, m.reply.author_id) : ''}">@${esc(nameIn(sid, m.reply.author_id))}</b><span>${esc(plainPreview(m.reply.content)) || '<i>Click to see attachment</i>'}</span></div>`) : '';
+  const atts = (m.attachments || []).map(a => {
+    const t = a.type || '';
+    if (t.startsWith('image/')) return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-lightbox="${esc(a.url)}" data-name="${esc(a.name)}">`;
+    if (t.startsWith('video/')) return `<video class="att-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
+    if (t.startsWith('audio/')) return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}">${esc(a.name)}</a><audio class="att-audio" src="${esc(a.url)}" controls preload="none"></audio></div></div>`;
+    return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
+  }).join('');
+  const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).map(([e, v]) => `<button class="react ${v.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(v.map(x => nameIn(sid, x)).join(', '))}">${e}<b>${v.length}</b></button>`).join('');
+  const body = editing
+    ? `<textarea class="edit-box" data-edit="${m.id}" rows="1">${esc(m.content)}</textarea><div class="edit-hint">escape to <button data-cancel-edit>cancel</button> • enter to <button data-save-edit>save</button></div>`
+    : `${m.content ? `<div class="text">${formatText(m.content, sid)}${m.edited ? ` <span class="edited" title="${esc(fmtDate(m.edited))}">(edited)</span>` : ''}</div>` : ''}`;
+  const thread = !isParent && m.thread && !m.thread_id ? `<button class="thread-link" data-open-thread>${I.thread}<b>${m.thread.count} ${m.thread.count === 1 ? 'reply' : 'replies'}</b><span>Last ${fmtDate(m.thread.last)}</span></button>` : '';
+  const tools = isParent ? '' : `<div class="toolbar">
+      ${QUICK_REACTS.slice(0, 3).map(e => `<button data-quick="${e}" title="React ${e}" style="font-size:16px">${e}</button>`).join('')}
+      <button data-act="react" title="Add reaction">${I.smile}</button>
+      <button data-act="reply" title="Reply">${I.reply}</button>
+      ${!m.thread_id && !String(S.view.channel).startsWith('t:') ? `<button data-act="thread" title="Create thread">${I.thread}</button>` : ''}
+      ${mine ? `<button data-act="edit" title="Edit">${I.edit}</button>` : ''}
+      ${mine || canManage ? `<button data-act="delete" class="danger" title="Delete">${I.trash}</button>` : ''}
+    </div>`;
+  const tag = sd && m.author_id === sd.owner_id ? '' : '';
+  return `<div class="msg ${grouped ? '' : 'head'} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
+    <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
+    <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
+      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
+    </div>${tools}</div>`;
+}
+function findMsg(id) {
+  for (const k in S.messages) { const m = S.messages[k].find(x => x.id == id); if (m) return [m, k]; }
+  if (S.thread?.parent?.id == id) return [S.thread.parent, null];
+  return [null, null];
+}
+function bindMessageList(box) {
+  const key = () => box.dataset.key;
+  box.addEventListener('scroll', () => { if (box.scrollTop < 200 && S.hasMore[key()] && !S.loading[key()]) loadMessages(key(), true); if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) markRead(S.view.channel); });
+  box.addEventListener('click', async (e) => {
+    const t = e.target;
+    const msgEl = t.closest('[data-mid]'); const mid = msgEl && Number(msgEl.dataset.mid);
+    const [m] = mid ? findMsg(mid) : [null];
+    const sid = channelSid(key());
+    if (t.closest('.spoiler')) return t.closest('.spoiler').classList.add('shown');
+    const mention = t.closest('.mention[data-uid]'); if (mention) return profilePopout(mention.dataset.uid, mention);
+    const nm = t.closest('.name[data-uid], .left .av'); if (nm) return profilePopout(nm.dataset.uid, nm);
+    const lb = t.closest('[data-lightbox]'); if (lb) return lightbox(lb.dataset.lightbox, lb.dataset.name);
+    const jump = t.closest('[data-jump]'); if (jump) return jumpTo(Number(jump.dataset.jump));
+    if (!m) return;
+    const r = t.closest('[data-react]'); if (r) return toggleReaction(m.id, r.dataset.react);
+    const q = t.closest('[data-quick]'); if (q) return toggleReaction(m.id, q.dataset.quick);
+    if (t.closest('[data-open-thread]')) return openThread(m);
+    if (t.closest('[data-cancel-edit]')) { S.editing = null; return refreshMessages(key()); }
+    if (t.closest('[data-save-edit]')) return saveEdit($('.edit-box', box));
+    const act = t.closest('[data-act]')?.dataset.act;
+    if (act === 'react') emojiPicker(t.closest('[data-act]'), (em) => toggleReaction(m.id, em));
+    if (act === 'reply') startReply(m, box.closest('.chat, .thread-panel'));
+    if (act === 'thread') openThread(m);
+    if (act === 'edit') { S.editing = m.id; refreshMessages(key()); }
+    if (act === 'delete') { if (e.shiftKey) return api('DELETE', '/api/messages/' + m.id).catch(x => toast(x.message, true)); confirmModal('Delete Message', 'Are you sure you want to delete this message?', 'Delete', () => api('DELETE', '/api/messages/' + m.id)); }
+  });
+  box.addEventListener('keydown', (e) => {
+    if (!e.target.classList.contains('edit-box')) return;
+    if (e.key === 'Escape') { S.editing = null; refreshMessages(key()); }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveEdit(e.target); }
+  });
+  box.addEventListener('input', (e) => { if (e.target.classList.contains('edit-box')) autoGrow(e.target); });
+  box.addEventListener('contextmenu', (e) => {
+    const msgEl = e.target.closest('[data-mid]'); if (!msgEl) return;
+    const [m] = findMsg(Number(msgEl.dataset.mid)); if (!m || m.system) return;
+    e.preventDefault();
+    const sid = channelSid(key());
+    const mine = m.author_id === S.me.id;
+    const img = e.target.closest('img.att-img');
+    contextMenu(e, [
+      ['Add reaction', () => emojiPicker(msgEl, (em) => toggleReaction(m.id, em))],
+      mine && ['Edit message', () => { S.editing = m.id; refreshMessages(key()); }],
+      ['Reply', () => startReply(m, box.closest('.chat, .thread-panel'))],
+      !m.thread_id && !key().startsWith('t:') && ['Create thread', () => openThread(m)],
+      ['Copy text', () => copy(m.content)],
+      img && ['Copy image link', () => copy(location.origin + img.getAttribute('src'))],
+      ['Mark unread', () => { S.unread[S.view.channel] = { count: 1, mentions: 0, server_id: sid }; renderSidebar(); renderRail(); }],
+      (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && '-', (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && ['Delete message', () => confirmModal('Delete Message', 'Are you sure you want to delete this message?', 'Delete', () => api('DELETE', '/api/messages/' + m.id)), 'danger'],
+    ]);
+  });
+}
+async function saveEdit(ta) {
+  const id = Number(ta.dataset.edit); const v = ta.value.trim();
+  const [m, key] = findMsg(id);
+  S.editing = null;
+  if (m && v && v !== m.content) { try { await api('PATCH', '/api/messages/' + id, { content: v }); } catch (e) { toast(e.message, true); } }
+  else if (m && !v && !(m.attachments || []).length) { confirmModal('Delete Message', 'Are you sure you want to delete this message?', 'Delete', () => api('DELETE', '/api/messages/' + id)); }
+  refreshMessages(key || S.view.channel);
+}
+async function toggleReaction(id, emoji) { try { await api('PUT', `/api/messages/${id}/reactions/${encodeURIComponent(emoji)}`); } catch (e) { toast(e.message, true); } }
+function jumpTo(id) {
+  const el = $(`.messages [data-mid="${id}"]`);
+  if (el) { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.classList.add('highlight'); setTimeout(() => el.classList.remove('highlight'), 1600); }
+  else toast('That message is further back. Scroll up to load it.');
+}
+function upsertMessage(m) {
+  const keys = [m.thread_id ? 't:' + m.thread_id : m.channel_id];
+  for (const key of keys) {
+    const list = S.messages[key]; if (!list) continue;
+    const i = list.findIndex(x => x.id === m.id);
+    if (i >= 0) { list[i] = m; refreshMessages(key); }
+  }
+  if (S.thread && S.thread.id === m.id) { S.thread.parent = m; refreshMessages('t:' + m.id); }
+}
+function onMessageNew(m) {
+  if (m.author_id) S.users[m.author_id] = S.users[m.author_id] || { id: m.author_id, username: '…', display_name: '…' };
+  const key = m.thread_id ? 't:' + m.thread_id : m.channel_id;
+  const list = S.messages[key];
+  if (list) {
+    const pi = list.findIndex(x => x._pending && x._nonce && x.author_id === m.author_id && x.content === m.content);
+    if (pi >= 0) list.splice(pi, 1);
+    if (!list.find(x => x.id === m.id)) list.push(m);
+    refreshMessages(key);
+  }
+  if (m.author_id === S.me.id) return;
+  if (S.typing[m.channel_id]) { delete S.typing[m.channel_id][m.author_id]; renderTyping(); }
+  const ch = findChannel(m.channel_id);
+  if (!ch) { if (!m.thread_id) api('GET', '/api/me').then(d => { S.dms = d.dms; S.unread = d.unread; renderSidebar(); renderRail(); }); return; }
+  const viewing = S.view.channel === m.channel_id && document.hasFocus() && !document.hidden;
+  const box = containersFor(m.channel_id)[0];
+  const atBottom = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  const mentioned = m.mention_everyone || (m.mentions || []).includes(S.me.id) || ch.type === 'dm';
+  if (!m.thread_id && !(viewing && atBottom)) {
+    const u = S.unread[m.channel_id] || { count: 0, mentions: 0, server_id: ch.server_id || null };
+    u.count++; if (mentioned) u.mentions++;
+    S.unread[m.channel_id] = u;
+    renderSidebar(); renderRail();
+  } else if (viewing) markRead(m.channel_id);
+  if (mentioned && S.prefs.status !== 'dnd' && !viewing) notify(m, ch);
+}
+function notify(m, ch) {
+  beep('msg');
+  if (!S.prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
+  const sid = ch.server_id;
+  const title = ch.type === 'dm' ? nameIn(null, m.author_id) : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
+  try {
+    const n = new Notification(title, { body: plainPreview(m.content) || 'Sent an attachment', icon: user(m.author_id).avatar || LOGO, tag: 'orbit-' + m.channel_id });
+    n.onclick = () => { window.focus(); selectChannel(m.channel_id); n.close(); };
+  } catch {}
+}
+const readTimers = {};
+function markRead(cid, force) {
+  if (!cid || (!S.unread[cid] && !force)) return;
+  S.readMarker = S.readMarker || {};
+  if (S.unread[cid] && !S.readMarker[cid]) { const list = S.messages[cid] || []; const idx = list.length - S.unread[cid].count - 1; S.readMarker[cid] = idx >= 0 ? list[idx].id : 0; setTimeout(() => { delete S.readMarker[cid]; }, 15000); }
+  delete S.unread[cid];
+  renderSidebar(); renderRail();
+  clearTimeout(readTimers[cid]);
+  readTimers[cid] = setTimeout(() => api('POST', `/api/channels/${cid}/read`).catch(() => {}), 400);
+}
+window.addEventListener('focus', () => { if (S.view.channel) markRead(S.view.channel); });
+
+/* ================= COMPOSER ================= */
+function composerHtml(ch, thread) {
+  const sd = ch.server_id && S.serverData[ch.server_id];
+  const canSend = ch.type === 'dm' || can(PERM.SEND, ch.server_id);
+  const placeholder = thread ? 'Message thread' : !canSend ? 'You do not have permission to send messages in this channel.' : ch.type === 'dm' ? `Message @${ch.user.display_name}` : `Message #${ch.name}`;
+  return `<div class="composer" data-cid="${ch.id}" ${thread ? `data-thread="${thread}"` : ''}>
+    <div class="reply-slot"></div><div class="attach-slot"></div>
+    <div class="cbox ${canSend ? '' : 'disabled'}">
+      ${canSend && (ch.type === 'dm' || can(PERM.ATTACH, ch.server_id)) ? `<button class="icon-btn" data-attach title="Upload a file">${I.plus}</button>` : ''}
+      <textarea rows="1" placeholder="${esc(placeholder)}" ${canSend ? '' : 'disabled'} maxlength="4000"></textarea>
+      ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button><button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
+    </div><input type="file" multiple hidden>
+    ${thread ? '' : '<div class="typing"></div>'}</div>`;
+}
+function autoGrow(ta) { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * .4) + 'px'; }
+function bindComposer(comp, cid, threadId) {
+  if (!comp) return;
+  const ta = $('textarea', comp), file = $('input[type=file]', comp);
+  const state = { files: [], reply: null, mentionReply: true };
+  comp._state = state;
+  const draftKey = threadId ? 't:' + threadId : cid;
+  ta.value = S.drafts[draftKey] || ''; autoGrow(ta);
+  const renderAttach = () => {
+    const slot = $('.attach-slot', comp);
+    slot.innerHTML = state.files.length ? `<div class="attach-list">${state.files.map((f, i) => `<div class="att-chip"><button class="x" data-rm="${i}" title="Remove">${I.trash}</button><div class="prev">${f._url ? (f.type.startsWith('video/') ? `<video src="${f._url}" muted></video>` : `<img src="${f._url}">`) : I.file}</div><div class="n">${esc(f.name)}</div><small style="color:var(--dim)">${fmtSize(f.size)}</small></div>`).join('')}</div>` : '';
+    slot.onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { const f = state.files.splice(Number(b.dataset.rm), 1)[0]; f._url && URL.revokeObjectURL(f._url); renderAttach(); } };
+  };
+  const addFiles = (list) => {
+    const max = (S.info.max_upload_mb || 50) * 1048576;
+    [...list].forEach(f => {
+      if (f.size > max) return toast(`${f.name} is too large (max ${S.info.max_upload_mb || 50} MB)`, true);
+      if (state.files.length >= 10) return toast('You can upload up to 10 files at a time', true);
+      if (/^(image|video)\//.test(f.type)) f._url = URL.createObjectURL(f);
+      state.files.push(f);
+    });
+    renderAttach(); ta.focus(); comp._syncSend && comp._syncSend();
+  };
+  comp._addFiles = addFiles;
+  comp._setReply = (m) => {
+    state.reply = m;
+    const slot = $('.reply-slot', comp);
+    if (!m) { slot.innerHTML = ''; return; }
+    const sid = findChannel(cid)?.server_id;
+    slot.innerHTML = `<div class="reply-bar"><span>Replying to <b>${esc(nameIn(sid, m.author_id))}</b></span><span class="sp"></span>${m.author_id !== S.me.id ? `<button class="ping ${state.mentionReply ? 'on' : ''}" data-ping title="Notify them">@${state.mentionReply ? 'ON' : 'OFF'}</button>` : ''}<button data-cancel title="Cancel">${I.x}</button></div>`;
+    slot.onclick = (e) => { if (e.target.closest('[data-cancel]')) comp._setReply(null); if (e.target.closest('[data-ping]')) { state.mentionReply = !state.mentionReply; comp._setReply(m); } };
+    ta.focus();
+  };
+  $('[data-attach]', comp)?.addEventListener('click', () => file.click());
+  const sendBtn = $('[data-send]', comp);
+  const syncSend = () => sendBtn && sendBtn.classList.toggle('ready', !!(ta.value.trim() || state.files.length));
+  sendBtn?.addEventListener('click', () => { send(); syncSend(); });
+  ta.addEventListener('input', syncSend); comp._syncSend = syncSend;
+  file.onchange = () => { addFiles(file.files); file.value = ''; };
+  $('[data-emoji]', comp)?.addEventListener('click', (e) => emojiPicker(e.currentTarget, (em) => { insertAtCursor(ta, em); }, true));
+  ta.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
+  let lastTyping = 0;
+  ta.addEventListener('input', () => {
+    autoGrow(ta); S.drafts[draftKey] = ta.value;
+    if (ta.value && Date.now() - lastTyping > 4000) { lastTyping = Date.now(); socket?.emit('typing', { channel_id: cid }); }
+    mentionAutocomplete(comp, ta, cid);
+  });
+  ta.addEventListener('keydown', (e) => {
+    const ac = $('.autocomplete', comp);
+    if (ac) {
+      const items = $$('.ac-item', ac); let i = items.findIndex(x => x.classList.contains('sel'));
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[i]?.classList.remove('sel'); i = (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[i].classList.add('sel'); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); items[i]?.click(); return; }
+      if (e.key === 'Escape') { ac.remove(); return; }
+    }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+    if (e.key === 'Escape' && state.reply) comp._setReply(null);
+    if (e.key === 'ArrowUp' && !ta.value) {
+      const key = threadId ? 't:' + threadId : cid;
+      const mine = (S.messages[key] || []).filter(m => m.author_id === S.me.id && !m._pending);
+      if (mine.length) { e.preventDefault(); S.editing = mine[mine.length - 1].id; refreshMessages(key); }
+    }
+  });
+  // drag & drop on the whole chat area
+  const zone = comp.closest('.chat, .thread-panel');
+  if (zone && !zone._dnd) {
+    zone._dnd = true; let depth = 0;
+    zone.addEventListener('dragenter', (e) => { if (![...e.dataTransfer.types].includes('Files')) return; depth++; if (!$('.drop-overlay', zone)) zone.appendChild(h(`<div class="drop-overlay">Drop files to upload</div>`)); });
+    zone.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; $('.drop-overlay', zone)?.remove(); } });
+    zone.addEventListener('dragover', (e) => e.preventDefault());
+    zone.addEventListener('drop', (e) => { e.preventDefault(); depth = 0; $('.drop-overlay', zone)?.remove(); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
+  }
+  async function send() {
+    const content = ta.value.trim();
+    if (!content && !state.files.length) return;
+    if (content.length > 4000) return toast('Message is too long (4000 characters max)', true);
+    const key = threadId ? 't:' + threadId : cid;
+    const form = new FormData();
+    form.append('content', content);
+    if (state.reply) { form.append('reply_to', state.reply.id); form.append('mention_reply', String(state.mentionReply)); }
+    if (threadId) form.append('thread_id', threadId);
+    state.files.forEach(f => form.append('files', f, f.name));
+    const temp = { id: 'p' + Date.now(), _pending: true, _nonce: 1, author_id: S.me.id, content, created: Date.now(), attachments: [], reactions: {}, reply: state.reply ? { id: state.reply.id, author_id: state.reply.author_id, content: state.reply.content } : null };
+    const hadFiles = state.files.length;
+    if (S.messages[key]) { S.messages[key].push(temp); refreshMessages(key, true); }
+    ta.value = ''; S.drafts[draftKey] = ''; autoGrow(ta);
+    state.files.forEach(f => f._url && URL.revokeObjectURL(f._url));
+    state.files = []; renderAttach(); comp._setReply(null); comp._syncSend && comp._syncSend();
+    try {
+      const m = await upload(`/api/channels/${cid}/messages`, form, hadFiles ? (p) => { const el = $(`[data-mid="${temp.id}"] .text`); if (el) el.textContent = `${content ? content + ' — ' : ''}Uploading… ${Math.round(p * 100)}%`; } : null);
+      const list = S.messages[key];
+      if (list) { const i = list.indexOf(temp); if (i >= 0) { if (list.find(x => x.id === m.id)) list.splice(i, 1); else list[i] = m; } refreshMessages(key, true); }
+    } catch (e) {
+      temp._failed = true; temp._pending = false; temp.content = (content || '') + `  (failed to send: ${e.message})`;
+      refreshMessages(key); toast(e.message, true);
+    }
+  }
+}
+function insertAtCursor(ta, text) { const s = ta.selectionStart ?? ta.value.length, e = ta.selectionEnd ?? s; ta.value = ta.value.slice(0, s) + text + ta.value.slice(e); ta.selectionStart = ta.selectionEnd = s + text.length; ta.focus(); ta.dispatchEvent(new Event('input')); }
+function startReply(m, scope) { const comp = $('.composer', scope || document); comp?._setReply(m); }
+function mentionAutocomplete(comp, ta, cid) {
+  $('.autocomplete', comp)?.remove();
+  const before = ta.value.slice(0, ta.selectionStart);
+  const mm = before.match(/(^|\s)@([\w.]{0,32})$/);
+  if (!mm) return;
+  const q = mm[2].toLowerCase();
+  const ch = findChannel(cid);
+  let pool = ch.type === 'dm' ? [S.me, ch.user] : (S.serverData[ch.server_id]?.members || []);
+  pool = pool.filter(u => u.username.toLowerCase().startsWith(q) || (u.display_name || '').toLowerCase().startsWith(q) || (ch.server_id && nameIn(ch.server_id, u.id).toLowerCase().startsWith(q))).slice(0, 8);
+  const extra = ch.type !== 'dm' && can(PERM.MENTION_EVERYONE, ch.server_id) ? ['everyone', 'here'].filter(x => x.startsWith(q)) : [];
+  if (!pool.length && !extra.length) return;
+  const ac = h(`<div class="autocomplete"><div class="h">Members</div>${pool.map((u, i) => `<button class="ac-item ${i === 0 ? 'sel' : ''}" data-u="${esc(u.username)}">${avatar(S.users[u.id] || u, 's24')}<span>${esc(ch.server_id ? nameIn(ch.server_id, u.id) : u.display_name)}</span><small>@${esc(u.username)}</small></button>`).join('')}${extra.map((x, i) => `<button class="ac-item ${!pool.length && i === 0 ? 'sel' : ''}" data-u="${x}"><b>@${x}</b><small>Notify ${x === 'here' ? 'everyone online' : 'everyone'}</small></button>`).join('')}</div>`);
+  comp.appendChild(ac);
+  ac.onmousedown = (e) => e.preventDefault();
+  ac.onclick = (e) => {
+    const b = e.target.closest('[data-u]'); if (!b) return;
+    const start = ta.selectionStart - mm[2].length - 1;
+    ta.value = ta.value.slice(0, start) + '@' + b.dataset.u + ' ' + ta.value.slice(ta.selectionStart);
+    ta.selectionStart = ta.selectionEnd = start + b.dataset.u.length + 2;
+    ac.remove(); ta.focus();
+  };
+}
+function renderTyping() {
+  const el = $('.chat .typing'); if (!el) return;
+  const cid = S.view.channel;
+  const t = S.typing[cid] || {}; const now = Date.now();
+  const ids = Object.keys(t).filter(u => t[u] > now && u !== S.me.id);
+  const sid = findChannel(cid)?.server_id;
+  const names = ids.map(u => `<b>${esc(nameIn(sid, u))}</b>`);
+  el.innerHTML = !ids.length ? '' : `<span class="dots"><i></i><i></i><i></i></span>${ids.length > 3 ? 'Several people are typing…' : names.join(ids.length === 2 ? ' and ' : ', ') + (ids.length === 1 ? ' is typing…' : ' are typing…')}`;
+}
+
+/* ================= THREADS ================= */
+async function openThread(m) {
+  const ch = findChannel(m.channel_id); if (!ch) return;
+  S.thread = { id: m.id, channel_id: m.channel_id, parent: m };
+  const content = $('.content'); if (!content) return;
+  $('.thread-panel')?.remove();
+  const panel = h(`<aside class="thread-panel"><header class="topbar"><span class="ico">${I.thread}</span><span class="title">Thread</span><span class="topic" style="cursor:default">${esc(plainPreview(m.content) || 'Attachment')}</span><button class="icon-btn" data-close-thread>${I.x}</button></header>
+    <div class="messages" data-key="t:${m.id}"></div>${composerHtml(ch, m.id)}</aside>`);
+  content.appendChild(panel);
+  $('[data-close-thread]', panel).onclick = () => closeThread();
+  bindMessageList($('.messages', panel));
+  bindComposer($('.composer', panel), ch.id, m.id);
+  await loadMessages('t:' + m.id);
+  $('.composer textarea', panel).focus();
+}
+function closeThread(silent) { S.thread = null; $('.thread-panel')?.remove(); }
+
+/* ================= SEARCH ================= */
+async function runSearch(cid, q) {
+  const content = $('.content'); $('.search-results')?.remove();
+  const panel = h(`<div class="search-results"><div class="sr-head"><span>Searching…</span><button class="icon-btn">${I.x}</button></div><div class="sr-list"></div></div>`);
+  content.appendChild(panel);
+  $('.sr-head button', panel).onclick = () => panel.remove();
+  try {
+    const rows = await api('GET', `/api/channels/${cid}/search?q=${encodeURIComponent(q)}`);
+    const sid = findChannel(cid)?.server_id;
+    $('.sr-head span', panel).textContent = `${rows.length} result${rows.length === 1 ? '' : 's'}`;
+    $('.sr-list', panel).innerHTML = rows.length ? rows.map(m => messageHtml(m, sid, null, true)).join('') : '<div class="empty">No results found.</div>';
+    $('.sr-list', panel).onclick = (e) => { const el = e.target.closest('[data-mid]'); if (el) jumpTo(Number(el.dataset.mid)); };
+  } catch (e) { $('.sr-head span', panel).textContent = e.message; }
+}
+
+/* ================= POPOUTS / MENUS ================= */
+function layer(onClose) {
+  const l = h('<div class="layer"></div>'); document.body.appendChild(l);
+  const close = () => { l.remove(); pop?.remove(); document.removeEventListener('keydown', esc_); onClose && onClose(); };
+  let pop = null;
+  const esc_ = (e) => e.key === 'Escape' && close();
+  document.addEventListener('keydown', esc_);
+  l.onmousedown = close; l.oncontextmenu = (e) => { e.preventDefault(); close(); };
+  return { set(el) { pop = el; document.body.appendChild(el); }, close };
+}
+function place(el, x, y, opts = {}) {
+  const w = el.offsetWidth, hh = el.offsetHeight;
+  let left = x, top = opts.above ? y - hh : y;
+  if (left + w > innerWidth - 8) left = innerWidth - w - 8;
+  if (top + hh > innerHeight - 8) top = innerHeight - hh - 8;
+  el.style.left = Math.max(8, left) + 'px'; el.style.top = Math.max(8, top) + 'px';
+}
+function contextMenu(e, items, cls = '', minW) {
+  const L = layer();
+  const list = items.filter(Boolean);
+  const el = h(`<div class="menu ${cls}" ${minW ? `style="min-width:${minW}px"` : ''}>${list.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it[2] || ''}">${it[0]}</button>`).join('')}</div>`);
+  L.set(el); place(el, e.clientX, e.clientY, { above: e.above });
+  el.onclick = (ev) => { const b = ev.target.closest('[data-i]'); if (!b) return; L.close(); list[b.dataset.i][1](); };
+}
+function emojiPicker(anchor, onPick, keepOpen) {
+  const L = layer();
+  const cats = Object.entries(EMOJI);
+  const el = h(`<div class="popout emoji-picker"><input class="input" placeholder="Search emoji by category…"><div class="grid">${cats.map(([c, list]) => `<h6>${c}</h6>` + list.split(' ').map(e => `<button data-e="${e}" data-c="${c.toLowerCase()}">${e}</button>`).join('')).join('')}</div></div>`);
+  L.set(el);
+  const r = anchor.getBoundingClientRect();
+  place(el, r.right - 340, r.top - 8, { above: true });
+  $('input', el).oninput = (e) => { const q = e.target.value.toLowerCase(); $$('.grid button', el).forEach(b => b.classList.toggle('hidden', q && !b.dataset.c.includes(q))); $$('.grid h6', el).forEach(x => x.classList.toggle('hidden', !!q)); };
+  el.onclick = (e) => { const b = e.target.closest('[data-e]'); if (!b) return; onPick(b.dataset.e); if (!keepOpen || !e.shiftKey) L.close(); };
+  if (window.innerWidth > 760) $('input', el).focus();
+}
+function activityHtml(uidv) {
+  const a = activityOf(uidv);
+  if (!a || a.type !== 'listening') return '';
+  const dur = Math.max(1, a.end - a.start), pos = Math.min(dur, Date.now() - a.start);
+  const t = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  return `<div class="activity"><h5>Listening to ${esc(a.name)}</h5><div class="act-row">${a.art ? `<img src="${esc(a.art)}" alt="">` : `<span class="art-ph">${I.music}</span>`}
+    <div class="act-meta"><a ${a.url ? `href="${esc(a.url)}" target="_blank" rel="noopener"` : ''} class="act-title">${esc(a.title)}</a><span>by ${esc(a.artist || '')}</span><span>on ${esc(a.album || '')}</span></div></div>
+    <div class="act-bar"><i style="width:${(pos / dur * 100).toFixed(1)}%"></i></div><div class="act-times"><span>${t(pos)}</span><span>${t(dur)}</span></div></div>`;
+}
+function profileCardHtml(u, opts = {}) {
+  const { sid, mem, roles = [], self, preview } = opts;
+  const themed = !!u.theme_primary;
+  const conns = (u.connections || []);
+  return `<div class="profile-card ${themed ? 'themed' : ''} fx-${esc(u.effect || 'none')}" data-card="${esc(u.id)}" style="${themeStyle(u)}">
+    ${bannerHtml(u)}
+    <div class="avwrap">${avatar(u, 's80', true)}</div>
+    ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
+    <div class="inner">
+      <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}</div>
+      <div class="un">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</div>
+      ${u.status_text ? `<div class="stt">${esc(u.status_text)}</div>` : ''}
+      <div class="activity-slot">${activityHtml(u.id)}</div>
+      ${u.bio ? `<section><h5>About me</h5><div class="bio">${formatText(u.bio)}</div></section>` : ''}
+      ${(u.links || []).length ? `<section><h5>Links</h5><div class="links">${u.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link.replace('width="20" height="20"', 'width="14" height="14"')}<span>${esc(l.label || new URL(l.url).hostname)}</span></a>`).join('')}</div></section>` : ''}
+      ${conns.length ? `<section><h5>Connections</h5><div class="conns">${conns.map(c => { const [n, col, g] = CONN[c.type] || [c.type, '#555', '?']; return `<a class="conn" ${c.url ? `href="${esc(c.url)}" target="_blank" rel="noopener noreferrer"` : ''} title="${esc(n)}"><span class="cg" style="background:${col}">${g}</span><span class="cn">${esc(c.name)}</span>${c.verified ? `<span class="ver" title="Verified">${I.check.replace('width="20" height="20"', 'width="12" height="12"')}</span>` : ''}</a>`; }).join('')}</div></section>` : ''}
+      ${!preview ? `<section><h5>Member since</h5><div class="since">${new Date(u.created || Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}${mem ? `<span class="since-sep"></span>${esc(S.serverData[sid].name)}: ${new Date(mem.joined).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}` : ''}</div></section>` : ''}
+      ${mem ? `<section><h5>Roles</h5><div class="role-tags">${roles.map(r => `<span class="role-tag"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}${can(PERM.MANAGE_ROLES, sid) ? `<button data-unrole="${r.id}" title="Remove role">✕</button>` : ''}</span>`).join('')}${can(PERM.MANAGE_ROLES, sid) ? `<button class="role-tag add" data-roles>+ Add role</button>` : ''}${!roles.length && !can(PERM.MANAGE_ROLES, sid) ? '<span class="none">No roles</span>' : ''}</div></section>` : ''}
+      ${u.mutual_servers?.length && !self ? `<section><h5>Mutual servers</h5><div class="since">${u.mutual_servers.map(s => esc(s.name)).join(', ')}</div></section>` : ''}
+    </div>
+    ${preview ? '' : self ? `<div class="actions"><button class="btn secondary" data-editp>${I.edit} Edit profile</button></div>`
+      : `<div class="actions"><input class="msgbox" placeholder="Message @${esc(u.username)}"><button class="icon-btn" data-call title="Call">${I.phone}</button>${sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && u.id !== S.serverData[sid].owner_id ? `<button class="icon-btn" data-mod title="More">•••</button>` : ''}</div>`}
+  </div>`;
+}
+async function profilePopout(uidv, anchor, side) {
+  if (!uidv) return;
+  let u = S.users[uidv];
+  try { u = { ...u, ...(await api('GET', '/api/users/' + uidv)) }; S.users[uidv] = { ...S.users[uidv], ...u }; if (u.activity) S.activities[uidv] = u.activity; } catch {}
+  if (!u) return;
+  const sid = S.view.server !== '@me' ? S.view.server : null;
+  const sd = sid && S.serverData[sid];
+  const mem = sd && member(sid, uidv);
+  const roles = mem ? sd.roles.filter(r => mem.roles.includes(r.id)).sort((a, b) => b.position - a.position) : [];
+  const self = uidv === S.me.id;
+  const L = layer();
+  const el = h(`<div class="popout pc-pop">${profileCardHtml(u, { sid, mem, roles, self })}</div>`);
+  L.set(el);
+  if (anchor) { const r = anchor.getBoundingClientRect(); if (side === 'left') place(el, r.left - el.offsetWidth - 12, r.top); else place(el, r.right + 12, r.top); }
+  else place(el, innerWidth / 2 - el.offsetWidth / 2, innerHeight / 2 - el.offsetHeight / 2);
+  el.onclick = async (e) => {
+    if (e.target.closest('[data-editp]')) { L.close(); openUserSettings('profile'); }
+    if (e.target.closest('[data-call]')) { L.close(); const d = await openDM(uidv); if (d) Voice.join(d.id); }
+    if (e.target.closest('[data-roles]')) { L.close(); memberRolesModal(sid, uidv); }
+    const ur = e.target.closest('[data-unrole]'); if (ur) { await api('PUT', `/api/servers/${sid}/members/${uidv}`, { roles: mem.roles.filter(r => r !== ur.dataset.unrole) }).catch(x => toast(x.message, true)); L.close(); }
+    if (e.target.closest('[data-mod]')) { const r = e.target.getBoundingClientRect(); L.close(); memberMenu({ clientX: r.left, clientY: r.bottom }, sid, uidv); }
+  };
+  const mb = $('.msgbox', el);
+  if (mb) mb.onkeydown = async (e) => {
+    if (e.key !== 'Enter' || !mb.value.trim()) return;
+    const text = mb.value.trim(); L.close();
+    const d = await openDM(uidv);
+    if (d) { const f = new FormData(); f.append('content', text); upload(`/api/channels/${d.id}/messages`, f).catch(x => toast(x.message, true)); }
+  };
+}
+function lightbox(url, name) {
+  const el = h(`<div class="lightbox"><div><img src="${esc(url)}" alt=""><a href="${esc(url)}" target="_blank" download="${esc(name || '')}">Open original</a></div></div>`);
+  document.body.appendChild(el);
+  const close = () => { el.remove(); document.removeEventListener('keydown', k); };
+  const k = (e) => e.key === 'Escape' && close();
+  document.addEventListener('keydown', k);
+  el.onclick = (e) => { if (e.target.tagName !== 'A') close(); };
+}
+async function copy(text) { try { await navigator.clipboard.writeText(text); toast('Copied!'); } catch { prompt('Copy this:', text); } }
+
+/* ================= MODALS ================= */
+function modal(html, setup, cls = '') {
+  const wrap = h(`<div class="modal-wrap"><div class="modal ${cls}" style="position:relative">${html}</div></div>`);
+  document.body.appendChild(wrap);
+  const m = $('.modal', wrap);
+  const close = () => { wrap.remove(); document.removeEventListener('keydown', k); };
+  const k = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', k);
+  wrap.onmousedown = (e) => { if (e.target === wrap) close(); };
+  $$('[data-close]', m).forEach(b => b.onclick = close);
+  setup && setup(m, close);
+  setTimeout(() => $('input:not([type=checkbox]):not([type=file]),textarea', m)?.focus(), 30);
+  return { el: m, close };
+}
+function confirmModal(title, html, okText, fn) {
+  modal(`<div class="mh" style="text-align:left"><h2>${esc(title)}</h2></div><div class="mb" style="color:var(--text-2)">${html}</div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn danger" data-ok>${esc(okText)}</button></div>`, (m, close) => {
+    $('[data-ok]', m).onclick = async () => { try { await fn(); close(); } catch (e) { toast(e.message, true); } };
+  });
+}
+function createServerModal() {
+  let iconFile = null;
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh"><h2>Create your server</h2><p>Your server is where you and your friends hang out. Make yours and start talking.</p></div>
+    <div class="mb"><label class="upload-circle" data-icon>${I.upload}<input type="file" accept="image/*" hidden></label>
+    <div class="field"><label>Server name</label><input class="input" name="name" maxlength="50" value="${esc(S.me.display_name)}’s server"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Back</button><span class="sp"></span><button class="btn primary" data-ok>Create</button></div>`, (m, close) => {
+    const fi = $('input[type=file]', m);
+    fi.onchange = () => { iconFile = fi.files[0]; if (iconFile) $('[data-icon]', m).innerHTML = `<img src="${URL.createObjectURL(iconFile)}">`; $('[data-icon]', m).appendChild(fi); };
+    const go = async () => {
+      const name = $('[name=name]', m).value.trim(); if (!name) return;
+      try {
+        const sd = await api('POST', '/api/servers', { name });
+        if (iconFile) { const f = new FormData(); f.append('file', iconFile); await upload(`/api/servers/${sd.id}/image/icon`, f).catch(() => {}); }
+        await fetchServer(sd.id); close(); selectServer(sd.id);
+      } catch (e) { toast(e.message, true); }
+    };
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go();
+  });
+}
+function joinServerModal(prefill = '') {
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh"><h2>Join a server</h2><p>Enter an invite below to join an existing server.</p></div>
+    <div class="mb"><div class="field"><label>Invite link <span class="req" style="color:var(--red)">*</span></label><input class="input" name="code" value="${esc(prefill)}" placeholder="${esc(location.origin)}/invite/hTKzmak"></div>
+    <p style="font-size:13px;color:var(--muted)">Invites look like <b>hTKzmak</b> or <b>${esc(location.origin)}/invite/hTKzmak</b></p></div>
+    <div class="mf"><button class="btn ghost" data-close>Back</button><span class="sp"></span><button class="btn primary" data-ok>Join Server</button></div>`, (m, close) => {
+    const go = async () => { const code = $('[name=code]', m).value.trim().split('/').pop(); if (!code) return; close(); showInvite(code); };
+    $('[data-ok]', m).onclick = go; $('[name=code]', m).onkeydown = (e) => e.key === 'Enter' && go();
+  });
+}
+async function showInvite(code) {
+  let inv;
+  try { inv = await api('GET', '/api/invites/' + encodeURIComponent(code)); } catch (e) { return toast(e.message, true); }
+  const s = inv.server;
+  if (S.serverData[s.id]) return selectServer(s.id);
+  modal(`${s.banner ? `<div style="height:110px;background:url('${esc(s.banner)}') center/cover"></div>` : ''}<div class="mh"><div class="rail-btn" style="width:72px;height:72px;margin:0 auto 12px;border-radius:20px;font-size:24px">${serverIcon(s)}</div>
+    <p>You’ve been invited to join</p><h2>${esc(s.name)}</h2><p><span style="color:var(--green)">●</span> ${s.online} Online &nbsp; <span style="color:var(--dim)">●</span> ${s.members} Members</p>${s.description ? `<p>${esc(s.description)}</p>` : ''}</div>
+    <div class="mf"><button class="btn ghost" data-close>Not now</button><button class="btn primary" data-ok>Accept Invite</button></div>`, (m, close) => {
+    $('[data-ok]', m).onclick = async () => { try { const sd = await api('POST', '/api/invites/' + encodeURIComponent(code)); await fetchServer(sd.id); close(); selectServer(sd.id); } catch (e) { toast(e.message, true); } };
+  });
+}
+async function inviteModal(sid) {
+  let code;
+  try { code = (await api('POST', `/api/servers/${sid}/invites`)).code; } catch (e) { return toast(e.message, true); }
+  const link = `${location.origin}/invite/${code}`;
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Invite friends to ${esc(S.serverData[sid].name)}</h2></div>
+    <div class="mb"><div class="field"><label>Send a server invite link to a friend</label><div class="invite-box"><input readonly value="${esc(link)}"><button class="btn primary sm" data-copy>Copy</button></div></div>
+    <p style="font-size:13px;color:var(--muted)">They can paste the link in a browser, or use “Join with an invite” in Orbit and enter <b>${esc(code)}</b>.</p></div>`, (m) => {
+    $('[data-copy]', m).onclick = (e) => { copy(link); e.target.textContent = 'Copied'; e.target.classList.add('green'); };
+  });
+}
+function createChannelModal(type = 'text') {
+  const sd = curServer();
+  let sel = type, priv = false, roles = [];
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Create Channel</h2></div>
+    <div class="mb"><div class="field"><label>Channel type</label>
+      <button class="choice" data-t="text"><span class="ci">${I.hash}</span><span class="ct"><b>Text</b><small>Send messages, images, GIFs, emoji, opinions and puns</small></span></button>
+      <button class="choice" data-t="voice"><span class="ci">${I.speaker}</span><span class="ct"><b>Voice</b><small>Hang out together with voice, video and screen share</small></span></button></div>
+    <div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" placeholder="new-channel"></div>
+    <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles will be able to view this channel.</small></span><span class="toggle"><input type="checkbox" name="priv"><span></span></span></label>
+    <div class="field roles-pick hidden"><label>Who can access this channel?</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet. Create roles in Server Settings. Admins can always see private channels.</span>'}</div></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Create Channel</button></div>`, (m, close) => {
+    const upd = () => $$('[data-t]', m).forEach(b => b.classList.toggle('sel', b.dataset.t === sel));
+    upd();
+    $$('[data-t]', m).forEach(b => b.onclick = () => { sel = b.dataset.t; upd(); });
+    $('[name=priv]', m).onchange = (e) => { priv = e.target.checked; $('.roles-pick', m).classList.toggle('hidden', !priv); };
+    $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
+    const go = async () => {
+      const name = $('[name=name]', m).value.trim(); if (!name) return;
+      try { const c = await api('POST', `/api/servers/${sd.id}/channels`, { name, type: sel, private: priv, allowed_roles: roles }); await fetchServer(sd.id); close(); if (c.type === 'text') selectChannel(c.id); else renderSidebar(); }
+      catch (e) { toast(e.message, true); }
+    };
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go();
+  });
+}
+function channelSettingsModal(cid) {
+  const c = findChannel(cid); const sd = S.serverData[c.server_id];
+  let roles = [...c.allowed_roles];
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>${c.type === 'voice' ? '🔊' : '#'} ${esc(c.name)}</h2><p>Channel settings</p></div>
+    <div class="mb"><div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
+    ${c.type === 'text' ? `<div class="field"><label>Channel topic</label><textarea class="input" name="topic" maxlength="300" placeholder="Let everyone know how to use this channel!">${esc(c.topic || '')}</textarea></div>` : ''}
+    <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles (and admins) can view it.</small></span><span class="toggle"><input type="checkbox" name="priv" ${c.private ? 'checked' : ''}><span></span></span></label>
+    <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div></div>
+    <div class="mf"><button class="btn danger" data-del>Delete Channel</button><span class="sp"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+    $('[name=priv]', m).onchange = (e) => $('.roles-pick', m).classList.toggle('hidden', !e.target.checked);
+    $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
+    $('[data-ok]', m).onclick = async () => {
+      try { await api('PATCH', '/api/channels/' + cid, { name: $('[name=name]', m).value, topic: $('[name=topic]', m)?.value, private: $('[name=priv]', m).checked, allowed_roles: roles }); close(); }
+      catch (e) { toast(e.message, true); }
+    };
+    $('[data-del]', m).onclick = () => { close(); deleteChannel(c); };
+  });
+}
+function deleteChannel(c) { confirmModal('Delete Channel', `Are you sure you want to delete <b>${c.type === 'voice' ? '' : '#'}${esc(c.name)}</b>? This cannot be undone.`, 'Delete Channel', () => api('DELETE', '/api/channels/' + c.id)); }
+function newDmModal() {
+  const people = new Map();
+  Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
+  S.dms.forEach(d => people.set(d.user.id, d.user));
+  const list = [...people.values()];
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Select a person</h2><p>Start a conversation with someone you share a server with.</p></div>
+    <div class="mb"><input class="input" placeholder="Type a username"><div class="pl" style="margin-top:10px;max-height:320px;overflow:auto"></div></div>`, (m, close) => {
+    const draw = (q = '') => { const f = list.filter(u => !q || u.username.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q));
+      $('.pl', m).innerHTML = f.length ? f.map(u => `<button class="ac-item" data-u="${u.id}">${avatar(u, 's32', true)}<span>${esc(u.display_name)}</span><small>@${esc(u.username)}</small></button>`).join('') : '<p style="color:var(--muted);padding:8px">No one found. Join a server to meet people.</p>'; };
+    draw();
+    $('input', m).oninput = (e) => draw(e.target.value.toLowerCase());
+    $('.pl', m).onclick = (e) => { const b = e.target.closest('[data-u]'); if (b) { close(); openDM(b.dataset.u); } };
+  });
+}
+function memberRolesModal(sid, uidv) {
+  const sd = S.serverData[sid]; const mem = member(sid, uidv);
+  let roles = [...mem.roles];
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Roles for ${esc(nameIn(sid, uidv))}</h2></div>
+    <div class="mb"><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted)">No roles yet. Create some in Server Settings → Roles.</span>'}</div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+    $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
+    $('[data-ok]', m).onclick = async () => { try { await api('PUT', `/api/servers/${sid}/members/${uidv}`, { roles }); close(); } catch (e) { toast(e.message, true); } };
+  });
+}
+function nickModal(sid) {
+  const mem = member(sid, S.me.id);
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Server profile</h2><p>Set a nickname that only shows in ${esc(S.serverData[sid].name)}.</p></div>
+    <div class="mb"><div class="field"><label>Nickname</label><input class="input" name="nick" maxlength="32" value="${esc(mem?.nick || '')}" placeholder="${esc(S.me.display_name)}"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+    $('[data-ok]', m).onclick = async () => { try { await api('PUT', `/api/servers/${sid}/members/${S.me.id}`, { nick: $('[name=nick]', m).value }); close(); } catch (e) { toast(e.message, true); } };
+  });
+}
+function customStatusModal() {
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh"><h2>Set a custom status</h2></div>
+    <div class="mb"><div class="field"><label>What’s cookin’?</label><input class="input" name="st" maxlength="80" value="${esc(S.me.status_text || '')}" placeholder="Support has arrived!"></div></div>
+    <div class="mf"><button class="btn ghost" data-clear>Clear</button><span class="sp"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+    const save = async (v) => { try { const u = await api('PATCH', '/api/me', { status_text: v }); S.me = { ...S.me, ...u }; renderUserPanel(); close(); } catch (e) { toast(e.message, true); } };
+    $('[data-ok]', m).onclick = () => save($('[name=st]', m).value);
+    $('[data-clear]', m).onclick = () => save('');
+    $('[name=st]', m).onkeydown = (e) => e.key === 'Enter' && save(e.target.value);
+  });
+}
+
+/* keyboard shortcuts */
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k' && S.me) { e.preventDefault(); newDmModal(); }
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'm' && S.me) { e.preventDefault(); Voice.toggleMute(); }
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd' && S.me) { e.preventDefault(); Voice.toggleDeaf(); }
+  // typing anywhere focuses the composer
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) && !$('.modal-wrap, .layer, .settings')) {
+    const ta = $('.chat .composer textarea:not([disabled])'); if (ta) ta.focus();
+  }
+});
