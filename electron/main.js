@@ -50,7 +50,7 @@ function setupSession() {
 function createWindow(url) {
   win = new BrowserWindow({
     width: 1320, height: 840, minWidth: 420, minHeight: 520, backgroundColor: '#111214', title: 'Orbit ' + app.getVersion(),
-    icon: path.join(__dirname, 'icon-tile.png'), autoHideMenuBar: true, show: false,
+    icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon-tile.png'), autoHideMenuBar: true, show: false,
     webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
   });
   win.once('ready-to-show', () => win.show());

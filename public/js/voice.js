@@ -45,7 +45,7 @@ const Voice = {
     this.socket.emit('voice:join', { channel_id: channelId, muted: this.muted, deaf: this.deaf }, (res) => {
       if (!res || res.error) { toast(res?.error || 'Couldn’t join voice', true); this.cleanup(); return; }
       if (this.channel !== channelId) return;
-      this.state = 'connected';
+      this.state = 'connected'; this.joinedAt = Date.now();
       playSfx('join');
       res.peers.forEach(p => this.addPeer(p, false));
       if (opts.video) this.toggleCamera();
@@ -67,7 +67,7 @@ const Voice = {
     this.video = false; this.screen = false; this.expanded = false; this.stripHidden = false;
     this._analysers.forEach(a => a.ctx.close().catch(() => {})); this._analysers.clear(); this.speaking.clear();
     cancelAnimationFrame(this._raf); this._raf = null;
-    this.channel = null; this.state = 'idle'; this.focus = null;
+    this.channel = null; this.state = 'idle'; this.focus = null; this.joinedAt = null;
     rerenderVoiceUi();
   },
 
@@ -336,11 +336,14 @@ function renderVoiceArea() {
     if (Voice.channel === ch.id) {
       slot.className = 'call-slot call-strip' + (Voice.expanded ? ' expanded' : '');
       chat?.classList.toggle('call-expanded', Voice.expanded);
-      slot.innerHTML = `<div class="stage-wrap"></div>${voiceControlsHtml(true)}`;
+      slot.style.height = !Voice.expanded && S.prefs.callHeight ? `min(${S.prefs.callHeight}px, calc(100% - 150px))` : '';
+      slot.innerHTML = `<div class="stage-wrap"></div>${voiceControlsHtml(true)}${Voice.expanded ? '' : '<div class="call-resize" title="Drag to resize · double-click to reset"></div>'}`;
       drawStage($('.stage-wrap', slot), ch.id, null);
       bindVoiceControls(slot);
+      bindCallResize(slot);
     } else {
       chat?.classList.remove('call-expanded');
+      slot.style.height = '';
       if (people.length) {
         slot.className = 'call-slot call-strip ringing';
         slot.innerHTML = `<div class="call-join"><div class="cj-avatars">${people.slice(0, 4).map(p => avatar(user(p.user_id), 's32', true)).join('')}</div><div class="cj-text"><b>${esc(people.map(p => user(p.user_id).display_name).join(', '))}</b><span>${people.length === 1 ? 'is' : 'are'} in a call</span></div><button class="btn green" data-joinv>${I.phone} Join</button></div>`;
@@ -349,6 +352,26 @@ function renderVoiceArea() {
     }
   }
 }
+// drag the bottom edge of a DM/group call to make it taller or shorter (like Discord); remembered between sessions
+function bindCallResize(slot) {
+  const handle = $('.call-resize', slot); if (!handle) return;
+  handle.onpointerdown = (e) => {
+    e.preventDefault();
+    const chat = slot.closest('.chat'), startY = e.clientY, startH = slot.getBoundingClientRect().height;
+    const max = () => Math.max(200, (chat?.clientHeight || innerHeight) - 150);
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing-call');
+    handle.onpointermove = (ev) => { const hgt = Math.round(Math.min(max(), Math.max(180, startH + ev.clientY - startY))); slot.style.height = hgt + 'px'; S.prefs.callHeight = hgt; };
+    handle.onpointerup = handle.onpointercancel = () => {
+      handle.onpointermove = handle.onpointerup = handle.onpointercancel = null;
+      document.body.classList.remove('resizing-call');
+      savePrefs();
+    };
+  };
+  handle.ondblclick = () => { delete S.prefs.callHeight; savePrefs(); slot.style.height = ''; };
+}
+function fmtCallTime(ms) { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; }
+setInterval(() => { if (Voice.joinedAt) $$('[data-vtime]').forEach(el => (el.textContent = fmtCallTime(Date.now() - Voice.joinedAt))); }, 1000);
 function refreshStreams() { $$('[data-tile]').forEach(t => { const id = t.dataset.tile; if (hasVideoOf(id)) { const holder = $('.vid-holder', t) || t; const ex = $('video', holder); const el = videoFor(id); if (ex !== el) { if (ex) ex.remove(); holder.appendChild(el); } } }); }
 
 function participants(cid) {

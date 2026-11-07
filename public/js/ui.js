@@ -350,8 +350,8 @@ function statusMenu(anchor) {
 function voiceBarHtml() {
   if (!Voice.channel) return '';
   const ch = findChannel(Voice.channel);
-  const where = ch ? (ch.type === 'dm' ? 'Call with ' + ch.name : `${ch.name} / ${S.serverData[ch.server_id]?.name || ''}`) : '';
-  return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}</b><span data-goto-voice>${esc(where)}</span></div>
+  const where = !ch ? '' : ch.type === 'dm' ? 'Call with ' + ch.name : ch.type === 'group' ? ch.name : [ch.name, S.serverData[ch.server_id]?.name].filter(Boolean).join(' / ');
+  return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}<time data-vtime>${Voice.joinedAt ? fmtCallTime(Date.now() - Voice.joinedAt) : ''}</time></b><span data-goto-voice>${esc(where)}</span></div>
     <button class="icon-btn" data-vleave title="Disconnect">${I.hangup}</button></div>
     <div class="row2"><button data-vcam class="${Voice.video ? 'on' : ''}" title="Camera">${Voice.video ? I.video : I.videoOff}</button><button data-vscreen class="${Voice.screen ? 'on' : ''}" title="Share screen">${I.screen}</button></div></div>`;
 }
@@ -670,7 +670,7 @@ function messageListHtml(key) {
   else if (ch) {
     if (ch.type === 'group') html += `<div class="ch-welcome">${groupAvatar(ch, 's80')}<h2 style="margin-top:12px">${esc(ch.name || 'Group chat')}</h2><p>This is the start of the <b>${esc(ch.name || 'group chat')}</b>. ${ch.member_count} people are here.</p></div>`;
     else if (ch.type === 'dm') html += `<div class="ch-welcome">${avatar(ch.user, 's80')}<h2 style="margin-top:12px">${esc(ch.user.display_name)}</h2><p>This is the beginning of your direct message history with <b>@${esc(ch.user.username)}</b>.</p></div>`;
-    else html += `<div class="ch-welcome"><div class="big orbit-ring">${ch.private ? I.lock : I.hash}</div><h2>Welcome to #${esc(ch.name)}!</h2><p>This is the start of the #${esc(ch.name)} channel.${ch.topic ? ' ' + esc(ch.topic) : ''}</p></div>`;
+    else html += `<div class="ch-welcome"><div class="big">${ch.private ? I.lock : I.hash}</div><h2>Welcome to #${esc(ch.name)}!</h2><p>This is the start of the #${esc(ch.name)} channel.${ch.topic ? ' ' + esc(ch.topic) : ''}</p></div>`;
   }
   let prev = null, lastDay = '';
   const lastRead = S.readMarker?.[key];
