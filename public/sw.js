@@ -1,5 +1,5 @@
 // Orbit service worker — enables install + offline shell. Network-first so the app stays current.
-const CACHE = 'orbit-shell-v1';
+const CACHE = 'orbit-shell-v2';
 const SHELL = ['/', '/styles.css', '/js/core.js', '/js/voice.js', '/js/ui.js', '/js/settings.js', '/logo.png', '/manifest.webmanifest'];
 self.addEventListener('install', (e) => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL).catch(() => {}))); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });

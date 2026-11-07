@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -105,6 +105,8 @@ function start(opts = {}) {
     CREATE TABLE IF NOT EXISTS reactions(message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, user_id TEXT, emoji TEXT, PRIMARY KEY(message_id,user_id,emoji));
     CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY, server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, creator TEXT, uses INTEGER DEFAULT 0, created INTEGER);
     CREATE TABLE IF NOT EXISTS reads(user_id TEXT, channel_id TEXT, last_id INTEGER, PRIMARY KEY(user_id,channel_id));
+    CREATE TABLE IF NOT EXISTS friends(a TEXT, b TEXT, status TEXT, requester TEXT, created INTEGER, PRIMARY KEY(a,b));
+    CREATE TABLE IF NOT EXISTS blocks(blocker TEXT, blocked TEXT, created INTEGER, PRIMARY KEY(blocker,blocked));
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
   const chanCols = all0(db, "PRAGMA table_info(channels)").map(c => c.name);
@@ -127,6 +129,33 @@ function start(opts = {}) {
     effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()) });
   const getUser = (id) => publicUser(one('SELECT * FROM users WHERE id=?', id));
   const nameOf = (id) => getUser(id)?.display_name || getUser(id)?.username || 'Someone';
+  const pair = (x, y) => (x < y ? [x, y] : [y, x]);
+  const relRow = (x, y) => { const [a, b] = pair(x, y); return one('SELECT * FROM friends WHERE a=? AND b=?', a, b); };
+  const isBlocked = (blocker, blocked) => !!one('SELECT 1 FROM blocks WHERE blocker=? AND blocked=?', blocker, blocked);
+  const eitherBlocks = (x, y) => isBlocked(x, y) || isBlocked(y, x);
+  function relTo(me, other) {
+    if (me === other) return 'self';
+    if (isBlocked(me, other)) return 'blocked';
+    if (isBlocked(other, me)) return 'blocked_by';
+    const r = relRow(me, other);
+    if (!r) return 'none';
+    if (r.status === 'accepted') return 'friend';
+    return r.requester === me ? 'outgoing' : 'incoming';
+  }
+  function friendIds(uidv) {
+    return all('SELECT a, b FROM friends WHERE status=? AND (a=? OR b=?)', 'accepted', uidv, uidv).map(r => r.a === uidv ? r.b : r.a);
+  }
+  function friendsPayload(uidv) {
+    const rows = all('SELECT * FROM friends WHERE a=? OR b=?', uidv, uidv);
+    const friends = [], incoming = [], outgoing = [];
+    for (const r of rows) { const other = r.a === uidv ? r.b : r.a; const u = getUser(other); if (!u) continue;
+      if (r.status === 'accepted') friends.push(u);
+      else if (r.requester === uidv) outgoing.push(u);
+      else incoming.push(u); }
+    const blocked = all('SELECT blocked FROM blocks WHERE blocker=?', uidv).map(r => getUser(r.blocked)).filter(Boolean);
+    return { friends, incoming, outgoing, blocked };
+  }
+  function pushFriends(uidv) { io.to('u:' + uidv).emit('friends:refresh', friendsPayload(uidv)); }
   const isMember = (sid, uidv) => !!one('SELECT 1 FROM members WHERE server_id=? AND user_id=?', sid, uidv);
   function permsOf(sid, uidv) {
     const s = one('SELECT owner_id FROM servers WHERE id=?', sid);
@@ -323,7 +352,7 @@ function start(opts = {}) {
   app.get('/api/me', auth, wrap((req, res) => {
     const me = { ...publicUser(req.user), email: req.user.email };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
-    res.json({ me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities) });
+    res.json({ me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id) });
   }));
   app.patch('/api/me', auth, wrap((req, res) => {
     const b = req.body || {};
@@ -375,7 +404,7 @@ function start(opts = {}) {
     const u = getUser(req.params.id);
     if (!u) throw err(404, 'User not found');
     const mutual = all(`SELECT s.id, s.name, s.icon FROM servers s WHERE s.id IN (SELECT server_id FROM members WHERE user_id=?) AND s.id IN (SELECT server_id FROM members WHERE user_id=?)`, req.user.id, u.id);
-    res.json({ ...u, mutual_servers: mutual });
+    res.json({ ...u, mutual_servers: mutual, relationship: relTo(req.user.id, u.id) });
   }));
 
 
@@ -695,6 +724,7 @@ function start(opts = {}) {
   app.post('/api/dms', auth, wrap((req, res) => {
     const other = req.body?.user_id;
     if (!other || !getUser(other)) throw err(404, 'User not found');
+    if (other !== req.user.id && eitherBlocks(req.user.id, other)) throw err(403, 'You can’t message this person.');
     let ch = one(`SELECT c.* FROM channels c WHERE c.type='dm' AND c.is_group=0 AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?)
       AND (SELECT COUNT(*) FROM dm_members WHERE channel_id=c.id)=?`, req.user.id, other, other === req.user.id ? 1 : 2);
     if (!ch) {
@@ -786,6 +816,65 @@ function start(opts = {}) {
     if (!req.file) throw err(400, 'Upload an image');
     run('UPDATE channels SET gc_icon=? WHERE id=?', fileUrl(req.file), ch.id);
     pushDm(ch.id);
+    res.json({ ok: true });
+  }));
+
+  // ----- friends -----
+  app.get('/api/friends', auth, wrap((req, res) => res.json(friendsPayload(req.user.id))));
+  app.post('/api/friends', auth, wrap((req, res) => {
+    const q = String(req.body?.username || '').trim().replace(/^@/, '');
+    if (!q) throw err(400, 'Enter a username');
+    const target = one('SELECT * FROM users WHERE username=? COLLATE NOCASE', q);
+    if (!target) throw err(404, `No one here goes by "${q}".`);
+    if (target.id === req.user.id) throw err(400, 'You can’t add yourself.');
+    if (eitherBlocks(req.user.id, target.id)) throw err(403, 'You can’t add this person.');
+    const [a, b] = pair(req.user.id, target.id);
+    const existing = one('SELECT * FROM friends WHERE a=? AND b=?', a, b);
+    if (existing) {
+      if (existing.status === 'accepted') throw err(400, 'You’re already friends.');
+      if (existing.requester === req.user.id) throw err(400, 'You already sent them a request.');
+      // they already requested you -> accept
+      run('UPDATE friends SET status=? WHERE a=? AND b=?', 'accepted', a, b);
+      [req.user.id, target.id].forEach(pushFriends);
+      broadcastUser(req.user.id); broadcastUser(target.id);
+      broadcastPresence(req.user.id); broadcastPresence(target.id);
+      return res.json({ status: 'friend' });
+    }
+    run('INSERT INTO friends(a,b,status,requester,created) VALUES(?,?,?,?,?)', a, b, 'pending', req.user.id, now());
+    [req.user.id, target.id].forEach(pushFriends);
+    io.to('u:' + target.id).emit('friends:request', { from: getUser(req.user.id) });
+    res.json({ status: 'outgoing' });
+  }));
+  app.post('/api/friends/:uid/accept', auth, wrap((req, res) => {
+    const [a, b] = pair(req.user.id, req.params.uid);
+    const r = one('SELECT * FROM friends WHERE a=? AND b=? AND status=?', a, b, 'pending');
+    if (!r || r.requester === req.user.id) throw err(404, 'No pending request from them.');
+    run('UPDATE friends SET status=? WHERE a=? AND b=?', 'accepted', a, b);
+    [req.user.id, req.params.uid].forEach(pushFriends);
+    broadcastUser(req.user.id); broadcastUser(req.params.uid);
+    broadcastPresence(req.user.id); broadcastPresence(req.params.uid);
+    io.to('u:' + req.params.uid).emit('friends:accepted', { user: getUser(req.user.id) });
+    res.json({ ok: true });
+  }));
+  app.delete('/api/friends/:uid', auth, wrap((req, res) => {
+    // removes a friend, cancels an outgoing request, or declines an incoming one
+    const [a, b] = pair(req.user.id, req.params.uid);
+    run('DELETE FROM friends WHERE a=? AND b=?', a, b);
+    [req.user.id, req.params.uid].forEach(pushFriends);
+    res.json({ ok: true });
+  }));
+  app.post('/api/friends/:uid/block', auth, wrap((req, res) => {
+    const target = req.params.uid;
+    if (target === req.user.id || !getUser(target)) throw err(400, 'Can’t block that.');
+    const [a, b] = pair(req.user.id, target);
+    run('DELETE FROM friends WHERE a=? AND b=?', a, b);
+    run('INSERT OR REPLACE INTO blocks VALUES(?,?,?)', req.user.id, target, now());
+    [req.user.id, target].forEach(pushFriends);
+    res.json({ ok: true });
+  }));
+  app.delete('/api/friends/:uid/block', auth, wrap((req, res) => {
+    run('DELETE FROM blocks WHERE blocker=? AND blocked=?', req.user.id, req.params.uid);
+    pushFriends(req.user.id);
     res.json({ ok: true });
   }));
 
@@ -929,6 +1018,7 @@ function start(opts = {}) {
     const set = new Set([uidv]);
     all('SELECT DISTINCT m2.user_id FROM members m1 JOIN members m2 ON m1.server_id=m2.server_id WHERE m1.user_id=?', uidv).forEach(r => set.add(r.user_id));
     all('SELECT DISTINCT d2.user_id FROM dm_members d1 JOIN dm_members d2 ON d1.channel_id=d2.channel_id WHERE d1.user_id=?', uidv).forEach(r => set.add(r.user_id));
+    friendIds(uidv).forEach(id => set.add(id));
     return [...set];
   }
   function broadcastUser(uidv) { const u = getUser(uidv); audienceOf(uidv).forEach(a => io.to('u:' + a).emit('user:update', u)); }

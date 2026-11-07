@@ -23,6 +23,7 @@ const S = {
   pending: [], drafts: {}, membersOpen: true, info: {},
   prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false },
   activities: {},
+  friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
 try { Object.assign(S.prefs, JSON.parse(localStorage.getItem('orbit-prefs') || '{}')); } catch {}
 const savePrefs = () => { try { localStorage.setItem('orbit-prefs', JSON.stringify(S.prefs)); } catch {} };
@@ -128,6 +129,17 @@ const CONN = {
   reddit: ['Reddit', '#ff4500', 'R'], xbox: ['Xbox', '#107c10', 'XB'], playstation: ['PlayStation', '#0070d1', 'PS'], roblox: ['Roblox', '#444', 'RB'],
 };
 const activityOf = (uidv) => S.activities[uidv] || null;
+function friendState(uid) {
+  const F = S.friends;
+  if (uid === S.me.id) return 'self';
+  if ((F.blocked || []).some(u => u.id === uid)) return 'blocked';
+  if ((F.friends || []).some(u => u.id === uid)) return 'friend';
+  if ((F.incoming || []).some(u => u.id === uid)) return 'incoming';
+  if ((F.outgoing || []).some(u => u.id === uid)) return 'outgoing';
+  return 'none';
+}
+const incomingCount = () => (S.friends.incoming || []).length;
+const isFriend = (uid) => friendState(uid) === 'friend';
 function activityLine(uidv) { const a = activityOf(uidv); return a && a.type === 'listening' ? `Listening to ${a.name}` : ''; }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 function gradFor(str) { const h = hueOf(str); return `linear-gradient(135deg,hsl(${h} 72% 62%),hsl(${(h + 48) % 360} 70% 44%))`; }

@@ -93,8 +93,9 @@ async function loadApp() {
   let data;
   try { data = await api('GET', '/api/me'); } catch (e) { if (!S.token) return; $('#root').innerHTML = `<div class="auth"><div class="auth-card"><h1>Can’t connect</h1><p class="sub">${esc(e.message)}</p><button class="btn primary block" onclick="location.reload()">Retry</button></div></div>`; return; }
   S.me = data.me; S.users[S.me.id] = S.me;
-  S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {};
+  S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {}; S.friends = data.friends || S.friends;
   S.dms.forEach(d => { if (d.user) S.users[d.user.id] = d.user; (d.members || []).forEach(m => S.users[m.id] = { ...S.users[m.id], ...m }); });
+  cacheFriends();
   await Promise.all(S.servers.map(s => fetchServer(s.id)));
   renderShell();
   connectSocket();
@@ -116,6 +117,7 @@ async function fetchServer(sid) {
   if (i >= 0) S.servers[i] = sum; else S.servers.push(sum);
   return sd;
 }
+function cacheFriends() { const F = S.friends || {}; ['friends', 'incoming', 'outgoing', 'blocked'].forEach(k => (F[k] || []).forEach(u => S.users[u.id] = { ...S.users[u.id], ...u })); }
 const pickUser = (m) => { const { nick, joined, roles, ...u } = m; if (u.activity) S.activities[u.id] = u.activity; return u; };
 
 /* ================= SOCKET ================= */
@@ -125,6 +127,9 @@ function connectSocket() {
   socket.on('connect', () => { $('.offline-banner')?.remove(); if (wasDown) { wasDown = false; resync(); } });
   socket.on('disconnect', () => { wasDown = true; if (!$('.offline-banner')) $('.main')?.prepend(h('<div class="offline-banner">Reconnecting…</div>')); });
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') logout(); });
+  socket.on('friends:refresh', (f) => { S.friends = f; cacheFriends(); if (S.view.server === '@me' && !S.view.channel) renderMain(); renderRail(); renderSidebar(); });
+  socket.on('friends:request', ({ from }) => { S.users[from.id] = { ...S.users[from.id], ...from }; beep('msg'); toast(`${from.display_name} sent you a friend request`); });
+  socket.on('friends:accepted', ({ user: u }) => { S.users[u.id] = { ...S.users[u.id], ...u }; beep('join'); toast(`${u.display_name} accepted your friend request`); });
   socket.on('message:new', onMessageNew);
   socket.on('message:update', (m) => { upsertMessage(m); });
   socket.on('message:delete', ({ id, channel_id, thread_id }) => {
@@ -196,7 +201,7 @@ function unreadForServer(sid) { let c = 0, m = 0; for (const [, u] of Object.ent
 function renderRail() {
   const rail = $('.rail'); if (!rail) return;
   const dmUnread = S.dms.filter(d => S.unread[d.id]);
-  const dmMentions = dmUnread.reduce((a, d) => a + (S.unread[d.id].mentions || 0), 0);
+  const dmMentions = dmUnread.reduce((a, d) => a + (S.unread[d.id].mentions || 0), 0) + incomingCount();
   rail.innerHTML = `
     <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${dmMentions}</span>` : ''}</div>
     ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${d.type === 'group' ? groupAvatar(d, '') : avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
@@ -262,7 +267,7 @@ function renderSidebar() {
   if (S.view.server === '@me') {
     side.innerHTML = `<button class="side-search" data-find>Find or start a conversation</button>
       <div class="side-list">
-        <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">People</span></button>
+        <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">Friends</span>${incomingCount() ? `<span class="badge">${incomingCount()}</span>` : ''}</button>
         <div class="cat"><span>Direct messages</span><button data-find title="New message">+</button></div>
         ${S.dms.length ? S.dms.map(d => { const un = S.unread[d.id]; const inCall = (S.voice[d.id] || []).length;
           if (d.type === 'group') return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${groupAvatar(d, 's32')}<span class="nm">${esc(d.name || 'Group chat')}<small>${d.member_count} members</small></span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`;
@@ -391,7 +396,7 @@ function renderTopbar() {
   const bar = $('.topbar'); if (!bar) return;
   const ch = curChannel();
   const back = `<button class="icon-btn mobile-only" data-back>${I.back}</button>`;
-  if (!ch) { bar.innerHTML = `${back}<span class="ico">${I.users}</span><span class="title">People</span><span class="spacer"></span>`; }
+  if (!ch) { bar.innerHTML = `${back}<span class="ico">${I.users}</span><span class="title">Friends</span><span class="spacer"></span>`; }
   else if (ch.type === 'dm') {
     const u = S.users[ch.user.id] || ch.user;
     bar.innerHTML = `${back}${avatar(u, 's24', false)}<span class="title" data-uid="${u.id}" style="cursor:pointer">${esc(u.display_name)}</span><span class="topic" style="cursor:default">@${esc(u.username)} · ${statusLabel(statusOf(u.id))}</span>
@@ -426,38 +431,82 @@ function renderTopbar() {
 const statusLabel = (s) => ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' }[s] || 'Offline');
 
 function renderHome(content) {
-  const people = new Map();
-  Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
-  S.dms.forEach(d => { if (d.user && d.user.id !== S.me.id) people.set(d.user.id, S.users[d.user.id] || d.user); (d.members || []).forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)); });
-  const list = [...people.values()].sort((a, b) => (statusOf(a.id) === 'offline') - (statusOf(b.id) === 'offline') || a.display_name.localeCompare(b.display_name));
-  const online = list.filter(u => statusOf(u.id) !== 'offline');
-  const listening = online.filter(u => activityOf(u.id));
-  const hr = new Date().getHours();
-  const greet = hr < 5 ? 'Up late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
-  const card = (u) => { const a = activityOf(u.id); return `<button class="person" data-uid="${u.id}" style="${themeStyle(u)}">
-      <span class="p-banner">${bannerHtml(u, 'pb')}</span>${avatar(u, 's56', true)}
-      <b style="${nameStyle(u)}">${esc(u.display_name)}${badgeHtml(u)}</b><small>${a ? `${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(a.title)}` : esc(u.status_text || statusLabel(statusOf(u.id)))}</small>
-      <span class="p-actions"><span class="icon-btn" data-msg="${u.id}" title="Message">${I.message}</span><span class="icon-btn" data-callu="${u.id}" title="Call">${I.phone}</span></span></button>`; };
-  content.innerHTML = `<div class="home-view">
-    <section class="home-hero"><div class="hh-text"><h1>${greet}, ${esc(S.me.display_name)}</h1><p>${online.length ? `${online.length} ${online.length === 1 ? 'person you know is' : 'people you know are'} online right now.` : 'Nobody you know is online yet.'}</p></div><img class="hh-logo" src="${LOGO}" alt=""></section>
-    <div class="quick">
-      <button class="q" data-add><span class="qi" style="background:linear-gradient(135deg,#8b6dff,#5b3ee0)">${I.plus}</span><b>Create a server</b><small>Start a space for your friends</small></button>
-      <button class="q" data-join><span class="qi" style="background:linear-gradient(135deg,#5ee0d6,#2a8fa0)">${I.compass}</span><b>Join with an invite</b><small>Paste a link someone sent you</small></button>
-      <button class="q" data-find><span class="qi" style="background:linear-gradient(135deg,#ff8ab3,#c0457a)">${I.message}</span><b>Message someone</b><small>Search people you share a server with</small></button>
-    </div>
-    ${listening.length ? `<h2>Listening now</h2><div class="people">${listening.map(card).join('')}</div>` : ''}
-    ${list.length ? `<h2>Online — ${online.length}</h2>${online.length ? `<div class="people">${online.filter(u => !activityOf(u.id)).map(card).join('')}</div>` : '<p class="muted-note">When people come online they’ll show up here.</p>'}
-      ${list.length > online.length ? `<h2>Offline — ${list.length - online.length}</h2><div class="people off">${list.filter(u => statusOf(u.id) === 'offline').map(card).join('')}</div>` : ''}`
-      : `<p class="muted-note">Create or join a server, and the people you meet show up here.</p>`}
-  </div>`;
+  const tab = S.friendsTab || 'online';
+  const F = S.friends;
+  const row = (u, right) => `<div class="friend-row" data-uid="${u.id}">${avatar(u, 's40', true)}
+      <div class="who"><b>${esc(u.display_name)}${badgeHtml(u)}</b><small>${esc(activityLine(u.id) || u.status_text || statusLabel(statusOf(u.id)))}</small></div>
+      <div class="fr-actions">${right}</div></div>`;
+  const friendBtns = (u) => `<button class="icon-btn" data-msg="${u.id}" title="Message">${I.message}</button><button class="icon-btn" data-callu="${u.id}" title="Call">${I.phone}</button><button class="icon-btn" data-fmenu="${u.id}" title="More">${I.gear}</button>`;
+  let body = '';
+  if (tab === 'add') {
+    body = `<div class="add-friend"><h3>Add a friend</h3><p class="muted-note" style="text-align:left;padding:0 0 12px">Enter a username to send a friend request. You can message and call friends without sharing a server.</p>
+      <form class="af-form"><input class="input" name="u" placeholder="Enter a username" autocomplete="off"><button class="btn primary" type="submit">Send request</button></form>
+      <div class="af-msg"></div>
+      ${F.outgoing.length ? `<h3 style="margin-top:24px">Sent requests — ${F.outgoing.length}</h3>${F.outgoing.map(u => row(u, `<span class="pending-tag">Pending</span><button class="icon-btn danger" data-cancel="${u.id}" title="Cancel">${I.x}</button>`)).join('')}` : ''}</div>`;
+  } else if (tab === 'pending') {
+    const total = F.incoming.length + F.outgoing.length;
+    body = total ? `${F.incoming.length ? `<h3>Incoming — ${F.incoming.length}</h3>${F.incoming.map(u => row(u, `<button class="icon-btn accept" data-accept="${u.id}" title="Accept">${I.check}</button><button class="icon-btn danger" data-decline="${u.id}" title="Ignore">${I.x}</button>`)).join('')}` : ''}
+      ${F.outgoing.length ? `<h3 ${F.incoming.length ? 'style="margin-top:20px"' : ''}>Sent — ${F.outgoing.length}</h3>${F.outgoing.map(u => row(u, `<span class="pending-tag">Pending</span><button class="icon-btn danger" data-cancel="${u.id}" title="Cancel">${I.x}</button>`)).join('')}` : ''}`
+      : `<div class="empty"><img src="${LOGO}" alt=""><b>No pending requests</b><span>Requests you send or receive show up here.</span></div>`;
+  } else if (tab === 'blocked') {
+    body = F.blocked.length ? `<h3>Blocked — ${F.blocked.length}</h3>${F.blocked.map(u => row(u, `<button class="btn secondary sm" data-unblock="${u.id}">Unblock</button>`)).join('')}`
+      : `<div class="empty"><img src="${LOGO}" alt=""><b>No one blocked</b></div>`;
+  } else {
+    let list = F.friends.slice();
+    if (tab === 'online') list = list.filter(u => statusOf(u.id) !== 'offline');
+    list.sort((a, b) => (statusOf(a.id) === 'offline') - (statusOf(b.id) === 'offline') || a.display_name.localeCompare(b.display_name));
+    body = list.length ? `<h3>${tab === 'online' ? 'Online' : 'All friends'} — ${list.length}</h3>${list.map(u => row(u, friendBtns(u))).join('')}`
+      : `<div class="empty"><img src="${LOGO}" alt=""><b>${tab === 'online' ? 'No friends online' : 'No friends yet'}</b><span>${F.friends.length ? 'Nobody’s online right now.' : 'Add someone by username to get started.'}</span>${!F.friends.length ? `<button class="btn primary" data-tab="add" style="margin-top:8px">Add a friend</button>` : ''}</div>`;
+  }
+  const t = (k, label, n) => `<button class="ftab ${tab === k ? 'active' : ''} ${k === 'add' ? 'add' : ''}" data-tab="${k}">${label}${n ? `<span class="badge">${n}</span>` : ''}</button>`;
+  content.innerHTML = `<div class="friends-hub">
+    <div class="fh-top"><span class="fh-title">${I.users} Friends</span>
+      ${t('online', 'Online')}${t('all', 'All')}${t('pending', 'Pending', incomingCount())}${t('blocked', 'Blocked')}
+      <button class="btn primary sm fh-add ${tab === 'add' ? 'on' : ''}" data-tab="add">Add friend</button></div>
+    <div class="fh-body">${body}</div></div>`;
+  content.querySelector('.af-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault(); const inp = e.target.u; const v = inp.value.trim(); if (!v) return;
+    const msg = content.querySelector('.af-msg');
+    try { const r = await api('POST', '/api/friends', { username: v }); inp.value = '';
+      msg.className = 'af-msg ok'; msg.textContent = r.status === 'friend' ? `You’re now friends with ${v}!` : `Friend request sent to ${v}.`; }
+    catch (ex) { msg.className = 'af-msg err'; msg.textContent = ex.message; }
+  });
   content.onclick = async (e) => {
-    const m = e.target.closest('[data-msg]'); if (m) { e.stopPropagation(); return openDM(m.dataset.msg); }
-    const c = e.target.closest('[data-callu]'); if (c) { e.stopPropagation(); const d = await openDM(c.dataset.callu); if (d) Voice.join(d.id); return; }
-    if (e.target.closest('[data-add]')) return createServerModal();
-    if (e.target.closest('[data-join]')) return joinServerModal();
-    if (e.target.closest('[data-find]')) return newDmModal();
+    const tb = e.target.closest('[data-tab]'); if (tb) { S.friendsTab = tb.dataset.tab; renderMain(); return; }
+    const act = async (sel, fn) => { const b = e.target.closest(sel); if (b) { e.stopPropagation(); try { await fn(b.dataset[Object.keys(b.dataset)[0]]); } catch (ex) { toast(ex.message, true); } return true; } return false; };
+    if (await act('[data-msg]', id => openDM(id))) return;
+    if (await act('[data-callu]', async id => { const d = await openDM(id); if (d) Voice.join(d.id); })) return;
+    if (await act('[data-accept]', id => api('POST', `/api/friends/${id}/accept`))) return;
+    if (await act('[data-decline]', id => api('DELETE', `/api/friends/${id}`))) return;
+    if (await act('[data-cancel]', id => api('DELETE', `/api/friends/${id}`))) return;
+    if (await act('[data-unblock]', id => api('DELETE', `/api/friends/${id}/block`))) return;
+    const fm = e.target.closest('[data-fmenu]'); if (fm) { e.stopPropagation(); return friendMenu(e, fm.dataset.fmenu); }
     const r = e.target.closest('[data-uid]'); if (r) profilePopout(r.dataset.uid, r);
   };
+}
+function profileMoreMenu(e, sid, uidv) {
+  const st = friendState(uidv);
+  const items = [];
+  if (sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && uidv !== S.serverData[sid]?.owner_id) {
+    if (can(PERM.KICK, sid)) items.push(['Kick from server', () => kickMember(sid, uidv), 'danger']);
+    if (can(PERM.BAN, sid)) items.push(['Ban from server', () => banMember(sid, uidv), 'danger']);
+    items.push('-');
+  }
+  if (st === 'friend') items.push(['Remove friend', () => confirmModal('Remove friend', `Remove <b>${esc(user(uidv).display_name)}</b>?`, 'Remove', () => api('DELETE', '/api/friends/' + uidv)), 'danger']);
+  if (st === 'blocked') items.push(['Unblock', () => api('DELETE', `/api/friends/${uidv}/block`).catch(x => toast(x.message, true))]);
+  else items.push(['Block', () => confirmModal('Block user', `Block <b>${esc(user(uidv).display_name)}</b>?`, 'Block', () => api('POST', `/api/friends/${uidv}/block`)), 'danger']);
+  contextMenu(e, items.filter(Boolean));
+}
+function friendMenu(e, uid) {
+  const r = e.target.closest('[data-fmenu]').getBoundingClientRect();
+  contextMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
+    ['Message', () => openDM(uid)],
+    ['Call', async () => { const d = await openDM(uid); if (d) Voice.join(d.id); }],
+    ['View profile', () => profilePopout(uid, null)],
+    '-',
+    ['Remove friend', () => confirmModal('Remove friend', `Remove <b>${esc(user(uid).display_name)}</b> from your friends?`, 'Remove', () => api('DELETE', '/api/friends/' + uid)), 'danger'],
+    ['Block', () => confirmModal('Block user', `Block <b>${esc(user(uid).display_name)}</b>? They’ll be removed as a friend and can’t message you.`, 'Block', () => api('POST', `/api/friends/${uid}/block`)), 'danger'],
+  ]);
 }
 async function openDM(userId) {
   try {
@@ -971,6 +1020,16 @@ function activityHtml(uidv) {
     <div class="act-meta"><a ${a.url ? `href="${esc(a.url)}" target="_blank" rel="noopener"` : ''} class="act-title">${esc(a.title)}</a><span>by ${esc(a.artist || '')}</span><span>on ${esc(a.album || '')}</span></div></div>
     <div class="act-bar"><i style="width:${(pos / dur * 100).toFixed(1)}%"></i></div><div class="act-times"><span>${t(pos)}</span><span>${t(dur)}</span></div></div>`;
 }
+function friendActionRow(uid) {
+  const st = friendState(uid);
+  if (st === 'self') return '';
+  if (st === 'friend') return `<div class="actions"><button class="btn secondary" data-unfriend="${uid}">${I.check} Friends</button></div>`;
+  if (st === 'outgoing') return `<div class="actions"><button class="btn secondary" data-cancelreq="${uid}">Request sent · Cancel</button></div>`;
+  if (st === 'incoming') return `<div class="actions"><button class="btn primary" data-acceptreq="${uid}">Accept request</button><button class="btn ghost" data-declinereq="${uid}">Ignore</button></div>`;
+  if (st === 'blocked') return `<div class="actions"><button class="btn secondary" data-unblockp="${uid}">Unblock</button></div>`;
+  if (st === 'blocked_by') return '';
+  return `<div class="actions"><button class="btn primary" data-addfriend="${uid}">${I.invite} Add friend</button></div>`;
+}
 function profileCardHtml(u, opts = {}) {
   const { sid, mem, roles = [], self, preview } = opts;
   const themed = !!u.theme_primary;
@@ -992,7 +1051,7 @@ function profileCardHtml(u, opts = {}) {
       ${u.mutual_servers?.length && !self ? `<section><h5>Mutual servers</h5><div class="since">${u.mutual_servers.map(s => esc(s.name)).join(', ')}</div></section>` : ''}
     </div>
     ${preview ? '' : self ? `<div class="actions"><button class="btn secondary" data-editp>${I.edit} Edit profile</button></div>`
-      : `<div class="actions"><input class="msgbox" placeholder="Message @${esc(u.username)}"><button class="icon-btn" data-call title="Call">${I.phone}</button>${sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && u.id !== S.serverData[sid].owner_id ? `<button class="icon-btn" data-mod title="More">•••</button>` : ''}</div>`}
+      : `${friendActionRow(u.id)}<div class="actions"><input class="msgbox" placeholder="Message @${esc(u.username)}"><button class="icon-btn" data-call title="Call">${I.phone}</button><button class="icon-btn" data-mod title="More">•••</button></div>`}
   </div>`;
 }
 async function profilePopout(uidv, anchor, side) {
@@ -1015,7 +1074,14 @@ async function profilePopout(uidv, anchor, side) {
     if (e.target.closest('[data-call]')) { L.close(); const d = await openDM(uidv); if (d) Voice.join(d.id); }
     if (e.target.closest('[data-roles]')) { L.close(); memberRolesModal(sid, uidv); }
     const ur = e.target.closest('[data-unrole]'); if (ur) { await api('PUT', `/api/servers/${sid}/members/${uidv}`, { roles: mem.roles.filter(r => r !== ur.dataset.unrole) }).catch(x => toast(x.message, true)); L.close(); }
-    if (e.target.closest('[data-mod]')) { const r = e.target.getBoundingClientRect(); L.close(); memberMenu({ clientX: r.left, clientY: r.bottom }, sid, uidv); }
+    const fa = async (sel, fn) => { const b = e.target.closest(sel); if (b) { try { await fn(uidv); } catch (ex) { toast(ex.message, true); } L.close(); return true; } return false; };
+    if (await fa('[data-addfriend]', id => api('POST', '/api/friends', { username: user(id).username }))) return;
+    if (await fa('[data-acceptreq]', id => api('POST', `/api/friends/${id}/accept`))) return;
+    if (await fa('[data-declinereq]', id => api('DELETE', '/api/friends/' + id))) return;
+    if (await fa('[data-cancelreq]', id => api('DELETE', '/api/friends/' + id))) return;
+    if (await fa('[data-unblockp]', id => api('DELETE', `/api/friends/${id}/block`))) return;
+    if (e.target.closest('[data-unfriend]')) { L.close(); confirmModal('Remove friend', `Remove <b>${esc(u.display_name)}</b>?`, 'Remove', () => api('DELETE', '/api/friends/' + uidv)); return; }
+    if (e.target.closest('[data-mod]')) { const r = e.target.getBoundingClientRect(); L.close(); profileMoreMenu({ clientX: r.left, clientY: r.bottom }, sid, uidv); }
   };
   const mb = $('.msgbox', el);
   if (mb) mb.onkeydown = async (e) => {
@@ -1149,6 +1215,7 @@ function channelSettingsModal(cid) {
 function deleteChannel(c) { confirmModal('Delete Channel', `Are you sure you want to delete <b>${c.type === 'voice' ? '' : '#'}${esc(c.name)}</b>? This cannot be undone.`, 'Delete Channel', () => api('DELETE', '/api/channels/' + c.id)); }
 function peopleIKnow() {
   const people = new Map();
+  (S.friends.friends || []).forEach(u => people.set(u.id, S.users[u.id] || u));
   Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
   S.dms.forEach(d => { if (d.user && d.user.id !== S.me.id) people.set(d.user.id, S.users[d.user.id] || d.user); (d.members || []).forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)); });
   return [...people.values()];
