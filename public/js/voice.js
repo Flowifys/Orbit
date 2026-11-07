@@ -45,7 +45,7 @@ const Voice = {
       if (!res || res.error) { toast(res?.error || 'Couldn’t join voice', true); this.cleanup(); return; }
       if (this.channel !== channelId) return;
       this.state = 'connected';
-      beep('join');
+      playSfx('join');
       res.peers.forEach(p => this.addPeer(p, false));
       if (opts.video) this.toggleCamera();
       rerenderVoiceUi();
@@ -55,7 +55,7 @@ const Voice = {
     if (!this.channel) return;
     this.state = 'leaving';
     this.socket?.emit('voice:leave');
-    if (!silent) beep('leave');
+    if (!silent) playSfx('leave');
     this.cleanup();
   },
   cleanup() {

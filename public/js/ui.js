@@ -128,8 +128,8 @@ function connectSocket() {
   socket.on('disconnect', () => { wasDown = true; if (!$('.offline-banner')) $('.main')?.prepend(h('<div class="offline-banner">Reconnecting…</div>')); });
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') logout(); });
   socket.on('friends:refresh', (f) => { S.friends = f; cacheFriends(); if (S.view.server === '@me' && !S.view.channel) renderMain(); renderRail(); renderSidebar(); });
-  socket.on('friends:request', ({ from }) => { S.users[from.id] = { ...S.users[from.id], ...from }; beep('msg'); toast(`${from.display_name} sent you a friend request`); });
-  socket.on('friends:accepted', ({ user: u }) => { S.users[u.id] = { ...S.users[u.id], ...u }; beep('join'); toast(`${u.display_name} accepted your friend request`); });
+  socket.on('friends:request', ({ from }) => { S.users[from.id] = { ...S.users[from.id], ...from }; playNotif(); toast(`${from.display_name} sent you a friend request`); });
+  socket.on('friends:accepted', ({ user: u }) => { S.users[u.id] = { ...S.users[u.id], ...u }; playNotif(); toast(`${u.display_name} accepted your friend request`); });
   socket.on('message:new', onMessageNew);
   socket.on('message:update', (m) => { upsertMessage(m); });
   socket.on('message:delete', ({ id, channel_id, thread_id }) => {
@@ -172,8 +172,8 @@ function connectSocket() {
     if (users.length) S.voice[channel_id] = users; else delete S.voice[channel_id];
     if (Voice.channel === channel_id) {
       const now = users.map(u => u.user_id);
-      if (now.some(u => !prev.includes(u) && u !== S.me.id)) beep('join');
-      if (prev.some(u => !now.includes(u) && u !== S.me.id)) beep('leave');
+      if (now.some(u => !prev.includes(u) && u !== S.me.id)) playSfx('join');
+      if (prev.some(u => !now.includes(u) && u !== S.me.id)) playSfx('leave');
     }
     renderSidebar(); renderVoiceArea();
   });

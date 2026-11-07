@@ -35,6 +35,7 @@ savePrefs();
 const soundUrl = (id) => '/sounds/' + id + '.mp3';
 let _notifAudio;
 function playNotif() { if (!S.prefs.sounds) return; try { _notifAudio = _notifAudio || new Audio(); _notifAudio.src = soundUrl(S.prefs.notifSound || 'notif1'); _notifAudio.volume = 0.6; _notifAudio.currentTime = 0; _notifAudio.play().catch(() => {}); } catch {} }
+function playSfx(name, vol) { if (!S.prefs.sounds) return; try { const a = new Audio('/sounds/' + name + '.mp3'); a.volume = vol ?? 0.5; a.play().catch(() => {}); } catch {} }
 function previewSound(id, vol) { try { const a = new Audio(soundUrl(id)); a.volume = vol ?? 0.6; a.play().catch(() => {}); return a; } catch {} }
 
 /* ---------- dom helpers ---------- */
