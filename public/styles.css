@@ -822,13 +822,22 @@ select.input{appearance:auto}
 .gif-btn{font:700 11px var(--display);letter-spacing:.3px;width:auto;padding:0 8px;border:1px solid var(--line-2);border-radius:8px}
 .gif-btn:hover{color:var(--text);border-color:var(--accent)}
 .gif-picker{width:360px;max-width:96vw;height:420px;display:flex;flex-direction:column}
-.gp-head{padding:10px}
-.gp-head .input{width:100%}
-.gp-grid{flex:1;overflow-y:auto;padding:0 8px 8px;columns:2;column-gap:8px}
-.gp-item{width:100%;margin:0 0 8px;border-radius:10px;overflow:hidden;background:var(--bg-3);display:block;break-inside:avoid}
+.gp-head{padding:10px;display:flex;gap:8px;align-items:center}
+.gp-head .input{flex:1}
+.gp-fav-tab{width:38px;height:38px;flex:none;border-radius:9px;border:1px solid var(--line);display:grid;place-items:center;color:var(--muted)}
+.gp-fav-tab:hover{color:var(--text);border-color:var(--line-2)}
+.gp-fav-tab.on{color:var(--red);border-color:var(--red);background:color-mix(in oklab,var(--red) 12%,transparent)}
+.gp-fav-tab.on svg{fill:var(--red)}
+.gp-grid{flex:1;overflow-y:auto;overflow-x:hidden;padding:0 8px 8px;display:flex;gap:8px;align-items:flex-start}
+.gp-col{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.gp-item{position:relative;width:100%;border-radius:10px;overflow:hidden;background:var(--bg-3);display:block}
 .gp-item img{width:100%;display:block}
 .gp-item:hover{outline:2px solid var(--accent)}
-.gp-loading{columns:1;color:var(--muted);text-align:center;padding:30px 0;font-size:14px}
+.gp-fav{position:absolute;top:6px;right:6px;width:28px;height:28px;border-radius:50%;background:rgba(5,3,15,.55);backdrop-filter:blur(4px);display:grid;place-items:center;color:#fff;opacity:0;transition:opacity .12s}
+.gp-item:hover .gp-fav{opacity:1}
+.gp-fav.on{opacity:1;color:var(--red)}
+.gp-fav.on svg{fill:var(--red);stroke:var(--red)}
+.gp-loading{flex:1;color:var(--muted);text-align:center;padding:30px 10px;font-size:14px}
 .gp-foot{padding:6px 10px;font-size:11px;color:var(--dim);border-top:1px solid var(--line);text-align:center}
 
 /* ============ 1.6 — custom audio player + sound picker ============ */

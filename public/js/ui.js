@@ -216,6 +216,7 @@ function renderRail() {
     else if ('add' in b.dataset) createServerModal();
     else if ('join' in b.dataset) joinServerModal();
   };
+  rail.oncontextmenu = (e) => { const b = e.target.closest('.rail-btn[data-s]'); if (b && b.dataset.s !== '@me') { e.preventDefault(); serverRailMenu(e, b.dataset.s); } const dm = e.target.closest('.rail-btn[data-dm]'); if (dm) { e.preventDefault(); const d = S.dms.find(x => x.id === dm.dataset.dm); if (d && d.user) profilePopout(d.user.id, dm); } };
   bindTips(rail);
 }
 let tipEl;
@@ -359,6 +360,21 @@ function voiceBarClick(e) {
   else if (e.target.closest('[data-vcam]')) Voice.toggleCamera();
   else if (e.target.closest('[data-vscreen]')) Voice.toggleScreen();
   else if (e.target.closest('[data-goto-voice]')) { const ch = findChannel(Voice.channel); if (ch) { if (ch.type === 'dm') selectChannel(ch.id); else { S.view = { server: ch.server_id, channel: ch.id }; renderRail(); renderSidebar(); renderMain(); } showMainMobile(); } }
+}
+function serverRailMenu(e, sid) {
+  const sd = S.serverData[sid]; if (!sd) return;
+  const owner = sd.owner_id === S.me.id;
+  const unread = sd.channels.some(c => S.unread[c.id]);
+  contextMenu(e, [
+    can(PERM.CREATE_INVITE, sid) && [`Invite People ${I.invite}`, () => inviteModal(sid)],
+    (can(PERM.MANAGE_SERVER, sid) || can(PERM.MANAGE_ROLES, sid) || can(PERM.KICK, sid) || can(PERM.BAN, sid)) && [`Server Settings ${I.gear}`, () => openServerSettings(sid)],
+    can(PERM.MANAGE_CHANNELS, sid) && [`Create Channel ${I.plus}`, () => { selectServer(sid); createChannelModal('text'); }],
+    ['Edit Server Profile', () => nickModal(sid)],
+    unread && [`Mark As Read ${I.check}`, () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
+    ['Copy Server Name', () => copy(sd.name)],
+    '-', !owner && ['Leave Server', () => confirmModal('Leave server', `Are you sure you want to leave <b>${esc(sd.name)}</b>? You won’t be able to rejoin unless you are re-invited.`, 'Leave Server', async () => { await api('POST', `/api/servers/${sid}/leave`); }), 'danger'],
+    owner && ['Delete Server', () => confirmModal('Delete server', `Delete <b>${esc(sd.name)}</b>? This cannot be undone and removes it for everyone.`, 'Delete', () => api('DELETE', '/api/servers/' + sid)), 'danger'],
+  ].filter(Boolean), '', 230);
 }
 function serverMenu(anchor) {
   const sd = curServer(); const r = anchor.getBoundingClientRect();
@@ -1041,28 +1057,46 @@ function contextMenu(e, items, cls = '', minW) {
 }
 function gifPicker(anchor, cid, threadId, state, comp) {
   const L = layer();
-  const el = h(`<div class="popout gif-picker"><div class="gp-head"><input class="input" placeholder="Search Giphy"></div><div class="gp-grid"><div class="gp-loading">Loading GIFs…</div></div><div class="gp-foot">Powered by GIPHY</div></div>`);
+  const favs = () => S.prefs.gifFavorites || [];
+  const isFav = (url) => favs().some(g => g.url === url);
+  const toggleFav = (g) => { const list = favs().filter(x => x.url !== g.url); if (!isFav(g.url)) list.unshift({ url: g.url, preview: g.preview, w: g.w, h: g.h }); S.prefs.gifFavorites = list.slice(0, 100); savePrefs(); };
+  const el = h(`<div class="popout gif-picker">
+    <div class="gp-head"><input class="input" placeholder="Search Giphy"><button class="gp-fav-tab" title="Favorites">${I.heart}</button></div>
+    <div class="gp-grid"><div class="gp-col"></div><div class="gp-col"></div></div>
+    <div class="gp-foot">Powered by GIPHY</div></div>`);
   L.set(el);
   const r = anchor.getBoundingClientRect();
   place(el, r.right - 360, r.top - 8, { above: true });
   const grid = $('.gp-grid', el);
-  let token = 0;
-  const load = async (q) => {
-    const mine = ++token;
-    grid.innerHTML = '<div class="gp-loading">Loading GIFs…</div>';
-    try {
-      const { gifs } = await api('GET', '/api/gifs?q=' + encodeURIComponent(q || '') + '&_=' + Date.now());
-      if (mine !== token) return;
-      grid.innerHTML = gifs.length ? gifs.map(g => `<button class="gp-item" data-url="${esc(g.url)}" style="aspect-ratio:${g.w}/${g.h}"><img src="${esc(g.preview)}" alt="${esc(g.title)}" loading="lazy"></button>`).join('') : '<div class="gp-loading">No GIFs found.</div>';
-    } catch (e) { if (mine === token) grid.innerHTML = `<div class="gp-loading">${esc(e.message)}</div>`; }
+  const cols = $$('.gp-col', grid);
+  let token = 0, mode = 'trending';
+  const render = (gifs) => {
+    cols.forEach(c => c.innerHTML = '');
+    if (!gifs.length) { grid.innerHTML = `<div class="gp-loading">${mode === 'fav' ? 'No favorites yet. Tap the ♥ on a GIF to save it.' : 'No GIFs found.'}</div>`; return; }
+    gifs.forEach((g, i) => {
+      const item = h(`<button class="gp-item" style="aspect-ratio:${g.w}/${g.h}"><img src="${esc(g.preview)}" alt="" loading="lazy"><span class="gp-fav ${isFav(g.url) ? 'on' : ''}" title="Favorite">${I.heart.replace('width="20" height="20"', 'width="15" height="15"')}</span></button>`);
+      item.dataset.url = g.url; item._g = g;
+      cols[i % 2].appendChild(item);
+    });
   };
+  const load = async (q) => {
+    const mine = ++token; mode = 'trending';
+    grid.innerHTML = '<div class="gp-loading">Loading GIFs…</div>';
+    grid.append(cols[0], cols[1]); cols.forEach(c => c.innerHTML = '');
+    try { const { gifs } = await api('GET', '/api/gifs?q=' + encodeURIComponent(q || '') + '&_=' + Date.now()); if (mine !== token) return; grid.innerHTML = ''; grid.append(cols[0], cols[1]); render(gifs); }
+    catch (e) { if (mine === token) grid.innerHTML = `<div class="gp-loading">${esc(e.message)}</div>`; }
+  };
+  const showFavs = () => { token++; mode = 'fav'; grid.innerHTML = ''; grid.append(cols[0], cols[1]); render(favs()); };
   const search = debounce((v) => load(v), 350);
-  $('input', el).oninput = (e) => search(e.target.value.trim());
+  $('input', el).oninput = (e) => { $('.gp-fav-tab', el).classList.remove('on'); search(e.target.value.trim()); };
+  $('.gp-fav-tab', el).onclick = (e) => { const on = mode !== 'fav'; e.currentTarget.classList.toggle('on', on); if (on) showFavs(); else load($('input', el).value.trim()); };
   grid.onclick = async (e) => {
-    const b = e.target.closest('[data-url]'); if (!b) return;
+    const fav = e.target.closest('.gp-fav');
+    const item = e.target.closest('.gp-item'); if (!item) return;
+    if (fav) { e.stopPropagation(); toggleFav(item._g); fav.classList.toggle('on', isFav(item._g.url)); if (mode === 'fav') showFavs(); return; }
     L.close();
     const form = new FormData();
-    form.append('gif', b.dataset.url);
+    form.append('gif', item.dataset.url);
     if (state && state.reply) { form.append('reply_to', state.reply.id); form.append('mention_reply', String(state.mentionReply)); }
     if (threadId) form.append('thread_id', threadId);
     try { await upload(`/api/channels/${cid}/messages`, form); if (comp && state && state.reply) comp._setReply(null); } catch (er) { toast(er.message, true); }

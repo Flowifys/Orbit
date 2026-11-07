@@ -21,7 +21,7 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '' },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
@@ -200,6 +200,7 @@ ic('link', '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d
 ic('crop', '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>');
 ic('external', '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>');
 ic('arrow', '<path d="M5 12h14M12 5l7 7-7 7"/>');
+ic('heart', '<path d="M19 14c1.5-1.5 3-3.3 3-5.5A4.5 4.5 0 0 0 12 5 4.5 4.5 0 0 0 2 8.5c0 2.2 1.5 4 3 5.5l7 7z"/>');
 ic('play', '<path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"/>');
 ic('pause', '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/>');
 ic('fs', '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>');
