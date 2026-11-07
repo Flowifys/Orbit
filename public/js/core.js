@@ -69,6 +69,7 @@ function toast(msg, isErr) {
 async function api(method, url, body, opts = {}) {
   const headers = {};
   if (S.token) headers.Authorization = 'Bearer ' + S.token;
+  headers['X-Orbit-Client'] = window.orbitDesktop ? 'desktop' : (matchMedia('(display-mode: standalone)').matches || navigator.standalone) ? 'app' : 'web';
   let payload;
   if (body instanceof FormData) payload = body;
   else if (body !== undefined) { headers['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
@@ -115,7 +116,8 @@ function topRole(sid, uidv, onlyColored) {
 }
 const colorIn = (sid, uidv) => (sid && topRole(sid, uidv, true)?.color) || null;
 const can = (perm, sid = S.view.server) => { const sd = S.serverData[sid]; return !!sd && (sd.my_perms & perm) === perm; };
-const statusOf = (uidv) => S.presence[uidv] || 'offline';
+// your own status comes from your setting, not the server snapshot (which is taken before your connection is up)
+const statusOf = (uidv) => (S.me && uidv === S.me.id) ? (S.prefs.status === 'invisible' ? 'offline' : (S.prefs.status || 'online')) : (S.presence[uidv] || 'offline');
 const cropStyle = (c) => c ? `object-position:${c.x}% ${c.y}%;transform-origin:${c.x}% ${c.y}%;transform:scale(${c.z})` : '';
 const AV_LOADED = new Set();
 // warm the cache with everyone's profile picture so lists render instantly
@@ -209,6 +211,10 @@ ic('bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0
 ic('check', '<path d="M20 6 9 17l-5-5"/>');
 ic('expand', '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>');
 ic('clock', '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
+ic('inbox', '<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>');
+ic('sticker', '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9.5L21 14.5V5a2 2 0 0 0-2-2z"/><path d="M14 21v-5a2 2 0 0 1 2-2h5"/><path d="M8 13s1.5 2 4 2"/><path d="M9 9h.01M15 9h.01"/>');
+ic('stop', '<rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none"/>');
+ic('forum', '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>');
 ic('poll', '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>');
 ic('shrink', '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>');
 ic('usersOff', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m2 2 20 20"/>');

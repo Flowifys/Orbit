@@ -73,6 +73,7 @@ function renderAuth(mode = 'login', ctx = {}) {
 }
 
 function logout() {
+  if (S.token) fetch('/api/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token }, keepalive: true }).catch(() => {});   // ends this device's session
   try { localStorage.removeItem('orbit-token'); } catch {}
   S.token = null;
   if (window.Voice) Voice.leave();
@@ -92,6 +93,7 @@ async function boot() {
 async function loadApp() {
   let data;
   try { data = await api('GET', '/api/me'); } catch (e) { if (!S.token) return; $('#root').innerHTML = `<div class="auth"><div class="auth-card"><h1>Can’t connect</h1><p class="sub">${esc(e.message)}</p><button class="btn primary block" onclick="location.reload()">Retry</button></div></div>`; return; }
+  if (data.session_token) { S.token = data.session_token; try { localStorage.setItem('orbit-token', S.token); } catch {} }   // device now shows in Settings → Devices
   S.me = data.me; S.users[S.me.id] = S.me;
   S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {}; S.friends = data.friends || S.friends;
   S.dms.forEach(d => { if (d.user) S.users[d.user.id] = d.user; (d.members || []).forEach(m => S.users[m.id] = { ...S.users[m.id], ...m }); });
@@ -146,7 +148,7 @@ function connectSocket() {
     renderTyping();
   });
   socket.on('activity', ({ user_id, activity }) => { if (activity) S.activities[user_id] = activity; else delete S.activities[user_id]; renderMembers(); const card = $(`.profile-card[data-card="${user_id}"] .activity-slot`); if (card) card.innerHTML = activityHtml(user_id); if (S.view.server === '@me' && !S.view.channel) renderMain(); if (user_id === S.me.id) renderUserPanel(); });
-  socket.on('presence', ({ user_id, status }) => { S.presence[user_id] = status; if (user_id === S.me.id) return renderUserPanel(); softRefresh(); });
+  socket.on('presence', ({ user_id, status }) => { S.presence[user_id] = status; if (user_id === S.me.id) renderUserPanel(); softRefresh(); });
   socket.on('user:update', (u) => { S.users[u.id] = { ...S.users[u.id], ...u }; Object.values(S.serverData).forEach(sd => { const m = sd.members.find(x => x.id === u.id); if (m) Object.assign(m, u); });
     S.dms.forEach(d => { if (d.user && d.user.id === u.id) d.user = u; if (d.members) d.members = d.members.map(m => m.id === u.id ? u : m); }); if (u.id === S.me.id) S.me = { ...S.me, ...u }; softRefresh(true); });
   socket.on('server:refresh', async ({ server_id }) => { await fetchServer(server_id).catch(() => {}); if (S.view.server === server_id) { const c = curChannel(); if (!c) selectServer(server_id); } softRefresh(true); });
@@ -170,6 +172,8 @@ function connectSocket() {
     if (S.view.channel === entry.id) renderTopbar();
   });
   socket.on('voice:state', ({ channel_id, users }) => {
+    // stop ringing once you're in that call (from any device) or once everyone has left it
+    if (Voice.ringing === channel_id && (!users.length || users.some(u => u.user_id === S.me.id))) Voice.stopRing();
     const prev = (S.voice[channel_id] || []).map(u => u.user_id);
     if (users.length) S.voice[channel_id] = users; else delete S.voice[channel_id];
     if (Voice.channel === channel_id) {
@@ -240,7 +244,7 @@ function selectServer(sid, channelId) {
   } else {
     const sd = S.serverData[sid]; if (!sd) return;
     const text = sd.channels.filter(c => c.type === 'text');
-    const pick = channelId && sd.channels.find(c => c.id === channelId && c.type === 'text') ? channelId : (S.lastChannel[sid] && text.find(c => c.id === S.lastChannel[sid]) ? S.lastChannel[sid] : text[0]?.id || null);
+    const pick = channelId && sd.channels.find(c => c.id === channelId && (c.type === 'text' || c.type === 'forum')) ? channelId : (S.lastChannel[sid] && text.find(c => c.id === S.lastChannel[sid]) ? S.lastChannel[sid] : text[0]?.id || null);
     S.view = { server: sid, channel: pick };
   }
   saveView();
@@ -280,13 +284,12 @@ function renderSidebar() {
       </div>${voiceBarHtml()}${userPanelHtml()}`;
   } else {
     const sd = curServer(); if (!sd) return;
-    const text = sd.channels.filter(c => c.type === 'text'), voice = sd.channels.filter(c => c.type === 'voice');
     const chanBtn = (c) => {
       const un = S.unread[c.id];
-      const icon = c.type === 'voice' ? I.speaker : I.hash;
+      const icon = c.type === 'voice' ? I.speaker : c.type === 'forum' ? I.forum : I.hash;
       const people = c.type === 'voice' ? (S.voice[c.id] || []) : [];
       const muted = isMuted(c.id) || isMuted(sd.id);
-      return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && !muted && S.view.channel !== c.id ? 'unread' : ''} ${muted ? 'muted' : ''}" data-ch="${c.id}">
+      return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && !muted && S.view.channel !== c.id ? 'unread' : ''} ${muted ? 'muted' : ''}" data-ch="${c.id}" ${can(PERM.MANAGE_CHANNELS) ? 'draggable="true"' : ''}>
         <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
         ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
         <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
@@ -295,11 +298,9 @@ function renderSidebar() {
     const head = `<div class="side-head" data-smenu><span class="sh-icon">${serverIcon(sd)}</span><span class="t">${esc(sd.name)}</span>${I.chevron}</div>`;
     side.innerHTML = `${sd.banner ? `<div class="side-banner" style="background-image:url('${esc(sd.banner)}')">${head}</div>` : head}
       <div class="side-list">
-        <div class="cat ${isCollapsed(sd.id + ':text') ? 'collapsed' : ''}" data-collapse="${sd.id}:text"><span>${I.chevron}Text channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="text" title="Create channel">+</button>` : ''}</div>
-        ${text.filter(c => !isCollapsed(sd.id + ':text') || S.view.channel === c.id || (S.unread[c.id] && !isMuted(c.id))).map(chanBtn).join('')}
-        <div class="cat ${isCollapsed(sd.id + ':voice') ? 'collapsed' : ''}" data-collapse="${sd.id}:voice"><span>${I.chevron}Voice channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="voice" title="Create channel">+</button>` : ''}</div>
-        ${voice.filter(c => !isCollapsed(sd.id + ':voice') || S.view.channel === c.id || Voice.channel === c.id || (S.voice[c.id] || []).length).map(chanBtn).join('')}
+        ${channelTreeHtml(sd, chanBtn)}
       </div>${voiceBarHtml()}${userPanelHtml()}`;
+    if (can(PERM.MANAGE_CHANNELS)) bindChannelDnD(side, sd);
   }
   const list = $('.side-list', side); if (list) list.scrollTop = scroll;
   side.onclick = (e) => {
@@ -309,7 +310,7 @@ function renderSidebar() {
     const dm = t.closest('[data-dm]'); if (dm) { selectChannel(dm.dataset.dm); showMainMobile(); return; }
     if (t.closest('[data-invite]')) { e.stopPropagation(); return inviteModal(S.view.server); }
     const ed = t.closest('[data-edit]'); if (ed) { e.stopPropagation(); return channelSettingsModal(ed.dataset.edit); }
-    const nw = t.closest('[data-new]'); if (nw) return createChannelModal(nw.dataset.new);
+    const nw = t.closest('[data-new]'); if (nw) return createChannelModal(nw.dataset.new, nw.dataset.parent || null);
     const col = t.closest('[data-collapse]'); if (col) return toggleCollapsed(col.dataset.collapse);
     const vu = t.closest('.vc-user'); if (vu) return profilePopout(vu.dataset.uid, vu);
     const ch = t.closest('[data-ch]');
@@ -322,6 +323,8 @@ function renderSidebar() {
     if (dmEl) { e.preventDefault(); const d = S.dms.find(x => x.id === dmEl.dataset.dm); if (!d) return; const label = d.type === 'group' ? (d.name || 'this group') : '@' + d.user.username;
       return contextMenu(e, [S.unread[d.id] && ['Mark as read', () => markRead(d.id, true)], [isMuted(d.id) ? `Unmute ${esc(label)}` : `Mute ${esc(label)}`, () => toggleMuteId(d.id, label)],
         d.user && ['Profile', () => profilePopout(d.user.id, dmEl)], d.user && ['Call', () => { selectChannel(d.id); Voice.join(d.id); }], ['Copy channel ID', () => copy(d.id)]]); }
+    const catEl = e.target.closest('[data-cat]');
+    if (catEl) { e.preventDefault(); return categoryMenu(e, catEl.dataset.cat); }
     const ch = e.target.closest('[data-ch]'); if (!ch) return;
     e.preventDefault();
     const c = findChannel(ch.dataset.ch);
@@ -394,6 +397,7 @@ function serverMenu(anchor) {
     can(PERM.CREATE_INVITE) && [`Invite People ${I.invite}`, () => inviteModal(sd.id)],
     (can(PERM.MANAGE_SERVER) || can(PERM.MANAGE_ROLES) || can(PERM.KICK) || can(PERM.BAN)) && [`Server Settings ${I.gear}`, () => openServerSettings(sd.id)],
     can(PERM.MANAGE_CHANNELS) && [`Create Channel ${I.plus}`, () => createChannelModal('text')],
+    can(PERM.MANAGE_CHANNELS) && [`Create Category ${I.plus}`, () => createCategoryModal(sd.id)],
     ['Edit Server Profile', () => nickModal(sd.id)],
     ['Mark all as read', () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
     [isMuted(sd.id) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sd.id, sd.name)],
@@ -414,7 +418,8 @@ function renderMain() {
     return;
   }
   if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
-  content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${(ch.type === 'group' || !isDM(ch)) && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
+  if (ch.type === 'forum') { content.innerHTML = `<div class="forum-view" data-forum="${ch.id}"></div>`; renderForum(ch.id); if (!S.messages[ch.id]) loadMessages(ch.id); markRead(ch.id); return; }
+  content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${S.membersOpen ? `<aside class="members ${ch.type === 'dm' ? 'dm-panel' : ''}"></aside>` : ''}`;
   renderMembers();
   bindComposer($('.chat .composer', content), ch.id, null);
   bindMessageList($('.messages', content));
@@ -429,7 +434,7 @@ function renderTopbar() {
     const u = S.users[ch.user.id] || ch.user;
     bar.innerHTML = `${back}${avatar(u, 's24', false)}<span class="title" data-uid="${u.id}" style="cursor:pointer">${esc(u.display_name)}</span><span class="topic" style="cursor:default">@${esc(u.username)} · ${statusLabel(statusOf(u.id))}</span>
       <button class="icon-btn" data-call title="Start voice call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
-      <button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button>
+      <button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button><button class="icon-btn" data-members title="${S.membersOpen ? 'Hide' : 'Show'} user profile" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button>
       <input class="search" placeholder="Search" data-search>`;
   } else if (ch.type === 'group') {
     bar.innerHTML = `${back}${groupAvatar(ch, 's24')}<span class="title" data-gsettings style="cursor:pointer">${esc(ch.name || 'Group chat')}</span><span class="topic" data-gsettings>${ch.member_count} members</span>
@@ -440,13 +445,15 @@ function renderTopbar() {
   } else if (ch.type === 'voice') {
     bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span>`;
   } else {
-    bar.innerHTML = `${back}<span class="ico">${ch.private ? I.lock : I.hash}</span><span class="title">${esc(ch.name)}</span>
+    bar.innerHTML = `${back}<span class="ico">${ch.private ? I.lock : ch.type === 'forum' ? I.forum : I.hash}</span><span class="title">${esc(ch.name)}</span>
       <span class="topic" data-topic title="${esc(ch.topic || '')}">${esc(ch.topic || (can(PERM.MANAGE_CHANNELS) ? 'Add a channel topic' : ''))}</span>
       ${ch.slowmode ? `<span class="slow-tag" title="Slowmode: ${slowLabel(ch.slowmode)}">${I.clock}</span>` : ''}<button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button><button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button>
       <input class="search" placeholder="Search" data-search>`;
   }
+  bar.insertAdjacentHTML('beforeend', `<button class="icon-btn inbox-btn ${S.inboxUnread ? 'has-new' : ''}" data-inbox title="Inbox">${I.inbox}</button>`);
   bar.onclick = (e) => {
     if (e.target.closest('[data-back]')) return $('.app').classList.remove('show-main');
+    if (e.target.closest('[data-inbox]')) return inboxPopout(e.target.closest('[data-inbox]'));
     if (e.target.closest('[data-members]')) { S.membersOpen = !S.membersOpen; const m = $('.members'); if (window.innerWidth <= 1100) { if (m) m.classList.toggle('force'); else { S.membersOpen = true; renderMain(); setTimeout(() => $('.members')?.classList.add('force')); } } else renderMain(); return; }
     if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
     if (e.target.closest('[data-pins]')) return pinsPopout(ch.id, e.target.closest('[data-pins]'));
@@ -457,7 +464,7 @@ function renderTopbar() {
     const t = e.target.closest('[data-uid]'); if (t) profilePopout(t.dataset.uid, t);
   };
   const search = $('[data-search]', bar);
-  if (search) search.onkeydown = (e) => { if (e.key === 'Enter' && search.value.trim()) runSearch(ch.id, search.value.trim()); if (e.key === 'Escape') { search.value = ''; $('.search-results')?.remove(); } };
+  if (search) bindSearchBox(search, ch);
 }
 const statusLabel = (s) => ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' }[s] || 'Offline');
 
@@ -594,6 +601,7 @@ function renderMembers() {
   const box = $('.members'); if (!box) return;
   const ch = curChannel();
   if (ch && ch.type === 'group') return renderGroupMembers(box, ch);
+  if (ch && ch.type === 'dm') return renderDmProfile(box, ch);
   const sd = curServer(); if (!sd) return;
   let mem = sd.members;
   if (ch && ch.private) mem = mem.filter(m => m.id === sd.owner_id || (sd.roles.some(r => m.roles.includes(r.id) && ch.allowed_roles.includes(r.id))) || sd.roles.some(r => m.roles.includes(r.id) && (r.perms & PERM.ADMIN)));
@@ -663,6 +671,7 @@ async function loadMessages(key, older) {
 function containersFor(key) { return $$(`.messages[data-key="${CSS.escape(String(key))}"]`); }
 function refreshMessages(key, toBottom, keepTop) {
   if (!key) return;
+  if (!String(key).startsWith('t:') && findChannel(key)?.type === 'forum') return renderForum(key);
   containersFor(key).forEach(box => {
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
     const oldHeight = box.scrollHeight, oldTop = box.scrollTop;
@@ -721,6 +730,7 @@ function messageHtml(m, sid, prev, isParent) {
       const img = `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-lightbox="${esc(a.url)}" data-name="${esc(a.name)}">`;
       return gif ? `<div class="att-gif"><span class="gif-tag">GIF</span>${img}<button class="att-fav ${gifIsFav(a.url) ? 'on' : ''}" data-fav="${esc(a.url)}" title="Favorite GIF">${I.heart.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : img; }
     if (t.startsWith('video/')) return `<video class="att-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
+    if (a.voice) return voiceMsgHtml(a);
     if (t.startsWith('audio/')) return `<div class="audio-embed" data-audio="${esc(a.url)}"><button class="ae-play">${I.play}</button><div class="ae-main"><div class="ae-name">${esc(a.name)}</div><div class="ae-bar"><div class="ae-fill"></div></div><div class="ae-time"><span class="ae-cur">0:00</span><span class="ae-dur">--:--</span></div></div><a class="ae-dl" href="${esc(a.url)}" download="${esc(a.name)}" title="Download">${I.download}</a></div>`;
     return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
   }).join('');
@@ -741,7 +751,7 @@ function messageHtml(m, sid, prev, isParent) {
   return `<div class="msg ${grouped ? '' : 'head'} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
     <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
-      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
+      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
     </div>${tools}</div>`;
 }
 function findMsg(id) {
@@ -763,6 +773,7 @@ function bindMessageList(box) {
     const nm = t.closest('.name[data-uid], .left .av'); if (nm) return profilePopout(nm.dataset.uid, nm);
     const favBtn = t.closest('[data-fav]'); if (favBtn) { e.stopPropagation(); const on = toggleGifFav(favBtn.dataset.fav, $('img', favBtn.closest('.att-gif'))); favBtn.classList.toggle('on', on); toast(on ? 'Added to GIF favorites' : 'Removed from favorites'); return; }
     const lb = t.closest('[data-lightbox]'); if (lb) return lightbox(lb.dataset.lightbox, lb.dataset.name);
+    const vm = t.closest('.voice-msg'); if (vm) { voiceMsgAction(vm, e); return; }
     const ae = t.closest('.audio-embed'); if (ae && !t.closest('.ae-dl')) { audioEmbedAction(ae, e); return; }
     const jump = t.closest('[data-jump]'); if (jump) return jumpTo(Number(jump.dataset.jump));
     if (!m) return;
@@ -871,6 +882,7 @@ function onMessageNew(m) {
     S.unread[m.channel_id] = u;
     renderSidebar(); renderRail();
   } else if (viewing) markRead(m.channel_id);
+  if ((m.mentions || []).includes(S.me.id) || m.mention_everyone) { S.inboxUnread = true; $('.inbox-btn')?.classList.add('has-new'); }
   if (mentioned && S.prefs.status !== 'dnd' && !viewing) notify(m, ch);
 }
 function notify(m, ch) {
@@ -908,7 +920,8 @@ function composerHtml(ch, thread) {
       <textarea rows="1" placeholder="${esc(placeholder)}" ${canSend ? '' : 'disabled'} maxlength="4000"></textarea>
       ${canSend && S.info.gif ? `<button class="icon-btn gif-btn" data-gif title="GIF">GIF</button>` : ''}
       ${canSend && ch.slowmode && !bypassSlow(ch) ? `<span class="slow-ind" title="Slowmode is on: one message every ${slowLabel(ch.slowmode)}">${I.clock}<span></span></span>` : ''}
-      ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button><button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
+      ${canSend && myStickers().length ? `<button class="icon-btn" data-sticker title="Stickers">${I.sticker}</button>` : ''}
+      ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button>${(isDM(ch) || can(PERM.ATTACH, ch.server_id)) && window.MediaRecorder ? `<button class="icon-btn" data-record title="Record a voice message">${I.mic}</button>` : ''}<button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
     </div><input type="file" multiple hidden>
     ${thread ? '' : '<div class="typing"></div>'}</div>`;
 }
@@ -953,6 +966,8 @@ function bindComposer(comp, cid, threadId) {
   file.onchange = () => { addFiles(file.files); file.value = ''; };
   $('[data-emoji]', comp)?.addEventListener('click', (e) => emojiPicker(e.currentTarget, (em, info) => { insertAtCursor(ta, info ? `:${info.name}: ` : em); }, true));
   $('[data-gif]', comp)?.addEventListener('click', (e) => gifPicker(e.currentTarget, cid, threadId, state, comp));
+  $('[data-sticker]', comp)?.addEventListener('click', (e) => stickerPicker(e.currentTarget, cid, threadId, state, comp));
+  $('[data-record]', comp)?.addEventListener('click', () => startVoiceRecording(comp, cid, threadId, state));
   ta.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
   let lastTyping = 0;
   ta.addEventListener('input', () => {
@@ -1055,7 +1070,7 @@ async function openThread(m) {
   S.thread = { id: m.id, channel_id: m.channel_id, parent: m };
   const content = $('.content'); if (!content) return;
   $('.thread-panel')?.remove();
-  const panel = h(`<aside class="thread-panel"><header class="topbar"><span class="ico">${I.thread}</span><span class="title">Thread</span><span class="topic" style="cursor:default">${esc(plainPreview(m.content) || 'Attachment')}</span><button class="icon-btn" data-close-thread>${I.x}</button></header>
+  const panel = h(`<aside class="thread-panel"><header class="topbar"><span class="ico">${I.thread}</span><span class="title">${m.title ? esc(m.title) : 'Thread'}</span><span class="topic" style="cursor:default">${m.title ? '' : esc(plainPreview(m.content) || 'Attachment')}</span><button class="icon-btn" data-close-thread>${I.x}</button></header>
     <div class="messages" data-key="t:${m.id}"></div>${composerHtml(ch, m.id)}</aside>`);
   content.appendChild(panel);
   $('[data-close-thread]', panel).onclick = () => closeThread();
@@ -1067,19 +1082,6 @@ async function openThread(m) {
 function closeThread(silent) { S.thread = null; $('.thread-panel')?.remove(); }
 
 /* ================= SEARCH ================= */
-async function runSearch(cid, q) {
-  const content = $('.content'); $('.search-results')?.remove();
-  const panel = h(`<div class="search-results"><div class="sr-head"><span>Searching…</span><button class="icon-btn">${I.x}</button></div><div class="sr-list"></div></div>`);
-  content.appendChild(panel);
-  $('.sr-head button', panel).onclick = () => panel.remove();
-  try {
-    const rows = await api('GET', `/api/channels/${cid}/search?q=${encodeURIComponent(q)}`);
-    const sid = findChannel(cid)?.server_id;
-    $('.sr-head span', panel).textContent = `${rows.length} result${rows.length === 1 ? '' : 's'}`;
-    $('.sr-list', panel).innerHTML = rows.length ? rows.map(m => messageHtml(m, sid, null, true)).join('') : '<div class="empty">No results found.</div>';
-    $('.sr-list', panel).onclick = (e) => { const el = e.target.closest('[data-mid]'); if (el) jumpTo(Number(el.dataset.mid)); };
-  } catch (e) { $('.sr-head span', panel).textContent = e.message; }
-}
 
 /* ================= POPOUTS / MENUS ================= */
 // popups stack: a menu opened from a profile card sits above it, and clicking outside the menu
@@ -1360,13 +1362,16 @@ async function inviteModal(sid) {
     $('[data-copy]', m).onclick = (e) => { copy(link); e.target.textContent = 'Copied'; e.target.classList.add('green'); };
   });
 }
-function createChannelModal(type = 'text') {
+function createChannelModal(type = 'text', parentId = null) {
   const sd = curServer();
+  if (type === 'category') return createCategoryModal(sd.id);
+  if (!parentId) parentId = sd.channels.find(c => c.type === 'category' && sd.channels.some(k => k.parent_id === c.id && k.type === type))?.id || null;
   let sel = type, priv = false, roles = [];
   modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Create Channel</h2></div>
     <div class="mb"><div class="field"><label>Channel type</label>
       <button class="choice" data-t="text"><span class="ci">${I.hash}</span><span class="ct"><b>Text</b><small>Send messages, images, GIFs, emoji, opinions and puns</small></span></button>
-      <button class="choice" data-t="voice"><span class="ci">${I.speaker}</span><span class="ct"><b>Voice</b><small>Hang out together with voice, video and screen share</small></span></button></div>
+      <button class="choice" data-t="voice"><span class="ci">${I.speaker}</span><span class="ct"><b>Voice</b><small>Hang out together with voice, video and screen share</small></span></button>
+      <button class="choice" data-t="forum"><span class="ci">${I.forum}</span><span class="ct"><b>Forum</b><small>Organized posts with titles, each with its own replies. Great for help, ideas and showcases.</small></span></button></div>
     <div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" placeholder="new-channel"></div>
     <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles will be able to view this channel.</small></span><span class="toggle"><input type="checkbox" name="priv"><span></span></span></label>
     <div class="field roles-pick hidden"><label>Who can access this channel?</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet. Create roles in Server Settings. Admins can always see private channels.</span>'}</div></div></div>
@@ -1378,7 +1383,7 @@ function createChannelModal(type = 'text') {
     $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
     const go = async () => {
       const name = $('[name=name]', m).value.trim(); if (!name) return;
-      try { const c = await api('POST', `/api/servers/${sd.id}/channels`, { name, type: sel, private: priv, allowed_roles: roles }); await fetchServer(sd.id); close(); if (c.type === 'text') selectChannel(c.id); else renderSidebar(); }
+      try { const c = await api('POST', `/api/servers/${sd.id}/channels`, { name, type: sel, private: priv, allowed_roles: roles, parent_id: parentId }); await fetchServer(sd.id); close(); if (c.type === 'text' || c.type === 'forum') selectChannel(c.id); else renderSidebar(); }
       catch (e) { toast(e.message, true); }
     };
     $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go();

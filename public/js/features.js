@@ -241,7 +241,7 @@ async function selfProfilePopout(anchor) {
     if (a === 'apps') { L.close(); window.orbitDesktop ? (location.origin && window.open(location.origin + '/download', '_blank')) : window.open('/download', '_blank'); }
     if (a === 'status') { $('.sm-statuses', el).classList.toggle('hidden'); $('.sm-status', el).classList.toggle('open'); }
     const sb = e.target.closest('[data-st]');
-    if (sb) { S.prefs.status = sb.dataset.st; savePrefs(); socket.emit('presence', sb.dataset.st); renderUserPanel(); L.close(); }
+    if (sb) { S.prefs.status = sb.dataset.st; savePrefs(); socket.emit('presence', sb.dataset.st); renderUserPanel(); softRefresh(); L.close(); }
   };
 }
 
@@ -363,3 +363,430 @@ function a11yPass(root) {
 }
 new MutationObserver((list) => { for (const m of list) m.addedNodes.forEach(n => n.nodeType === 1 && a11yPass(n)); }).observe(document.documentElement, { childList: true, subtree: true });
 a11yPass(document);
+
+/* ================= 1.15: categories, inbox, stickers, voice messages, search filters ================= */
+
+/* ---------- channel categories ---------- */
+const byPos = (a, b) => (a.position - b.position) || String(a.created).localeCompare(String(b.created));
+function channelTree(sd) {
+  const cats = sd.channels.filter(c => c.type === 'category').sort(byPos);
+  const ids = new Set(cats.map(c => c.id));
+  const kids = (pid) => sd.channels.filter(c => c.type !== 'category' && ((c.parent_id && ids.has(c.parent_id) ? c.parent_id : null) === pid))
+    .sort((a, b) => ((a.type === 'voice') - (b.type === 'voice')) || byPos(a, b));
+  return { loose: kids(null), cats: cats.map(c => ({ cat: c, list: kids(c.id) })) };
+}
+function channelTreeHtml(sd, chanBtn) {
+  const tree = channelTree(sd), manage = can(PERM.MANAGE_CHANNELS, sd.id);
+  const showWhenCollapsed = (c) => S.view.channel === c.id || Voice.channel === c.id || (S.unread[c.id] && !isMuted(c.id)) || (c.type === 'voice' && (S.voice[c.id] || []).length);
+  let html = tree.loose.map(chanBtn).join('');
+  for (const { cat, list } of tree.cats) {
+    const col = isCollapsed(cat.id);
+    html += `<div class="cat ${col ? 'collapsed' : ''}" data-collapse="${cat.id}" data-cat="${cat.id}" ${manage ? 'draggable="true"' : ''}><span>${I.chevron}${esc(cat.name)}</span>${manage ? `<button data-new="text" data-parent="${cat.id}" title="Create channel in ${esc(cat.name)}">+</button>` : ''}</div>`;
+    html += list.filter(c => !col || showWhenCollapsed(c)).map(chanBtn).join('');
+    if (!list.length && manage && !col) html += `<div class="cat-empty" data-cat-drop="${cat.id}">Drag channels here</div>`;
+  }
+  return html;
+}
+// drag & drop: drop a channel on a channel (goes before/after it), on a category header (goes to the top
+// of that category) or on the empty space; drag a category header to reorder categories
+function bindChannelDnD(side, sd) {
+  const list = $('.side-list', side); if (!list) return;
+  let drag = null;
+  const clear = () => $$('.drop-before,.drop-after,.drop-into', list).forEach(x => x.classList.remove('drop-before', 'drop-after', 'drop-into'));
+  list.ondragstart = (e) => {
+    const el = e.target.closest('[data-ch],[data-cat]'); if (!el) return;
+    drag = el.dataset.cat ? { id: el.dataset.cat, cat: true } : { id: el.dataset.ch, cat: false };
+    e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', drag.id);
+    el.classList.add('dragging');
+  };
+  list.ondragend = () => { $$('.dragging', list).forEach(x => x.classList.remove('dragging')); clear(); drag = null; };
+  const targetOf = (e) => {
+    const t = e.target.closest('[data-ch],[data-cat],[data-cat-drop]'); if (!t || !drag) return null;
+    const r = t.getBoundingClientRect(), after = e.clientY > r.top + r.height / 2;
+    if (drag.cat) { const c = t.closest('[data-cat]') || (t.dataset.ch && $(`[data-cat="${findChannel(t.dataset.ch)?.parent_id}"]`, list)); return c ? { el: c, kind: 'cat', id: c.dataset.cat, after } : null; }
+    if (t.dataset.catDrop) return { el: t, kind: 'into', id: t.dataset.catDrop };
+    if (t.dataset.cat) return { el: t, kind: 'into', id: t.dataset.cat };
+    return t.dataset.ch === drag.id ? null : { el: t, kind: 'ch', id: t.dataset.ch, after };
+  };
+  list.ondragover = (e) => { const tg = targetOf(e); if (!tg) return; e.preventDefault(); clear(); tg.el.classList.add(tg.kind === 'into' ? 'drop-into' : tg.after ? 'drop-after' : 'drop-before'); };
+  list.ondragleave = (e) => { if (!list.contains(e.relatedTarget)) clear(); };
+  list.ondrop = async (e) => {
+    const tg = targetOf(e); clear(); if (!tg || !drag) return; e.preventDefault();
+    const tree = channelTree(sd);
+    let order;   // [{id, parent_id}] in final order
+    if (drag.cat) {
+      const cats = tree.cats.map(x => x.cat.id).filter(id => id !== drag.id);
+      let i = cats.indexOf(tg.id); if (i < 0) return; if (tg.after) i++;
+      cats.splice(i, 0, drag.id);
+      order = [...tree.loose.map(c => ({ id: c.id, parent_id: null })), ...cats.flatMap(cid => [{ id: cid, parent_id: null }, ...tree.cats.find(x => x.cat.id === cid).list.map(c => ({ id: c.id, parent_id: cid }))])];
+    } else {
+      const groups = [{ id: null, list: tree.loose.map(c => c.id) }, ...tree.cats.map(x => ({ id: x.cat.id, list: x.list.map(c => c.id) }))];
+      groups.forEach(g => (g.list = g.list.filter(id => id !== drag.id)));
+      if (tg.kind === 'into') groups.find(g => g.id === tg.id).list.unshift(drag.id);
+      else { const tgt = findChannel(tg.id); const pid = tree.cats.some(x => x.cat.id === tgt.parent_id) ? tgt.parent_id : null; const g = groups.find(g => g.id === pid); let i = g.list.indexOf(tg.id); if (tg.after) i++; g.list.splice(i, 0, drag.id); }
+      order = groups.flatMap(g => [...(g.id ? [{ id: g.id, parent_id: null }] : []), ...g.list.map(id => ({ id, parent_id: g.id }))]);
+    }
+    const body = order.map((o, i) => ({ id: o.id, parent_id: o.parent_id, position: i }));
+    // show it right away, then save
+    body.forEach(o => { const c = sd.channels.find(x => x.id === o.id); if (c) { c.position = o.position; if (c.type !== 'category') c.parent_id = o.parent_id; } });
+    renderSidebar();
+    try { await api('PUT', `/api/servers/${sd.id}/channels/order`, body); } catch (x) { toast(x.message, true); await fetchServer(sd.id); renderSidebar(); }
+  };
+}
+function createCategoryModal(sid) {
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Create Category</h2><p>Group channels together. Drag channels into it afterwards.</p></div>
+    <div class="mb"><div class="field"><label>Category name</label><input class="input" name="name" maxlength="40" placeholder="New Category"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Create Category</button></div>`, (m, close) => {
+    const go = async () => { const name = $('[name=name]', m).value.trim(); if (!name) return; try { await api('POST', `/api/servers/${sid}/channels`, { name, type: 'category' }); await fetchServer(sid); close(); renderSidebar(); } catch (e) { toast(e.message, true); } };
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go(); $('[name=name]', m).focus();
+  });
+}
+function categoryMenu(e, catId) {
+  const c = findChannel(catId); if (!c) return; const sid = c.server_id; const manage = can(PERM.MANAGE_CHANNELS, sid);
+  contextMenu(e, [
+    [isCollapsed(catId) ? 'Expand category' : 'Collapse category', () => toggleCollapsed(catId)],
+    ['Collapse all categories', () => { S.prefs.collapsed = S.prefs.collapsed || {}; S.serverData[sid].channels.filter(x => x.type === 'category').forEach(x => (S.prefs.collapsed[x.id] = 1)); savePrefs(); renderSidebar(); }],
+    manage && '-', manage && ['Create channel here', () => createChannelModal('text', catId)],
+    manage && ['Rename category', () => renameCategoryModal(c)],
+    manage && ['Delete category', () => confirmModal('Delete category', `Delete <b>${esc(c.name)}</b>? Its channels aren’t deleted. They move to the top of the list.`, 'Delete', () => api('DELETE', '/api/channels/' + catId)), 'danger'],
+  ]);
+}
+function renameCategoryModal(c) {
+  modal(`<div class="mh" style="text-align:left"><h2>Rename category</h2></div><div class="mb"><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
+    const go = async () => { try { await api('PATCH', '/api/channels/' + c.id, { name: $('[name=name]', m).value }); close(); } catch (e) { toast(e.message, true); } };
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go(); $('[name=name]', m).select();
+  });
+}
+
+/* ---------- inbox ---------- */
+async function inboxPopout(anchor) {
+  S.inboxUnread = false; $('.inbox-btn')?.classList.remove('has-new');
+  const L = layer();
+  const el = h(`<div class="popout inbox-pop"><div class="pp-head">${I.inbox} Inbox <span class="ib-sub">Mentions and replies from the last 60 days</span></div><div class="pp-list"><div class="loader">Loading…</div></div></div>`);
+  L.set(el);
+  const r = anchor.getBoundingClientRect(); place(el, r.right - 440, r.bottom + 8);
+  let rows = [];
+  try { rows = await api('GET', '/api/inbox'); } catch (e) { toast(e.message, true); }
+  const where = (m) => { const ch = findChannel(m.channel_id); if (!ch) return ''; return ch.type === 'dm' ? `@${ch.name}` : ch.type === 'group' ? ch.name : `#${ch.name} · ${S.serverData[ch.server_id]?.name || ''}`; };
+  $('.pp-list', el).innerHTML = rows.length ? rows.map(m => { const sid = findChannel(m.channel_id)?.server_id || null;
+      return `<div class="pp-item ib-item" data-go="${m.id}" data-cid="${m.channel_id}" data-thread="${m.thread_id || ''}"><div class="ib-where">${esc(where(m))}</div>${messageHtml({ ...m, thread: null }, sid, null, true)}
+        <div class="pp-actions"><button class="btn secondary sm" data-go-btn>Jump</button></div></div>`; }).join('')
+    : `<div class="pp-empty">${I.inbox}<b>You’re all caught up</b><span>When someone @mentions you or replies to you, it shows up here.</span></div>`;
+  el.onclick = (e) => { const it = e.target.closest('[data-go]'); if (!it || e.target.closest('a')) return; L.close(); goToMessage(it.dataset.cid, Number(it.dataset.go), Number(it.dataset.thread) || null); };
+}
+async function goToMessage(cid, mid, threadId) {
+  if (S.view.channel !== cid) { selectChannel(cid); showMainMobile(); }
+  if (threadId) {   // a reply inside a thread / forum post: open that thread, then find the reply there
+    try { const parent = await api('GET', '/api/messages/' + threadId); await openThread(parent); } catch (e) { return toast('That thread was deleted', true); }
+    for (let i = 0; i < 20; i++) { const el = $(`.thread-panel [data-mid="${mid}"]`); if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('highlight'); setTimeout(() => el.classList.remove('highlight'), 1600); return; } await new Promise(r => setTimeout(r, 150)); }
+    return;
+  }
+  if (findChannel(cid)?.type === 'forum') { const m = (S.messages[cid] || []).find(x => x.id === mid); if (m) return openThread(m); try { return openThread(await api('GET', '/api/messages/' + mid)); } catch { return; } }
+  for (let i = 0; i < 20; i++) { if ($(`.messages [data-mid="${mid}"]`)) break; await new Promise(r => setTimeout(r, 150)); }
+  jumpTo(mid);
+}
+
+/* ---------- stickers ---------- */
+function myStickers() { const out = []; for (const sd of Object.values(S.serverData)) (sd.stickers || []).forEach(s => out.push({ ...s, server: sd.name, sid: sd.id })); return out; }
+function stickerPicker(anchor, cid, threadId, state, comp) {
+  const L = layer();
+  const by = {}; myStickers().forEach(s => (by[s.server] = by[s.server] || []).push(s));
+  const el = h(`<div class="popout sticker-picker"><input class="input" placeholder="Search stickers"><div class="sp-grid2">${Object.entries(by).map(([srv, list]) => `<h6>${esc(srv)}</h6>` + list.map(s => `<button data-st="${esc(s.id)}" data-n="${esc(s.name.toLowerCase())}" title="${esc(s.name)}"><img src="${esc(s.url)}" alt="${esc(s.name)}" loading="lazy"></button>`).join('')).join('')}</div></div>`);
+  L.set(el);
+  const r = anchor.getBoundingClientRect(); place(el, r.right - 360, r.top - 8, { above: true });
+  $('input', el).oninput = (e) => { const q = e.target.value.toLowerCase(); $$('[data-st]', el).forEach(b => b.classList.toggle('hidden', !!q && !b.dataset.n.includes(q))); };
+  el.onclick = async (e) => {
+    const b = e.target.closest('[data-st]'); if (!b) return; L.close();
+    const f = new FormData(); f.append('content', ''); f.append('sticker', b.dataset.st);
+    if (threadId) f.append('thread_id', threadId);
+    if (state.reply) { f.append('reply_to', state.reply.id); f.append('mention_reply', String(state.mentionReply)); comp._setReply(null); }
+    try { await upload(`/api/channels/${cid}/messages`, f); } catch (x) { toast(x.message, true); }
+  };
+  if (window.innerWidth > 760) $('input', el).focus();
+}
+function srvStickers(body, sid) {
+  const draw = () => {
+    const list = S.serverData[sid].stickers || [];
+    body.innerHTML = `<h2>Stickers</h2><p class="hint">Up to 30 stickers anyone in this server can send. PNG, GIF, APNG, WebP or JPG under 512 KB. Square images around 320×320 look best.</p>
+      <div class="emoji-up"><button class="btn primary" data-up>${I.upload} Upload Sticker</button><span class="hint" style="margin:0">${list.length} / 30</span><input type="file" accept="image/png,image/gif,image/apng,image/webp,image/jpeg" multiple hidden></div>
+      ${list.length ? `<div class="sticker-grid">${list.map(s => `<div class="sg-item" data-sid="${s.id}"><img src="${esc(s.url)}" alt=""><input class="input" value="${esc(s.name)}" maxlength="30" data-sname><button class="icon-btn danger" data-sdel title="Delete">${I.trash}</button></div>`).join('')}</div>`
+        : `<div class="empty"><b>No stickers yet</b><span>Upload one to get started. They show up in everyone’s sticker picker.</span></div>`}`;
+    const file = $('input[type=file]', body);
+    $('[data-up]', body).onclick = () => file.click();
+    file.onchange = async () => { for (const f of file.files) { const fd = new FormData(); fd.append('file', f); fd.append('name', f.name.replace(/\.[^.]+$/, ''));
+      try { const st = await upload(`/api/servers/${sid}/stickers`, fd); (S.serverData[sid].stickers = S.serverData[sid].stickers || []).push(st); } catch (e) { toast(`${f.name}: ${e.message}`, true); } } file.value = ''; draw(); };
+    body.onchange = async (e) => { const inp = e.target.closest('[data-sname]'); if (!inp) return; const id = inp.closest('[data-sid]').dataset.sid;
+      try { await api('PATCH', '/api/stickers/' + id, { name: inp.value }); const s = S.serverData[sid].stickers.find(x => x.id === id); if (s) s.name = inp.value.trim(); toast('Saved'); } catch (x) { toast(x.message, true); } };
+    body.onclick = (e) => { const d = e.target.closest('[data-sdel]'); if (!d) return; const id = d.closest('[data-sid]').dataset.sid;
+      confirmModal('Delete sticker', 'Messages that already used it keep showing it.', 'Delete', async () => { await api('DELETE', '/api/stickers/' + id); S.serverData[sid].stickers = S.serverData[sid].stickers.filter(x => x.id !== id); draw(); }); };
+  };
+  draw();
+}
+
+/* ---------- voice messages ---------- */
+const fmtDur = (s) => { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function voiceMsgHtml(a) {
+  const wf = (a.waveform && a.waveform.length ? a.waveform : Array.from({ length: 40 }, () => 30));
+  return `<div class="voice-msg" data-vurl="${esc(a.url)}" data-dur="${Number(a.duration) || 0}">
+    <button class="vm-play" aria-label="Play voice message">${I.play}</button>
+    <div class="vm-wave" aria-hidden="true">${wf.map(v => `<i style="height:${Math.max(12, v)}%"></i>`).join('')}</div>
+    <span class="vm-time">${fmtDur(a.duration || 0)}</span></div>`;
+}
+const voicePlayers = {};
+function voiceMsgAction(el, e) {
+  const url = el.dataset.vurl; let a = voicePlayers[url];
+  const bars = $$('.vm-wave i', el), time = $('.vm-time', el), btn = $('.vm-play', el), dur = () => (isFinite(a.duration) && a.duration > 0 ? a.duration : Number(el.dataset.dur) || 1);
+  const paint = () => { const p = a.currentTime / dur(); $$(`.voice-msg[data-vurl="${CSS.escape(url)}"]`).forEach(box => { const bs = $$('.vm-wave i', box); bs.forEach((b, i) => b.classList.toggle('on', i / bs.length < p)); $('.vm-time', box).textContent = fmtDur(a.paused && !a.currentTime ? dur() : a.currentTime); $('.vm-play', box).innerHTML = a.paused ? I.play : I.pause; }); };
+  if (!a) { a = voicePlayers[url] = new Audio(url); a.preload = 'auto'; a.ontimeupdate = paint; a.onplay = paint; a.onpause = paint; a.onended = () => { a.currentTime = 0; paint(); }; if (S.prefs.speaker && a.setSinkId) a.setSinkId(S.prefs.speaker).catch(() => {}); }
+  const wave = e.target.closest('.vm-wave');
+  if (wave) { const r = wave.getBoundingClientRect(); a.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur(); if (a.paused) a.play().catch(() => {}); paint(); return; }
+  Object.entries(voicePlayers).forEach(([u, p]) => { if (u !== url && !p.paused) p.pause(); });
+  if (a.paused) a.play().catch(() => toast('Couldn’t play that voice message', true)); else a.pause();
+}
+async function startVoiceRecording(comp, cid, threadId, state) {
+  if ($('.rec-bar', comp)) return;
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, deviceId: S.prefs.mic ? { ideal: S.prefs.mic } : undefined } }); }
+  catch (e) { return toast(typeof mediaError === 'function' ? mediaError(e, 'microphone') : 'Couldn’t use your microphone', true); }
+  const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm', 'audio/ogg;codecs=opus'].find(t => MediaRecorder.isTypeSupported?.(t)) || '';
+  const rec = new MediaRecorder(stream, type ? { mimeType: type, audioBitsPerSecond: 64000 } : undefined);
+  const chunks = [], levels = []; let cancelled = false; const t0 = Date.now();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)(); const an = ctx.createAnalyser(); an.fftSize = 512; ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
+  const bar = h(`<div class="rec-bar"><button class="icon-btn danger" data-rcancel title="Delete recording">${I.trash}</button><span class="rec-dot"></span><span class="rec-time">0:00</span><div class="rec-wave"></div><button class="send-btn ready" data-rsend title="Send voice message">${I.arrow}</button></div>`);
+  $('.cbox', comp).classList.add('recording'); $('.cbox', comp).appendChild(bar);
+  const wave = $('.rec-wave', bar);
+  const tick = setInterval(() => {
+    an.getByteTimeDomainData(buf); let peak = 0; for (const v of buf) peak = Math.max(peak, Math.abs(v - 128));
+    const lvl = Math.min(100, Math.round(peak / 128 * 160)); levels.push(lvl);
+    wave.appendChild(h(`<i style="height:${Math.max(10, lvl)}%"></i>`)); while (wave.children.length > 60) wave.firstChild.remove();
+    const s = (Date.now() - t0) / 1000; $('.rec-time', bar).textContent = fmtDur(s);
+    if (s >= 600) stop(true);
+  }, 100);
+  rec.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
+  const finish = () => { clearInterval(tick); stream.getTracks().forEach(t => t.stop()); ctx.close().catch(() => {}); bar.remove(); $('.cbox', comp)?.classList.remove('recording'); };
+  rec.onstop = async () => {
+    finish(); if (cancelled || !chunks.length) return;
+    const duration = (Date.now() - t0) / 1000; if (duration < 0.6) return toast('Hold on a little longer to record a voice message');
+    const mime = rec.mimeType || type || 'audio/webm';
+    const blob = new Blob(chunks, { type: mime.split(';')[0] });
+    const ext = /mp4/.test(mime) ? 'm4a' : /ogg/.test(mime) ? 'ogg' : 'webm';
+    // squeeze the levels into 48 bars, scaled so the loudest bar is full height
+    const n = 48, out = []; for (let i = 0; i < n; i++) { const a = Math.floor(i * levels.length / n), b = Math.max(a + 1, Math.floor((i + 1) * levels.length / n)); out.push(Math.max(...levels.slice(a, b), 0)); }
+    const mx = Math.max(10, ...out); const waveform = out.map(v => Math.round(v / mx * 100));
+    const f = new FormData(); f.append('content', ''); f.append('files', new File([blob], `voice-message.${ext}`, { type: blob.type }));
+    f.append('voice', JSON.stringify({ duration, waveform })); if (threadId) f.append('thread_id', threadId);
+    if (state.reply) { f.append('reply_to', state.reply.id); f.append('mention_reply', String(state.mentionReply)); comp._setReply(null); }
+    try { await upload(`/api/channels/${cid}/messages`, f); } catch (x) { toast(x.message, true); }
+  };
+  const stop = (send) => { if (rec.state === 'inactive') return; cancelled = !send; rec.stop(); };
+  bar.onclick = (e) => { if (e.target.closest('[data-rcancel]')) stop(false); if (e.target.closest('[data-rsend]')) stop(true); };
+  const key = (e) => { if (!bar.isConnected) return document.removeEventListener('keydown', key); if (e.key === 'Escape') stop(false); if (e.key === 'Enter') { e.preventDefault(); stop(true); } };
+  document.addEventListener('keydown', key);
+  rec.start(250);
+}
+
+/* ---------- search with filters ---------- */
+const SEARCH_FILTERS = [
+  ['from:', 'user', 'Messages from a person'], ['mentions:', 'user', 'Messages that mention a person'], ['has:', 'link, image, video, file, voice, poll, sticker', 'Messages that contain something'],
+  ['in:', 'channel', 'Messages in a channel'], ['before:', 'date', 'Before a date (YYYY-MM-DD)'], ['after:', 'date', 'After a date'], ['during:', 'date', 'On a specific day'], ['pinned:', 'true', 'Only pinned messages'],
+];
+const HAS_OPTS = ['link', 'image', 'video', 'file', 'audio', 'voice', 'poll', 'sticker', 'embed'];
+function parseDay(v) { const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(v) || /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(v); if (!m) return null; const [y, mo, d] = m[1].length === 4 ? [m[1], m[2], m[3]] : [m[3], m[1], m[2]]; const t = new Date(Number(y), Number(mo) - 1, Number(d)).getTime(); return isNaN(t) ? null : t; }
+function parseSearch(raw, ch) {
+  const q = { text: [], has: [] }; const errs = [];
+  raw.replace(/(\w+):("[^"]*"|\S+)|("[^"]*"|\S+)/g, (_, k, v, plain) => {
+    if (!k) { q.text.push(plain.replace(/^"|"$/g, '')); return ''; }
+    v = v.replace(/^"|"$/g, ''); k = k.toLowerCase();
+    if (k === 'from' || k === 'mentions') q[k] = v.replace(/^@/, '');
+    else if (k === 'has') v.split(',').forEach(x => HAS_OPTS.includes(x) ? q.has.push(x) : errs.push(`has:${x}`));
+    else if (k === 'in') { const name = v.replace(/^#/, '').toLowerCase(); const c = ch.server_id && S.serverData[ch.server_id].channels.find(x => (x.type === 'text' || x.type === 'forum') && x.name.toLowerCase() === name); c ? (q.in = c.id) : errs.push(`in:${v}`); }
+    else if (k === 'before' || k === 'after' || k === 'during') { const t = parseDay(v); if (t == null) errs.push(`${k}:${v}`); else if (k === 'during') { q.after = t; q.before = t + 864e5; } else q[k] = k === 'after' ? t + 864e5 : t; }
+    else if (k === 'pinned') q.pinned = v === 'true' || v === 'yes';
+    else q.text.push(`${k}:${v}`);
+    return '';
+  });
+  return { q, errs };
+}
+function bindSearchBox(input, ch) {
+  let pop = null;
+  const close = () => { pop?.remove(); pop = null; };
+  const show = () => {
+    close();
+    const val = input.value, word = val.slice(0, input.selectionStart).split(/\s/).pop();
+    let items = [];
+    const fm = /^(from|mentions):(.*)$/i.exec(word), hm = /^has:(.*)$/i.exec(word), im = /^in:#?(.*)$/i.exec(word);
+    if (fm) { const pool = ch.server_id ? S.serverData[ch.server_id].members : (ch.members || [S.me, ch.user].filter(Boolean)); items = pool.filter(u => (u.username || '').toLowerCase().startsWith(fm[2].toLowerCase()) || (u.display_name || '').toLowerCase().startsWith(fm[2].toLowerCase())).slice(0, 8).map(u => [`${fm[1]}:${u.username} `, `${avatar(S.users[u.id] || u, 's24')}<b>${esc(u.display_name || u.username)}</b><small>@${esc(u.username)}</small>`]); }
+    else if (hm) items = HAS_OPTS.filter(x => x.startsWith(hm[1].toLowerCase())).map(x => [`has:${x} `, `<b>has:</b>${x}`]);
+    else if (im && ch.server_id) items = S.serverData[ch.server_id].channels.filter(c => (c.type === 'text' || c.type === 'forum') && c.name.startsWith(im[1].toLowerCase())).slice(0, 8).map(c => [`in:${c.name} `, `${I.hash}<b>${esc(c.name)}</b>`]);
+    else if (!word || !word.includes(':')) items = SEARCH_FILTERS.filter(([k]) => !word || k.startsWith(word.toLowerCase())).filter(([k]) => ch.server_id || k !== 'in:').map(([k, hint, d]) => [k, `<b>${k}</b><span class="sf-hint">${esc(hint)}</span><small>${esc(d)}</small>`]);
+    if (!items.length) return;
+    pop = h(`<div class="search-filters"><div class="sf-h">${word && word.includes(':') ? 'Suggestions' : 'Search options'}</div>${items.map(([ins, html], i) => `<button data-ins="${esc(ins)}" class="${i === 0 ? '' : ''}">${html}</button>`).join('')}</div>`);
+    document.body.appendChild(pop);
+    const r = input.getBoundingClientRect(); pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, Math.min(innerWidth - 328, r.right - 320)) + 'px';
+    pop.onmousedown = (e) => { e.preventDefault(); const b = e.target.closest('[data-ins]'); if (!b) return;
+      const pos = input.selectionStart, before = val.slice(0, pos).replace(/\S*$/, ''); input.value = before + b.dataset.ins + val.slice(pos).replace(/^\S*/, ''); input.focus(); input.selectionStart = input.selectionEnd = (before + b.dataset.ins).length; show(); };
+  };
+  input.onfocus = show; input.oninput = show; input.onblur = () => setTimeout(close, 120);
+  input.onkeydown = (e) => { if (e.key === 'Enter' && input.value.trim()) { close(); runSearch(ch, input.value.trim()); } if (e.key === 'Escape') { input.value = ''; close(); $('.search-results')?.remove(); input.blur(); } };
+}
+async function runSearch(chOrId, raw, offset = 0, panel) {
+  const ch = typeof chOrId === 'string' ? findChannel(chOrId) : chOrId; if (!ch) return;
+  const { q, errs } = parseSearch(raw, ch);
+  if (errs.length) toast(`Didn’t understand: ${errs.join(', ')}`, true);
+  if (!panel) {
+    $('.search-results')?.remove();
+    panel = h(`<div class="search-results"><div class="sr-head"><span>Searching…</span><button class="icon-btn" title="Close search">${I.x}</button></div><div class="sr-list"></div></div>`);
+    $('.content').appendChild(panel);
+    $('.sr-head button', panel).onclick = () => panel.remove();
+  }
+  const params = new URLSearchParams();
+  if (ch.server_id) params.set('server_id', ch.server_id); else params.set('channel_id', ch.id);
+  if (q.text.length) params.set('q', q.text.join(' '));
+  ['from', 'mentions', 'in', 'before', 'after'].forEach(k => q[k] != null && params.set(k, q[k]));
+  if (q.has.length) params.set('has', q.has.join(','));
+  if (q.pinned) params.set('pinned', 'true');
+  params.set('offset', offset);
+  try {
+    const { total, messages } = await api('GET', '/api/search?' + params);
+    $('.sr-head span', panel).textContent = `${total} result${total === 1 ? '' : 's'}`;
+    const list = $('.sr-list', panel);
+    if (!offset) list.innerHTML = '';
+    $('.sr-more', list)?.remove();
+    const sid = ch.server_id || null;
+    list.insertAdjacentHTML('beforeend', messages.length ? messages.map(m => { const c = findChannel(m.channel_id);
+      return `<div class="sr-item" data-go="${m.id}" data-cid="${m.channel_id}" data-thread="${m.thread_id || ''}">${sid && c ? `<div class="ib-where">#${esc(c.name)}</div>` : ''}${messageHtml({ ...m, thread: null }, sid, null, true)}</div>`; }).join('') : (offset ? '' : '<div class="empty">No results. Try fewer words or different filters.</div>'));
+    if (offset + messages.length < total) { const more = h(`<button class="btn secondary block sr-more">Show more results</button>`); list.appendChild(more); more.onclick = () => runSearch(ch, raw, offset + 25, panel); }
+    list.onclick = (e) => { const it = e.target.closest('[data-go]'); if (!it || e.target.closest('a,button')) return; goToMessage(it.dataset.cid, Number(it.dataset.go), Number(it.dataset.thread) || null); };
+  } catch (e) { $('.sr-head span', panel).textContent = e.message; }
+}
+
+/* ---------- Settings → Devices ---------- */
+function describeDevice(ua, client) {
+  ua = ua || '';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Windows/.test(ua) ? 'Windows' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : 'Unknown device';
+  const browser = /Electron|Orbit\//.test(ua) || client === 'desktop' ? 'Orbit desktop app' : client === 'app' ? 'Orbit app (Home Screen)' : /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  const kind = /iPhone|Android.*Mobile/.test(ua) ? 'phone' : /iPad|Android/.test(ua) ? 'tablet' : 'computer';
+  return { os, browser, kind };
+}
+const DEV_ICONS = {
+  phone: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>',
+  tablet: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="4" y="2" width="16" height="20" rx="3"/><path d="M11 18h2"/></svg>',
+  computer: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+};
+function timeAgo(t) { const s = (Date.now() - t) / 1000; if (s < 90) return 'Active now'; if (s < 3600) return `Active ${Math.round(s / 60)} minutes ago`; if (s < 86400) return `Active ${Math.round(s / 3600)} hours ago`; return `Active ${Math.round(s / 86400)} days ago`; }
+async function userDevices(body) {
+  body.innerHTML = `<h2>Devices</h2><p class="hint">Here’s everywhere you’re logged in to Orbit. If you don’t recognize one, log it out and change your password.</p><div class="dev-list"><div class="loader">Loading…</div></div>`;
+  const draw = async () => {
+    let list = [];
+    try { list = await api('GET', '/api/sessions'); } catch (e) { $('.dev-list', body).innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    const cur = list.filter(x => x.current), others = list.filter(x => !x.current);
+    const row = (x) => { const d = describeDevice(x.ua, x.client);
+      return `<div class="dev-row ${x.current ? 'current' : ''}"><span class="dev-ico">${DEV_ICONS[d.kind]}</span><div class="grow"><b>${esc(d.os)} · ${esc(d.browser)}</b><small>${x.current ? 'This device' : esc(timeAgo(x.last_seen))} · Signed in ${new Date(x.created).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</small></div>
+        ${x.current ? '<span class="dev-this">This device</span>' : `<button class="icon-btn" data-out="${esc(x.id)}" title="Log out this device">${I.x}</button>`}</div>`; };
+    $('.dev-list', body).innerHTML = `<h3>Current device</h3>${cur.map(row).join('') || '<p class="hint">This device signed in before devices were tracked. Reload Orbit to add it.</p>'}
+      <h3>Other devices</h3>${others.length ? others.map(row).join('') : '<p class="hint">You’re not logged in anywhere else.</p>'}
+      ${others.length ? `<div class="danger-zone"><div class="grow"><b>Log out of all other devices</b><small>You’ll stay logged in here.</small></div><button class="btn danger" data-allout>Log out all other devices</button></div>` : ''}`;
+  };
+  body.onclick = (e) => {
+    const o = e.target.closest('[data-out]');
+    if (o) confirmModal('Log out device', 'That device will be logged out right away and has to log in again.', 'Log out', async () => { await api('DELETE', '/api/sessions/' + o.dataset.out); draw(); toast('Device logged out'); });
+    if (e.target.closest('[data-allout]')) confirmModal('Log out all other devices', 'Every other phone, computer and browser will be logged out right away.', 'Log out all', async () => { const r = await api('DELETE', '/api/sessions'); draw(); toast(`Logged out ${r.count} device${r.count === 1 ? '' : 's'}`); });
+  };
+  draw();
+}
+
+/* ---------- forum channels: a list of posts, each post opens its own reply thread ---------- */
+S.forumSort = S.forumSort || {}; S.forumFilter = S.forumFilter || {};
+function renderForum(cid) {
+  const view = $(`.forum-view[data-forum="${CSS.escape(cid)}"]`); if (!view) return;
+  const ch = findChannel(cid); if (!ch) return;
+  const canPost = can(PERM.SEND, ch.server_id) && !myTimeout(ch.server_id);
+  const sort = S.forumSort[cid] || 'active', filter = (S.forumFilter[cid] || '').toLowerCase();
+  const activity = (m) => Math.max(m.created, m.thread?.last || 0);
+  let posts = (S.messages[cid] || []).filter(m => m.title && !m._pending);
+  if (filter) posts = posts.filter(m => m.title.toLowerCase().includes(filter) || (m.content || '').toLowerCase().includes(filter));
+  posts.sort((a, b) => sort === 'new' ? b.created - a.created : activity(b) - activity(a));
+  const sid = ch.server_id;
+  const card = (m) => {
+    const img = (m.attachments || []).find(a => (a.type || '').startsWith('image/'));
+    const n = m.thread?.count || 0;
+    const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).sort((a, b) => b[1].length - a[1].length)[0];
+    return `<button class="fp" data-post="${m.id}">
+      <div class="fp-main"><div class="fp-title">${esc(m.title)}</div>
+        <div class="fp-preview"><b style="${colorIn(sid, m.author_id) ? 'color:' + colorIn(sid, m.author_id) : ''}">${esc(nameIn(sid, m.author_id))}:</b> ${esc(plainPreview(m.content) || (img ? 'Image' : (m.attachments || []).length ? 'Attachment' : ''))}</div>
+        <div class="fp-meta">${reacts ? `<span class="fp-react">${emojiHtml(reacts[0])} ${reacts[1].length}</span>` : ''}<span>${I.forum.replace('width="20" height="20"', 'width="14" height="14"')} ${n}</span><span>${fmtRel(activity(m))}</span></div></div>
+      ${img ? `<img class="fp-img" src="${esc(img.url)}" alt="" loading="lazy">` : ''}</button>`;
+  };
+  view.innerHTML = `<div class="fv-head"><div class="fv-search"><input class="input" placeholder="Search posts" value="${esc(S.forumFilter[cid] || '')}" data-ffilter></div>
+      <select class="input fv-sort" data-fsort aria-label="Sort posts"><option value="active" ${sort === 'active' ? 'selected' : ''}>Recently active</option><option value="new" ${sort === 'new' ? 'selected' : ''}>Newest posts</option></select>
+      ${canPost ? `<button class="btn primary" data-newpost>${I.plus} New Post</button>` : ''}</div>
+    ${ch.topic ? `<div class="fv-guide">${formatText(ch.topic, sid)}</div>` : ''}
+    <div class="fv-list">${S.messages[cid] ? (posts.length ? posts.map(card).join('') : `<div class="pp-empty">${I.forum}<b>${filter ? 'No posts match that search' : 'No posts yet'}</b><span>${filter ? 'Try another word.' : canPost ? 'Start the first conversation with “New Post”.' : 'Check back later.'}</span></div>`) : '<div class="loader">Loading posts…</div>'}
+    ${S.hasMore[cid] ? '<button class="btn secondary block" data-fmore>Load older posts</button>' : ''}</div>`;
+  view.onclick = (e) => {
+    if (e.target.closest('[data-newpost]')) return newPostModal(cid);
+    if (e.target.closest('[data-fmore]')) return loadMessages(cid, true);
+    const p = e.target.closest('[data-post]'); if (p) { const m = (S.messages[cid] || []).find(x => x.id === Number(p.dataset.post)); if (m) { $$('.fp.open', view).forEach(x => x.classList.remove('open')); p.classList.add('open'); openThread(m); } }
+  };
+  $('[data-fsort]', view).onchange = (e) => { S.forumSort[cid] = e.target.value; renderForum(cid); };
+  const f = $('[data-ffilter]', view);
+  f.oninput = debounce(() => { S.forumFilter[cid] = f.value; const pos = f.selectionStart; renderForum(cid); const nf = $(`.forum-view[data-forum="${CSS.escape(cid)}"] [data-ffilter]`); nf?.focus(); nf?.setSelectionRange(pos, pos); }, 200);
+  if (S.thread) $(`.fp[data-post="${S.thread.id}"]`, view)?.classList.add('open');
+}
+function fmtRel(t) { const s = (Date.now() - t) / 1000; if (s < 60) return 'just now'; if (s < 3600) return `${Math.floor(s / 60)}m ago`; if (s < 86400) return `${Math.floor(s / 3600)}h ago`; if (s < 7 * 86400) return `${Math.floor(s / 86400)}d ago`; return new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }); }
+function newPostModal(cid) {
+  let files = [];
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>New Post</h2><p>in ${esc(findChannel(cid)?.name || '')}</p></div>
+    <div class="mb"><div class="field"><label>Title</label><input class="input" name="title" maxlength="100" placeholder="What’s it about?"></div>
+    <div class="field"><label>Message</label><textarea class="input" name="body" maxlength="4000" rows="5" placeholder="Add details, a question or a link"></textarea></div>
+    <div class="row-files"><button class="btn ghost sm" data-addfile>${I.upload} Add images or files</button><span class="np-files"></span><input type="file" multiple hidden></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Post</button></div>`, (m, close) => {
+    const inp = $('input[type=file]', m);
+    $('[data-addfile]', m).onclick = () => inp.click();
+    inp.onchange = () => { files = [...files, ...inp.files].slice(0, 10); $('.np-files', m).textContent = files.map(f => f.name).join(', '); inp.value = ''; };
+    $('[name=title]', m).focus();
+    $('[data-ok]', m).onclick = async (e) => {
+      const title = $('[name=title]', m).value.trim(), body = $('[name=body]', m).value.trim();
+      if (!title) return toast('Give your post a title', true);
+      if (!body && !files.length) return toast('Add a message or a file', true);
+      const f = new FormData(); f.append('title', title); f.append('content', resolveEmojiText(body, findChannel(cid)?.server_id)); files.forEach(x => f.append('files', x, x.name));
+      e.target.disabled = true;
+      try { const msg = await upload(`/api/channels/${cid}/messages`, f); close(); const list = S.messages[cid]; if (list && !list.find(x => x.id === msg.id)) { list.push(msg); renderForum(cid); } openThread(msg); }
+      catch (x) { e.target.disabled = false; toast(x.message, true); }
+    };
+  });
+}
+
+/* ---------- 1:1 DMs: the right side shows the other person's profile ---------- */
+const dmProfileCache = {};
+async function renderDmProfile(box, ch) {
+  const id = ch.user.id;
+  const draw = () => {
+    if (!box.isConnected) return;
+    const u = { ...(S.users[id] || ch.user), ...(dmProfileCache[id] || {}) };
+    const mutual = u.mutual_servers || [];
+    box.innerHTML = `<div class="dm-profile">${profileCardHtml({ ...u, mutual_servers: [] }, { preview: true })}
+      <div class="dmp-extra">
+        <section><h5>Member since</h5><div class="since">${new Date(u.created || Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div></section>
+        ${mutual.length ? `<section><h5>Mutual servers — ${mutual.length}</h5><div class="dmp-servers">${mutual.map(s => `<button data-msrv="${esc(s.id)}">${S.serverData[s.id] ? `<span class="qs-srv">${serverIcon(S.serverData[s.id])}</span>` : ''}<span>${esc(s.name)}</span></button>`).join('')}</div></section>` : ''}
+        ${friendActionRow(id)}
+        <button class="btn ghost block dmp-full" data-fullp>View full profile</button>
+      </div></div>`;
+    box.onclick = async (e) => {
+      const sv = e.target.closest('[data-msrv]'); if (sv && S.serverData[sv.dataset.msrv]) return selectServer(sv.dataset.msrv);
+      if (e.target.closest('[data-fullp]')) return profilePopout(id, e.target.closest('[data-fullp]'), 'left');
+      const fa = async (sel, fn) => { const b = e.target.closest(sel); if (!b) return false; try { await fn(); } catch (x) { toast(x.message, true); } return true; };
+      if (await fa('[data-addfriend]', () => api('POST', '/api/friends', { username: user(id).username }))) return;
+      if (await fa('[data-acceptreq]', () => api('POST', `/api/friends/${id}/accept`))) return;
+      if (await fa('[data-declinereq]', () => api('DELETE', '/api/friends/' + id))) return;
+      if (await fa('[data-cancelreq]', () => api('DELETE', '/api/friends/' + id))) return;
+      if (await fa('[data-unblockp]', () => api('DELETE', `/api/friends/${id}/block`))) return;
+      if (e.target.closest('[data-unfriend]')) confirmModal('Remove friend', `Remove <b>${esc(user(id).display_name)}</b>?`, 'Remove', () => api('DELETE', '/api/friends/' + id));
+    };
+  };
+  draw();
+  if (!dmProfileCache[id] || dmProfileCache[id]._at < Date.now() - 60e3) {
+    try { const u = await api('GET', '/api/users/' + id); dmProfileCache[id] = { ...u, _at: Date.now() }; S.users[id] = { ...S.users[id], ...u }; if (u.activity) S.activities[id] = u.activity; draw(); } catch {}
+  }
+}

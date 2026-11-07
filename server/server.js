@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.14.2';
+const VERSION = '1.15.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -119,6 +119,30 @@ function start(opts = {}) {
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
   if (!chanCols.includes('slowmode')) db.exec('ALTER TABLE channels ADD COLUMN slowmode INTEGER DEFAULT 0');
+  // 1.15: channel categories (type 'category', channels point at one with parent_id), stickers
+  const addedCategories = !chanCols.includes('parent_id');
+  if (addedCategories) db.exec('ALTER TABLE channels ADD COLUMN parent_id TEXT');
+  if (!msgCols.includes('sticker')) db.exec('ALTER TABLE messages ADD COLUMN sticker TEXT');
+  if (!msgCols.includes('title')) db.exec('ALTER TABLE messages ADD COLUMN title TEXT');   // forum post titles
+  // 1.15: sessions (one per logged-in device) so you can see and log out devices
+  db.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, created INTEGER, last_seen INTEGER, ua TEXT, client TEXT, ip TEXT);
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS stickers(id TEXT PRIMARY KEY, server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, name TEXT, url TEXT, creator TEXT, created INTEGER);`);
+  if (addedCategories) {
+    // existing servers keep their look: "Text Channels" and "Voice Channels" become real categories
+    const servers = db.prepare('SELECT id FROM servers').all();
+    const ins = db.prepare(`INSERT INTO channels(id,server_id,type,name,position,created) VALUES(?,?,'category',?,?,?)`);
+    const setParent = db.prepare('UPDATE channels SET parent_id=? WHERE server_id=? AND type=?');
+    db.exec('BEGIN');
+    try {
+      for (const { id: sid } of servers) {
+        const t = crypto.randomBytes(9).toString('base64url'), v = crypto.randomBytes(9).toString('base64url');
+        ins.run(t, sid, 'Text Channels', -2, Date.now()); ins.run(v, sid, 'Voice Channels', -1, Date.now());
+        setParent.run(t, sid, 'text'); setParent.run(v, sid, 'voice');
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+  }
   const memCols = all0(db, "PRAGMA table_info(members)").map(c => c.name);
   if (!memCols.includes('timeout_until')) db.exec('ALTER TABLE members ADD COLUMN timeout_until INTEGER');
   db.exec(`CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY, server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, name TEXT, url TEXT, creator TEXT, created INTEGER);
@@ -217,7 +241,7 @@ function start(opts = {}) {
         attachments: JSON.parse(r.attachments || '[]'), mentions: JSON.parse(r.mentions || '[]'), mention_everyone: !!r.mention_everyone,
         edited: r.edited, created: r.created, system: !!r.system, reactions: rx,
         reply: rep ? { id: rep.id, author_id: rep.author_id, content: rep.content.slice(0, 200), has_attachments: rep.attachments !== '[]' } : (r.reply_to ? { id: r.reply_to, deleted: true } : null),
-        thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []), poll: pollOf(r) };
+        thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []), poll: pollOf(r), sticker: pj(r.sticker, null), title: r.title || null };
     });
   }
   const msgById = (id) => fmtMessages(all('SELECT * FROM messages WHERE id=?', id))[0];
@@ -231,8 +255,9 @@ function start(opts = {}) {
     const members = all('SELECT m.user_id, m.nick, m.joined, m.timeout_until AS t_until, u.* FROM members m JOIN users u ON u.id=m.user_id WHERE m.server_id=?', sid)
       .map(m => ({ ...publicUser(m), nick: m.nick, joined: m.joined, roles: mrs.filter(x => x.user_id === m.user_id).map(x => x.role_id), timeout_until: m.t_until > now() ? m.t_until : null }));
     const emojis = all('SELECT id, name, url FROM emojis WHERE server_id=? ORDER BY created', sid);
+    const stickers = all('SELECT id, name, url FROM stickers WHERE server_id=? ORDER BY created', sid);
     return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, owner_id: s.owner_id,
-      channels, roles, members, emojis, my_perms: permsOf(sid, uidv) };
+      channels, roles, members, emojis, stickers, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
   function groupName(c, uidv, members) {
@@ -292,12 +317,30 @@ function start(opts = {}) {
   const wrap = (fn) => (req, res) => { try { const r = fn(req, res); if (r && r.catch) r.catch(e => fail(res, e)); } catch (e) { fail(res, e); } };
   function fail(res, e) { if (e && e.status) return res.status(e.status).json({ error: e.message }); log('error', e); res.status(500).json({ error: 'Server error' }); }
   const err = (status, message) => Object.assign(new Error(message), { status });
+  // A token carries a session id (sid). Logging a device out deletes its session, which makes its token stop working.
+  // Tokens from before sessions existed (no sid) keep working; /api/me hands those devices a new token with a session.
+  const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim().slice(0, 64);
+  function newSession(uidv, req) {
+    const sid = uid();
+    const client = ['desktop', 'app', 'web'].includes(req.body?.client || req.headers['x-orbit-client']) ? (req.body?.client || req.headers['x-orbit-client']) : 'web';
+    run('INSERT INTO sessions VALUES(?,?,?,?,?,?,?)', sid, uidv, now(), now(), String(req.headers['user-agent'] || '').slice(0, 300), client, clientIp(req));
+    return sid;
+  }
+  function checkToken(t) {
+    const p = jwt.verify(t, SECRET);
+    const u = one('SELECT * FROM users WHERE id=?', p.id); if (!u) throw 0;
+    if (p.sid && !one('SELECT 1 FROM sessions WHERE id=? AND user_id=?', p.sid, u.id)) throw 0;   // this device was logged out
+    return { u, sid: p.sid || null };
+  }
+  const seenAt = new Map();
   function auth(req, res, next) {
     const t = (req.headers.authorization || '').replace(/^Bearer /, '');
-    try { const p = jwt.verify(t, SECRET); const u = one('SELECT * FROM users WHERE id=?', p.id); if (!u) throw 0; req.user = u; next(); }
-    catch { res.status(401).json({ error: 'Not logged in' }); }
+    let r; try { r = checkToken(t); } catch { return res.status(401).json({ error: 'Not logged in' }); }
+    req.user = r.u; req.sid = r.sid;
+    if (r.sid && (seenAt.get(r.sid) || 0) < now() - 60e3) { seenAt.set(r.sid, now()); run('UPDATE sessions SET last_seen=?, ip=? WHERE id=?', now(), clientIp(req), r.sid); }
+    next();
   }
-  const token = (u) => jwt.sign({ id: u.id }, SECRET, { expiresIn: '60d' });
+  const token = (u, req) => jwt.sign({ id: u.id, sid: newSession(u.id, req) }, SECRET, { expiresIn: '60d' });
   const fileUrl = (f) => '/uploads/' + f.filename;
 
   // ----- auth -----
@@ -327,7 +370,7 @@ function start(opts = {}) {
     run('INSERT INTO users(id,email,username,display_name,pass,accent,verified,created) VALUES(?,?,?,?,?,?,?,?)', u.id, email, username, u.display_name, u.pass,
       colors[crypto.randomInt(colors.length)], emailEnabled ? 0 : 1, u.created);
     if (emailEnabled) { await sendCode(email, newCode(email, 'verify'), 'verify'); return res.json({ needs_verification: true, email }); }
-    res.json({ token: token(u) });
+    res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/verify', wrap((req, res) => {
     const { email, code } = req.body || {};
@@ -335,7 +378,7 @@ function start(opts = {}) {
     const u = one('SELECT * FROM users WHERE email=?', email);
     if (!u) throw err(404, 'Account not found');
     run('UPDATE users SET verified=1 WHERE id=?', u.id);
-    res.json({ token: token(u) });
+    res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/resend', wrap(async (req, res) => {
     const u = one('SELECT * FROM users WHERE email=?', req.body?.email || '');
@@ -347,7 +390,7 @@ function start(opts = {}) {
     const u = one('SELECT * FROM users WHERE email=? OR username=?', email || '', email || '');
     if (!u || !bcrypt.compareSync(password || '', u.pass)) throw err(401, 'Wrong email or password');
     if (!u.verified && emailEnabled) { await sendCode(u.email, newCode(u.email, 'verify'), 'verify'); return res.json({ needs_verification: true, email: u.email }); }
-    res.json({ token: token(u) });
+    res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/forgot', wrap(async (req, res) => {
     const u = one('SELECT * FROM users WHERE email=?', req.body?.email || '');
@@ -361,15 +404,33 @@ function start(opts = {}) {
     const u = one('SELECT * FROM users WHERE email=?', email);
     if (!u) throw err(404, 'Account not found');
     run('UPDATE users SET pass=?, verified=1 WHERE id=?', bcrypt.hashSync(password, 10), u.id);
-    res.json({ token: token(u) });
+    all('SELECT id FROM sessions WHERE user_id=?', u.id).forEach(x => endSession(x.id));   // reset = log out everywhere else
+    res.json({ token: token(u, req) });
   }));
 
   // ----- me / users -----
   app.get('/api/me', auth, wrap((req, res) => {
     const me = { ...publicUser(req.user), email: req.user.email };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
-    res.json({ me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id) });
+    const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
+    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id) });
   }));
+  // devices you're logged in on
+  app.get('/api/sessions', auth, wrap((req, res) => {
+    res.json(all('SELECT id, created, last_seen, ua, client, ip FROM sessions WHERE user_id=? ORDER BY last_seen DESC', req.user.id)
+      .map(x => ({ ...x, ip: undefined, current: x.id === req.sid })));
+  }));
+  function endSession(sid) { run('DELETE FROM sessions WHERE id=?', sid); seenAt.delete(sid); io.in('sess:' + sid).disconnectSockets(true); }
+  app.delete('/api/sessions/:id', auth, wrap((req, res) => {
+    const x = one('SELECT id FROM sessions WHERE id=? AND user_id=?', req.params.id, req.user.id);
+    if (!x) throw err(404, 'That device is already logged out');
+    endSession(x.id); res.json({ ok: true });
+  }));
+  app.delete('/api/sessions', auth, wrap((req, res) => {   // log out every other device
+    const rows = all('SELECT id FROM sessions WHERE user_id=? AND id<>?', req.user.id, req.sid || '');
+    rows.forEach(x => endSession(x.id)); res.json({ ok: true, count: rows.length });
+  }));
+  app.post('/api/logout', auth, wrap((req, res) => { if (req.sid) endSession(req.sid); res.json({ ok: true }); }));
   app.patch('/api/me', auth, wrap((req, res) => {
     const b = req.body || {};
     const u = req.user;
@@ -381,6 +442,7 @@ function start(opts = {}) {
       if (!bcrypt.compareSync(b.current_password || '', u.pass)) throw err(400, 'Current password is wrong');
       if (b.new_password.length < 6) throw err(400, 'Password must be at least 6 characters');
       run('UPDATE users SET pass=? WHERE id=?', bcrypt.hashSync(b.new_password, 10), u.id);
+      all('SELECT id FROM sessions WHERE user_id=? AND id<>?', u.id, req.sid || '').forEach(x => endSession(x.id));   // changing your password logs out your other devices
     }
     const f = (k, max) => (b[k] !== undefined ? String(b[k]).slice(0, max) : u[k]);
     const accent = /^#[0-9a-f]{6}$/i.test(b.accent || '') ? b.accent : u.accent;
@@ -497,11 +559,11 @@ function start(opts = {}) {
   function createChannel(sid, type, name, extra = {}) {
     const id = uid();
     const pos = (one('SELECT MAX(position) p FROM channels WHERE server_id=?', sid)?.p ?? -1) + 1;
-    run('INSERT INTO channels(id,server_id,type,name,topic,position,private,allowed_roles,created) VALUES(?,?,?,?,?,?,?,?,?)', id, sid, type, name,
-      extra.topic || '', pos, extra.private ? 1 : 0, JSON.stringify(extra.allowed_roles || []), now());
+    run('INSERT INTO channels(id,server_id,type,name,topic,position,private,allowed_roles,created,parent_id) VALUES(?,?,?,?,?,?,?,?,?,?)', id, sid, type, name,
+      extra.topic || '', pos, extra.private ? 1 : 0, JSON.stringify(extra.allowed_roles || []), now(), extra.parent_id || null);
     return id;
   }
-  const cleanChanName = (n, type) => { const s = String(n || '').trim().slice(0, 40); return type === 'voice' ? s : s.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, ''); };
+  const cleanChanName = (n, type) => { const s = String(n || '').trim().slice(0, 40); return type === 'voice' || type === 'category' ? s : s.toLowerCase().replace(/\s+/g, '-').replace(/[^\p{L}\p{N}_-]/gu, ''); };
   app.post('/api/servers', auth, wrap((req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 50);
     if (!name) throw err(400, 'Give your server a name');
@@ -510,10 +572,11 @@ function start(opts = {}) {
       run('INSERT INTO servers(id,name,owner_id,created) VALUES(?,?,?,?)', sid, name, req.user.id, now());
       run('INSERT INTO members(server_id,user_id,nick,joined) VALUES(?,?,?,?)', sid, req.user.id, null, now());
       run('INSERT INTO roles(id,server_id,name,color,perms,position,hoist,is_default) VALUES(?,?,?,?,?,?,?,1)', uid(), sid, '@everyone', '', DEFAULT_PERMS, 0, 0);
-      createChannel(sid, 'text', 'general');
-      createChannel(sid, 'text', 'media');
-      createChannel(sid, 'voice', 'General');
-      createChannel(sid, 'voice', 'Gaming');
+      const tc = createChannel(sid, 'category', 'Text Channels'), vc = createChannel(sid, 'category', 'Voice Channels');
+      createChannel(sid, 'text', 'general', { parent_id: tc });
+      createChannel(sid, 'text', 'media', { parent_id: tc });
+      createChannel(sid, 'voice', 'General', { parent_id: vc });
+      createChannel(sid, 'voice', 'Gaming', { parent_id: vc });
     });
     joinRooms(req.user.id, sid);
     res.json(serverPayload(sid, req.user.id));
@@ -628,10 +691,11 @@ function start(opts = {}) {
   app.post('/api/servers/:id/channels', auth, wrap((req, res) => {
     const sid = req.params.id;
     if (!has(sid, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'Missing permission');
-    const type = req.body?.type === 'voice' ? 'voice' : 'text';
+    const type = ['voice', 'category', 'forum'].includes(req.body?.type) ? req.body.type : 'text';
+    const parent = type !== 'category' && req.body?.parent_id ? one(`SELECT id FROM channels WHERE id=? AND server_id=? AND type='category'`, String(req.body.parent_id), sid) : null;
     const name = cleanChanName(req.body?.name, type);
     if (!name) throw err(400, 'Give the channel a name');
-    const id = createChannel(sid, type, name, { topic: String(req.body?.topic || '').slice(0, 300), private: !!req.body?.private, allowed_roles: Array.isArray(req.body?.allowed_roles) ? req.body.allowed_roles : [] });
+    const id = createChannel(sid, type, name, { topic: String(req.body?.topic || '').slice(0, 300), private: !!req.body?.private, allowed_roles: Array.isArray(req.body?.allowed_roles) ? req.body.allowed_roles : [], parent_id: parent?.id });
     refreshServer(sid);
     res.json(fmtChannel(chanRow(id)));
   }));
@@ -639,6 +703,11 @@ function start(opts = {}) {
     const ch = chanRow(req.params.id);
     if (!ch || ch.type === 'dm' || !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'Missing permission');
     const b = req.body || {};
+    if (b.parent_id !== undefined && ch.type !== 'category') {
+      const parent = b.parent_id ? one(`SELECT id FROM channels WHERE id=? AND server_id=? AND type='category'`, String(b.parent_id), ch.server_id) : null;
+      if (b.parent_id && !parent) throw err(400, 'That category doesn’t exist');
+      run('UPDATE channels SET parent_id=? WHERE id=?', parent?.id || null, ch.id);
+    }
     if (b.slowmode !== undefined) run('UPDATE channels SET slowmode=? WHERE id=?', Math.max(0, Math.min(21600, Math.floor(Number(b.slowmode) || 0))), ch.id);
     run('UPDATE channels SET name=?, topic=?, private=?, allowed_roles=?, position=? WHERE id=?',
       b.name !== undefined ? (cleanChanName(b.name, ch.type) || ch.name) : ch.name, b.topic !== undefined ? String(b.topic).slice(0, 300) : ch.topic,
@@ -652,8 +721,24 @@ function start(opts = {}) {
     if (!ch || ch.type === 'dm' || !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'Missing permission');
     const room = voice.get(ch.id);
     if (room) [...room.keys()].forEach(leaveVoice);
+    if (ch.type === 'category') run('UPDATE channels SET parent_id=NULL WHERE parent_id=?', ch.id);
     run('DELETE FROM channels WHERE id=?', ch.id);
     refreshServer(ch.server_id);
+    res.json({ ok: true });
+  }));
+  // drag & drop: save the whole channel order in one go. Body: [{ id, position, parent_id }]
+  app.put('/api/servers/:id/channels/order', auth, wrap((req, res) => {
+    const sid = req.params.id;
+    if (!has(sid, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'Missing permission');
+    const list = Array.isArray(req.body) ? req.body.slice(0, 500) : [];
+    const mine = new Map(all('SELECT id, type FROM channels WHERE server_id=?', sid).map(c => [c.id, c.type]));
+    tx(() => list.forEach(({ id, position, parent_id }) => {
+      if (!mine.has(id)) return;
+      const isCat = mine.get(id) === 'category';
+      const parent = !isCat && parent_id && mine.get(parent_id) === 'category' ? parent_id : null;
+      run('UPDATE channels SET position=?, parent_id=? WHERE id=?', Math.round(Number(position) || 0), isCat ? null : parent, id);
+    }));
+    refreshServer(sid);
     res.json({ ok: true });
   }));
 
@@ -1058,7 +1143,7 @@ function start(opts = {}) {
   app.post('/api/channels/:id/messages', auth, upload.array('files', 10), wrap((req, res) => {
     const ch = chanRow(req.params.id);
     const cleanup = () => (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
-    if (!canView(ch, req.user.id) || ch.type === 'voice') { cleanup(); throw err(403, 'No access'); }
+    if (!canView(ch, req.user.id) || !['text', 'dm', 'forum'].includes(ch.type)) { cleanup(); throw err(403, 'No access'); }
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
     if (ch.type !== 'dm') {
@@ -1082,16 +1167,34 @@ function start(opts = {}) {
       const hours = [1, 4, 8, 24, 72, 168].includes(Number(p.hours)) ? Number(p.hours) : 24;
       poll = { question, answers, multi: !!p.multi, ends: now() + hours * 3600e3 };
     }
-    if (!content.trim() && !req.files?.length && !gifOk && !poll) throw err(400, 'Message is empty');
+    let sticker = null;
+    if (req.body?.sticker) {
+      const st = one('SELECT * FROM stickers WHERE id=?', String(req.body.sticker));
+      if (!st || !isMember(st.server_id, req.user.id)) { cleanup(); throw err(400, 'You can only use stickers from servers you’re in'); }
+      sticker = { id: st.id, name: st.name, url: st.url };
+    }
+    if (!content.trim() && !req.files?.length && !gifOk && !poll && !sticker) throw err(400, 'Message is empty');
+    // forum: a new post (not a reply) needs a title
+    const isPost = ch.type === 'forum' && !req.body?.thread_id;
+    const title = isPost ? String(req.body?.title || '').trim().slice(0, 100) : null;
+    if (isPost && !title) { cleanup(); throw err(400, 'Give your post a title'); }
     const attachments = (req.files || []).map(f => ({ url: fileUrl(f), name: f.originalname.slice(0, 200), size: f.size, type: f.mimetype }));
+    // voice message: duration + waveform drawn by the sender's app, attached to the recorded audio file
+    if (req.body?.voice && attachments[0] && /^audio\//.test(attachments[0].type)) {
+      const v = pj(req.body.voice, {}) || {};
+      attachments[0].voice = true;
+      attachments[0].duration = Math.max(0, Math.min(1200, Number(v.duration) || 0));
+      attachments[0].waveform = (Array.isArray(v.waveform) ? v.waveform : []).slice(0, 100).map(n => Math.max(0, Math.min(100, Math.round(Number(n) || 0))));
+    }
     if (gifOk) attachments.push({ url: gifUrl, name: 'GIF', type: 'image/gif', external: true, size: 0 });
     const reply = req.body?.reply_to ? one('SELECT id FROM messages WHERE id=? AND channel_id=?', Number(req.body.reply_to), ch.id) : null;
     const thread = req.body?.thread_id ? one('SELECT id FROM messages WHERE id=? AND channel_id=? AND thread_id IS NULL', Number(req.body.thread_id), ch.id) : null;
     const m = mentionsIn(content, ch, req.user.id);
     const replyAuthor = reply ? one('SELECT author_id FROM messages WHERE id=?', reply.id)?.author_id : null;
     if (replyAuthor && replyAuthor !== req.user.id && req.body?.mention_reply !== 'false' && !m.ids.includes(replyAuthor)) m.ids.push(replyAuthor);
-    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll) VALUES(?,?,?,?,?,?,?,?,?,?)',
-      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null);
+    if (ch.type === 'forum' && req.body?.thread_id && !thread) { cleanup(); throw err(404, 'That post was deleted'); }
+    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll,sticker,title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null, sticker ? JSON.stringify(sticker) : null, title);
     const msg = msgById(Number(r.lastInsertRowid));
     unfurlLater(msg.id, content);
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, msg.id);
@@ -1104,6 +1207,11 @@ function start(opts = {}) {
   app.patch('/api/messages/:id', auth, wrap((req, res) => {
     const m = one('SELECT * FROM messages WHERE id=?', req.params.id);
     if (!m || m.author_id !== req.user.id) throw err(403, 'You can only edit your own messages');
+    if (req.body?.title !== undefined && m.title != null) {
+      const t = String(req.body.title || '').trim().slice(0, 100); if (!t) throw err(400, 'Give your post a title');
+      run('UPDATE messages SET title=? WHERE id=?', t, m.id);
+      if (req.body.content === undefined) { emitToChannel(chanRow(m.channel_id), 'message:update', msgById(m.id)); return res.json({ ok: true }); }
+    }
     const content = String(req.body?.content || '').slice(0, 4000);
     if (!content.trim() && m.attachments === '[]') throw err(400, 'Message is empty');
     const ch = chanRow(m.channel_id);
@@ -1232,6 +1340,80 @@ function start(opts = {}) {
     refreshServer(e.server_id);
     res.json({ ok: true });
   }));
+  // stickers (per server, like emojis)
+  app.post('/api/servers/:id/stickers', auth, imageOnly.single('file'), wrap((req, res) => {
+    const sid = req.params.id; const f = req.file;
+    const drop = () => f && fs.unlink(f.path, () => {});
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) { drop(); throw err(403, 'You need Manage Server to add stickers'); }
+    if (!f) throw err(400, 'Pick an image (PNG, GIF, APNG, WebP or JPG)');
+    if (f.size > 512 * 1024) { drop(); throw err(400, 'Stickers must be under 512 KB'); }
+    const name = String(req.body?.name || path.parse(f.originalname).name).trim().slice(0, 30);
+    if (name.length < 2) { drop(); throw err(400, 'Sticker names need at least 2 characters'); }
+    if (one('SELECT COUNT(*) c FROM stickers WHERE server_id=?', sid).c >= 30) { drop(); throw err(400, 'This server has the maximum of 30 stickers'); }
+    const id = uid();
+    run('INSERT INTO stickers VALUES(?,?,?,?,?,?)', id, sid, name, fileUrl(f), req.user.id, now());
+    refreshServer(sid);
+    res.json({ id, name, url: fileUrl(f) });
+  }));
+  app.patch('/api/stickers/:id', auth, wrap((req, res) => {
+    const st = one('SELECT * FROM stickers WHERE id=?', req.params.id);
+    if (!st || !has(st.server_id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    const name = String(req.body?.name || '').trim().slice(0, 30);
+    if (name.length < 2) throw err(400, 'Sticker names need at least 2 characters');
+    run('UPDATE stickers SET name=? WHERE id=?', name, st.id); refreshServer(st.server_id); res.json({ ok: true });
+  }));
+  app.delete('/api/stickers/:id', auth, wrap((req, res) => {
+    const st = one('SELECT * FROM stickers WHERE id=?', req.params.id);
+    if (!st || !has(st.server_id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    run('DELETE FROM stickers WHERE id=?', st.id);   // the image file stays so old messages keep showing it
+    refreshServer(st.server_id); res.json({ ok: true });
+  }));
+  // inbox: recent @mentions and replies to you, from every server and DM you can still see
+  app.get('/api/inbox', auth, wrap((req, res) => {
+    const me = req.user.id; const before = Number(req.query.before) || 9e15;
+    const rows = all(`SELECT * FROM messages WHERE author_id<>? AND system=0 AND id<? AND created>? AND (mentions LIKE ? OR mention_everyone=1) ORDER BY id DESC LIMIT 400`,
+      me, before, now() - 60 * 864e5, `%"${me}"%`);
+    const seen = new Map(), out = [];
+    for (const r of rows) {
+      if (!seen.has(r.channel_id)) seen.set(r.channel_id, canView(chanRow(r.channel_id), me));
+      if (seen.get(r.channel_id)) out.push(r);
+      if (out.length >= 40) break;
+    }
+    res.json(fmtMessages(out));
+  }));
+  // search with filters. scope: channel_id (a channel or DM) or server_id (every channel you can see)
+  app.get('/api/search', auth, wrap((req, res) => {
+    const me = req.user.id, Q = req.query;
+    let chans = [];
+    if (Q.server_id) {
+      if (!isMember(String(Q.server_id), me)) throw err(403, 'No access');
+      chans = all(`SELECT * FROM channels WHERE server_id=? AND type IN ('text','forum')`, String(Q.server_id)).filter(c => canView(c, me));
+      if (Q.in) chans = chans.filter(c => c.id === String(Q.in));
+    } else {
+      const ch = chanRow(String(Q.channel_id || ''));
+      if (!canView(ch, me)) throw err(403, 'No access');
+      chans = [ch];
+    }
+    if (!chans.length) return res.json({ total: 0, messages: [] });
+    const where = [`channel_id IN (${chans.map(() => '?').join(',')})`, 'system=0'], args = chans.map(c => c.id);
+    const text = String(Q.q || '').trim();
+    if (text) { where.push(`content LIKE ? ESCAPE '\\'`); args.push('%' + text.replace(/[%_\\]/g, '\\$&') + '%'); }
+    const userId = (v) => { v = String(v || '').replace(/^@/, ''); const u = one('SELECT id FROM users WHERE id=? OR username=? COLLATE NOCASE', v, v); return u ? u.id : '__none__'; };
+    if (Q.from) { where.push('author_id=?'); args.push(userId(Q.from)); }
+    if (Q.mentions) { where.push('mentions LIKE ?'); args.push(`%"${userId(Q.mentions)}"%`); }
+    const HAS = { image: `attachments LIKE '%"type":"image/%'`, video: `attachments LIKE '%"type":"video/%'`, audio: `attachments LIKE '%"type":"audio/%'`,
+      voice: `attachments LIKE '%"voice":true%'`, file: `attachments<>'[]'`, link: `(content LIKE '%http://%' OR content LIKE '%https://%')`,
+      embed: `embeds<>'[]'`, poll: 'poll IS NOT NULL', sticker: 'sticker IS NOT NULL' };
+    String(Q.has || '').split(',').filter(k => HAS[k]).forEach(k => where.push(HAS[k]));
+    if (Q.before) { where.push('created<?'); args.push(Number(Q.before)); }
+    if (Q.after) { where.push('created>=?'); args.push(Number(Q.after)); }
+    if (Q.pinned === 'true') where.push('pinned>0');
+    const sql = where.join(' AND ');
+    const total = one(`SELECT COUNT(*) c FROM messages WHERE ${sql}`, ...args).c;
+    const offset = Math.max(0, Math.min(5000, Number(Q.offset) || 0));
+    const rows = all(`SELECT * FROM messages WHERE ${sql} ORDER BY id DESC LIMIT 25 OFFSET ?`, ...args, offset);
+    res.json({ total, messages: fmtMessages(rows) });
+  }));
   // timeouts (moderation): needs Kick Members and a higher role than the target
   app.put('/api/servers/:id/members/:uid/timeout', auth, wrap((req, res) => {
     const sid = req.params.id, t = req.params.uid;
@@ -1322,12 +1504,13 @@ function start(opts = {}) {
   }
 
   io.use((socket, next) => {
-    try { const p = jwt.verify(socket.handshake.auth?.token || '', SECRET); const u = one('SELECT id FROM users WHERE id=?', p.id); if (!u) throw 0; socket.uid = u.id; next(); }
+    try { const r = checkToken(socket.handshake.auth?.token || ''); socket.uid = r.u.id; socket.sid = r.sid; next(); }
     catch { next(new Error('unauthorized')); }
   });
   io.on('connection', (socket) => {
     const me = socket.uid;
     socket.join('u:' + me);
+    if (socket.sid) socket.join('sess:' + socket.sid);
     all('SELECT server_id FROM members WHERE user_id=?', me).forEach(r => socket.join('s:' + r.server_id));
     const wanted = ['online', 'idle', 'dnd', 'invisible'].includes(socket.handshake.auth?.status) ? socket.handshake.auth.status : 'online';
     const entry = online.get(me) || { status: wanted, sockets: new Set() };

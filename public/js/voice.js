@@ -31,7 +31,7 @@ const Voice = {
     if (this.channel) this.leave(true);
     if (!navigator.mediaDevices?.getUserMedia) { toast('Voice needs a secure connection (https) or the Orbit desktop app.', true); return; }
     this.channel = channelId; this.state = 'connecting';
-    $('.ring-modal')?.closest('.modal-wrap')?.remove();
+    this.stopRing();
     rerenderVoiceUi();
     try {
       this.local = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: S.prefs.mic ? { ideal: S.prefs.mic } : undefined, echoCancellation: true, noiseSuppression: S.prefs.noise, autoGainControl: true }, video: false });
@@ -272,16 +272,20 @@ const Voice = {
     this._raf = this._analysers.size ? requestAnimationFrame(() => this.tick()) : null;
   },
 
+  // one place that ends an incoming call ring: sound + popup
+  stopRing() { Ringtone.stop(); this.ringing = null; clearTimeout(this._ringTimer); $$('.ring-modal').forEach(m => m.closest('.modal-wrap')?.remove()); },
   ring(channelId, from) {
-    if (this.channel === channelId) return;
+    if (this.channel === channelId || this.ringing === channelId) return;   // already in it, or already ringing for it
+    if (this.ringing) this.stopRing();
     S.users[from.id] = { ...S.users[from.id], ...from };
+    this.ringing = channelId;
     Ringtone.start();
-    const stop = () => Ringtone.stop();
+    const stop = () => this.stopRing();
+    this._ringTimer = setTimeout(() => { if (this.ringing === channelId) this.stopRing(); }, 30000);
     modal(`<div class="ring-modal">${avatar(from, 's96')}<h2>${esc(from.display_name)}</h2><p class="ring-sub">Incoming call</p>
       <div class="btns"><button class="vbtn leave" data-no title="Decline">${I.hangup}</button><button class="vbtn ring-accept" data-yes title="Accept">${I.phone}</button></div></div>`, (m, close) => {
       $('[data-yes]', m).onclick = () => { stop(); close(); if (!S.dms.find(d => d.id === channelId)) S.dms.unshift({ id: channelId, type: 'dm', user: from, last_at: Date.now() }); selectChannel(channelId); this.join(channelId); };
       $('[data-no]', m).onclick = () => { stop(); close(); this.socket.emit('call:decline', { channel_id: channelId }); };
-      setTimeout(() => { if (document.body.contains(m)) { stop(); close(); } }, 30000);
     });
   },
 };

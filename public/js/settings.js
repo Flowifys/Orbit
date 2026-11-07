@@ -25,11 +25,11 @@ const ACCENTS = ['#7c5cff', '#5b8def', '#2bb5a8', '#2fbf71', '#d4a72c', '#f0883e
 
 /* ================= USER SETTINGS ================= */
 function openUserSettings(first = 'account') {
-  settingsShell(`<h6>User settings</h6><button data-tab="account">My Account</button><button data-tab="profile">Profile</button><hr>
+  settingsShell(`<h6>User settings</h6><button data-tab="account">My Account</button><button data-tab="profile">Profile</button><button data-tab="devices">Devices</button><hr>
     <button data-tab="connections">Connections</button><hr><h6>App settings</h6><button data-tab="appearance">Appearance</button><button data-tab="voice">Voice &amp; Video</button><button data-tab="notifications">Notifications</button><button data-tab="about">About</button><hr>
     <button class="danger" data-action="logout">Log out</button><p style="color:var(--dim);font-size:12px;padding:12px 10px">Orbit ${esc(S.info.version || '')}</p>`, (tab, body, close) => {
     if (tab === '@logout') return confirmModal('Log Out', 'Are you sure you want to log out?', 'Log Out', async () => logout());
-    ({ account: userAccount, profile: userProfile, connections: userConnections, appearance: userAppearance, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
+    ({ account: userAccount, profile: userProfile, connections: userConnections, appearance: userAppearance, devices: userDevices, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
   }, first);
 }
 function userAccount(body) {
@@ -276,12 +276,12 @@ function userAbout(body) {
 function openServerSettings(sid, first) {
   const sd = S.serverData[sid];
   const owner = sd.owner_id === S.me.id;
-  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
+  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], can(PERM.MANAGE_SERVER, sid) && ['stickers', 'Stickers'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
     can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans']].filter(Boolean);
   const ui = settingsShell(`<h6>${esc(sd.name)}</h6>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}${owner ? '<hr><button class="danger" data-action="delete">Delete Server</button>' : ''}`, (tab, body, close) => {
     const cur = S.serverData[sid]; if (!cur) return close();
     if (tab === '@delete') return confirmModal(`Delete ‘${cur.name}’`, `Are you sure you want to delete <b>${esc(cur.name)}</b>? This action cannot be undone.`, 'Delete Server', async () => { await api('DELETE', '/api/servers/' + sid); close(); });
-    ({ overview: srvOverview, emoji: srvEmojis, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans })[tab](body, sid, close);
+    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans })[tab](body, sid, close);
   }, first || tabs[0]?.[0]);
   return ui;
 }
