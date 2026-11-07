@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.15.0';
+const VERSION = '1.15.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -482,7 +482,9 @@ function start(opts = {}) {
     const u = getUser(req.params.id);
     if (!u) throw err(404, 'User not found');
     const mutual = all(`SELECT s.id, s.name, s.icon FROM servers s WHERE s.id IN (SELECT server_id FROM members WHERE user_id=?) AND s.id IN (SELECT server_id FROM members WHERE user_id=?)`, req.user.id, u.id);
-    res.json({ ...u, mutual_servers: mutual, relationship: relTo(req.user.id, u.id) });
+    const mine = new Set(friendIds(req.user.id));
+    const mutual_friends = u.id === req.user.id ? [] : friendIds(u.id).filter(f => mine.has(f) && f !== req.user.id);
+    res.json({ ...u, mutual_servers: mutual, mutual_friends, relationship: relTo(req.user.id, u.id) });
   }));
 
 

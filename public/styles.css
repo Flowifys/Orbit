@@ -1465,3 +1465,25 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .dmp-extra .actions .btn{flex:1}
 .dmp-full{margin-top:4px}
 @media (max-width:1100px){.members.dm-panel.force{width:min(340px,100%)}}
+
+/* DM profile panel, v2: one full-height card in the person's colors */
+.members.dm-panel{display:flex;flex-direction:column;padding:0;background:var(--bg-1)}
+.dm-panel .profile-card.dmp{flex:1 0 auto;min-height:100%;display:flex;flex-direction:column;border-radius:0;box-shadow:none;border:0;overflow:visible}
+.dm-panel .profile-card.dmp:not(.themed){background:var(--bg-1)}
+.dm-panel .profile-card.dmp .banner{height:120px;flex:none}
+.dm-panel .profile-card.dmp .inner{margin:12px 14px 10px;max-height:none;flex:none}
+.dmp-row{margin:0 14px 10px;border-radius:12px;background:color-mix(in oklab,var(--bg-0) 72%,transparent);position:relative;z-index:2}
+.profile-card.themed .dmp-row{background:rgba(8,6,20,.5);color:#f4f2ff}
+.dmp-row summary{list-style:none;display:flex;align-items:center;justify-content:space-between;padding:12px 14px;font-size:13px;font-weight:700;cursor:pointer;border-radius:12px}
+.dmp-row summary::-webkit-details-marker{display:none}
+.dmp-row summary:hover{background:rgba(255,255,255,.04)}
+.dmp-row summary svg{width:16px;height:16px;transition:transform .15s;transform:rotate(-90deg)}
+.dmp-row[open] summary svg{transform:none}
+.dmp-row .dmp-servers{padding:0 8px 8px}
+.dmp-servers button{color:inherit}
+.dmp-foot{margin-top:auto;padding:10px 14px 16px;display:flex;flex-direction:column;gap:8px;position:relative;z-index:2}
+.dmp-foot .actions{margin:0}
+.dmp-foot .actions .btn{flex:1}
+.dmp-full{width:100%;padding:11px;border-radius:10px;font-weight:600;font-size:14px;background:color-mix(in oklab,var(--bg-0) 60%,transparent)}
+.profile-card.themed .dmp-full{background:rgba(8,6,20,.45);color:#f4f2ff}
+.dmp-full:hover{filter:brightness(1.2)}

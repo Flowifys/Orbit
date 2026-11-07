@@ -766,15 +766,20 @@ async function renderDmProfile(box, ch) {
     if (!box.isConnected) return;
     const u = { ...(S.users[id] || ch.user), ...(dmProfileCache[id] || {}) };
     const mutual = u.mutual_servers || [];
-    box.innerHTML = `<div class="dm-profile">${profileCardHtml({ ...u, mutual_servers: [] }, { preview: true })}
-      <div class="dmp-extra">
-        <section><h5>Member since</h5><div class="since">${new Date(u.created || Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div></section>
-        ${mutual.length ? `<section><h5>Mutual servers — ${mutual.length}</h5><div class="dmp-servers">${mutual.map(s => `<button data-msrv="${esc(s.id)}">${S.serverData[s.id] ? `<span class="qs-srv">${serverIcon(S.serverData[s.id])}</span>` : ''}<span>${esc(s.name)}</span></button>`).join('')}</div></section>` : ''}
-        ${friendActionRow(id)}
-        <button class="btn ghost block dmp-full" data-fullp>View full profile</button>
-      </div></div>`;
+    const mutualFriends = id === S.me.id ? [] : (S.friends.friends || []).filter(f => f.id !== id && (dmProfileCache[id]?.mutual_friends || []).includes(f.id));
+    // one full-height card: the person's profile colors run the whole panel
+    box.innerHTML = profileCardHtml({ ...u, mutual_servers: [] }, { preview: true });
+    const card = $('.profile-card', box), inner = $('.inner', card);
+    card.classList.add('dmp');
+    inner.insertAdjacentHTML('beforeend', `
+      <section><h5>Member since</h5><div class="since">${new Date(u.created || Date.now()).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</div></section>`);
+    card.insertAdjacentHTML('beforeend', `
+      ${mutual.length ? `<details class="dmp-row" open><summary>Mutual Servers — ${mutual.length}${I.chevron}</summary><div class="dmp-servers">${mutual.map(sv => `<button data-msrv="${esc(sv.id)}"><span class="qs-srv">${S.serverData[sv.id] ? serverIcon(S.serverData[sv.id]) : esc(initials(sv.name))}</span><span>${esc(sv.name)}</span></button>`).join('')}</div></details>` : ''}
+      ${mutualFriends.length ? `<details class="dmp-row"><summary>Mutual Friends — ${mutualFriends.length}${I.chevron}</summary><div class="dmp-servers">${mutualFriends.map(f => `<button data-mfr="${esc(f.id)}">${avatar(f, 's24')}<span>${esc(f.display_name)}</span></button>`).join('')}</div></details>` : ''}
+      <div class="dmp-foot">${friendActionRow(id)}<button class="dmp-full" data-fullp>View Full Profile</button></div>`);
     box.onclick = async (e) => {
       const sv = e.target.closest('[data-msrv]'); if (sv && S.serverData[sv.dataset.msrv]) return selectServer(sv.dataset.msrv);
+      const mf = e.target.closest('[data-mfr]'); if (mf) return profilePopout(mf.dataset.mfr, mf, 'left');
       if (e.target.closest('[data-fullp]')) return profilePopout(id, e.target.closest('[data-fullp]'), 'left');
       const fa = async (sel, fn) => { const b = e.target.closest(sel); if (!b) return false; try { await fn(); } catch (x) { toast(x.message, true); } return true; };
       if (await fa('[data-addfriend]', () => api('POST', '/api/friends', { username: user(id).username }))) return;
