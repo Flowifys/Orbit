@@ -896,3 +896,13 @@ select.input{appearance:auto}
 .sp-qual button{padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;color:var(--text-2);border:1px solid var(--line)}
 .sp-qual button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--text)}
 .sp-actions{display:flex;gap:8px}
+
+/* favorite button on GIF messages */
+.att-gif{position:relative;display:inline-block;max-width:min(420px,100%)}
+.att-gif .att-img{display:block}
+.att-gif .gif-tag{position:absolute;top:8px;left:8px;background:rgba(5,3,15,.6);backdrop-filter:blur(4px);color:#fff;font:700 10px var(--display);letter-spacing:.4px;padding:2px 6px;border-radius:5px;pointer-events:none}
+.att-fav{position:absolute;top:8px;right:8px;width:32px;height:32px;border-radius:50%;background:rgba(5,3,15,.55);backdrop-filter:blur(4px);display:grid;place-items:center;color:#fff;opacity:0;transition:opacity .12s,transform .1s}
+.att-gif:hover .att-fav{opacity:1}
+.att-fav:hover{transform:scale(1.1)}
+.att-fav.on{opacity:1;color:var(--red)}
+.att-fav.on svg{fill:var(--red);stroke:var(--red)}

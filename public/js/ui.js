@@ -698,7 +698,9 @@ function messageHtml(m, sid, prev, isParent) {
     : `<div class="reply-ref" data-jump="${m.reply.id}">${avatar(m.reply.author_id, '')}<b style="${sid && colorIn(sid, m.reply.author_id) ? 'color:' + colorIn(sid, m.reply.author_id) : ''}">@${esc(nameIn(sid, m.reply.author_id))}</b><span>${esc(plainPreview(m.reply.content)) || '<i>Click to see attachment</i>'}</span></div>`) : '';
   const atts = (m.attachments || []).map(a => {
     const t = a.type || '';
-    if (t.startsWith('image/')) return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-lightbox="${esc(a.url)}" data-name="${esc(a.name)}">`;
+    if (t.startsWith('image/')) { const gif = t === 'image/gif' || /\.gif($|\?)/i.test(a.url) || /giphy\.com/.test(a.url);
+      const img = `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-lightbox="${esc(a.url)}" data-name="${esc(a.name)}">`;
+      return gif ? `<div class="att-gif"><span class="gif-tag">GIF</span>${img}<button class="att-fav ${gifIsFav(a.url) ? 'on' : ''}" data-fav="${esc(a.url)}" title="Favorite GIF">${I.heart.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : img; }
     if (t.startsWith('video/')) return `<video class="att-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
     if (t.startsWith('audio/')) return `<div class="audio-embed" data-audio="${esc(a.url)}"><button class="ae-play">${I.play}</button><div class="ae-main"><div class="ae-name">${esc(a.name)}</div><div class="ae-bar"><div class="ae-fill"></div></div><div class="ae-time"><span class="ae-cur">0:00</span><span class="ae-dur">--:--</span></div></div><a class="ae-dl" href="${esc(a.url)}" download="${esc(a.name)}" title="Download">${I.download}</a></div>`;
     return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
@@ -739,6 +741,7 @@ function bindMessageList(box) {
     if (t.closest('.spoiler')) return t.closest('.spoiler').classList.add('shown');
     const mention = t.closest('.mention[data-uid]'); if (mention) return profilePopout(mention.dataset.uid, mention);
     const nm = t.closest('.name[data-uid], .left .av'); if (nm) return profilePopout(nm.dataset.uid, nm);
+    const favBtn = t.closest('[data-fav]'); if (favBtn) { e.stopPropagation(); const on = toggleGifFav(favBtn.dataset.fav, $('img', favBtn.closest('.att-gif'))); favBtn.classList.toggle('on', on); toast(on ? 'Added to GIF favorites' : 'Removed from favorites'); return; }
     const lb = t.closest('[data-lightbox]'); if (lb) return lightbox(lb.dataset.lightbox, lb.dataset.name);
     const ae = t.closest('.audio-embed'); if (ae && !t.closest('.ae-dl')) { audioEmbedAction(ae, e); return; }
     const jump = t.closest('[data-jump]'); if (jump) return jumpTo(Number(jump.dataset.jump));
@@ -1054,6 +1057,13 @@ function contextMenu(e, items, cls = '', minW) {
   const el = h(`<div class="menu ${cls}" ${minW ? `style="min-width:${minW}px"` : ''}>${list.map((it, i) => it === '-' ? '<hr>' : `<button data-i="${i}" class="${it[2] || ''}">${it[0]}</button>`).join('')}</div>`);
   L.set(el); place(el, e.clientX, e.clientY, { above: e.above });
   el.onclick = (ev) => { const b = ev.target.closest('[data-i]'); if (!b) return; L.close(); list[b.dataset.i][1](); };
+}
+const gifIsFav = (url) => (S.prefs.gifFavorites || []).some(g => g.url === url);
+function toggleGifFav(url, imgEl) {
+  const list = (S.prefs.gifFavorites || []).filter(x => x.url !== url);
+  if (!gifIsFav(url)) list.unshift({ url, preview: url, w: imgEl?.naturalWidth || 1, h: imgEl?.naturalHeight || 1 });
+  S.prefs.gifFavorites = list.slice(0, 100); savePrefs();
+  return gifIsFav(url);
 }
 function gifPicker(anchor, cid, threadId, state, comp) {
   const L = layer();
