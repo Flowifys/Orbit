@@ -515,7 +515,7 @@ function renderHome(content) {
 }
 function profileMoreMenu(e, sid, uidv) {
   const st = friendState(uidv);
-  const items = [['Copy username', () => copy(user(uidv).username)], ['Copy User ID', () => copy(uidv)], '-'];
+  const items = [['Copy username', () => copy(user(uidv).username)], ['Copy User ID', () => copy(uidv)], ...groupOwnerItems(S.view.channel, uidv), '-'];
   if (sid && uidv !== S.me.id && can(PERM.KICK, sid) && uidv !== S.serverData[sid]?.owner_id) items.push(member(sid, uidv)?.timeout_until ? ['Remove timeout', () => api('PUT', `/api/servers/${sid}/members/${uidv}/timeout`, { minutes: 0 }).catch(x => toast(x.message, true))] : ['Time out', () => timeoutModal(sid, uidv), 'danger']);
   if (sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && uidv !== S.serverData[sid]?.owner_id) {
     if (can(PERM.KICK, sid)) items.push(['Kick from server', () => kickMember(sid, uidv), 'danger']);

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.10.0';
+const VERSION = '1.10.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -821,6 +821,16 @@ function start(opts = {}) {
   app.patch('/api/groups/:id', auth, wrap((req, res) => {
     const ch = chanRow(req.params.id);
     if (!ch || !ch.is_group || !isGroupMember(ch.id, req.user.id)) throw err(403, 'No access');
+    if (req.body?.owner !== undefined) {
+      // hand the group to someone else (owner only)
+      const to = String(req.body.owner);
+      if (ch.gc_owner !== req.user.id) throw err(403, 'Only the group owner can do that');
+      if (!isGroupMember(ch.id, to) || to === req.user.id) throw err(400, 'Pick someone in this group');
+      run('UPDATE channels SET gc_owner=? WHERE id=?', to, ch.id);
+      gcSystem(ch.id, `${nameOf(req.user.id)} made ${nameOf(to)} the group owner.`);
+      pushDm(ch.id);
+      return res.json({ ok: true });
+    }
     const name = String(req.body?.name ?? ch.name).slice(0, 60);
     run('UPDATE channels SET name=? WHERE id=?', name, ch.id);
     gcSystem(ch.id, `${nameOf(req.user.id)} named the group ${name || 'Group chat'}.`);

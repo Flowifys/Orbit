@@ -184,8 +184,17 @@ function renderGroupMembers(box, ch) {
   box.innerHTML = (online.length ? `<h4>Online — ${online.length}</h4>${online.sort(by).map(row).join('')}` : '') + (offline.length ? `<h4>Offline — ${offline.length}</h4>${offline.sort(by).map(row).join('')}` : '');
   box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
   box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (!b) return; e.preventDefault(); const id = b.dataset.uid;
-    contextMenu(e, [['Profile', () => profilePopout(id, null)], id !== S.me.id && ['Message', () => openDM(id)], ['Copy username', () => copy(user(id).username)],
-      ch.owner === S.me.id && id !== S.me.id && '-', ch.owner === S.me.id && id !== S.me.id && ['Remove from group', () => api('DELETE', `/api/channels/${ch.id}/recipients/${id}`).catch(x => toast(x.message, true)), 'danger']]); };
+    contextMenu(e, [['Profile', () => profilePopout(id, null)], id !== S.me.id && ['Message', () => openDM(id)], ['Copy username', () => copy(user(id).username)], ...groupOwnerItems(ch.id, id)]); };
+}
+
+/* ---------- group chat owner tools ---------- */
+function groupOwnerItems(cid, uidv) {
+  const ch = findChannel(cid);
+  if (!ch || ch.type !== 'group' || ch.owner !== S.me.id || uidv === S.me.id || !(ch.members || []).some(m => m.id === uidv)) return [];
+  const name = esc(user(uidv).display_name);
+  return ['-',
+    ['Make Group Owner', () => confirmModal('Transfer group ownership', `Make <b>${name}</b> the owner of <b>${esc(ch.name || 'this group')}</b>? You’ll lose the ability to remove people.`, 'Transfer', () => api('PATCH', '/api/groups/' + cid, { owner: uidv }))],
+    ['Remove From Group', () => confirmModal('Remove from group', `Remove <b>${name}</b> from <b>${esc(ch.name || 'this group')}</b>? They can only come back if someone adds them again.`, 'Remove', () => api('DELETE', `/api/channels/${cid}/recipients/${uidv}`)), 'danger']];
 }
 
 /* ---------- your own profile card (click your name in the bottom-left) ---------- */
