@@ -1261,3 +1261,86 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .ms-sep{height:8px;background:var(--bg-1)}
 .ms-sep+button{border-top:0}
 .ms-cancel{display:block;width:100%;margin-top:10px;padding:15px;border-radius:14px;background:var(--bg-3);font-size:17px;font-weight:600}
+
+/* ============ 1.13 — visual rework: floating panels, violet-tinted night, display type ============ */
+:root,[data-theme=dark]{
+  --bg-0:#0c0a11;--bg-1:#13111a;--bg-2:#19161f;--bg-3:#221e2b;--bg-4:#2d2838;--tile-bg:#1f1b28;
+  --bg-hover:rgba(214,204,255,.045);--bg-active:rgba(214,204,255,.09);--line:rgba(214,204,255,.07);--line-2:rgba(214,204,255,.13);
+  --text:#f2eff9;--text-2:#d2cde0;--muted:#9c96b0;--dim:#6e6884;
+  --input:#0f0d15;--code:#0f0d15;--shadow:0 16px 40px rgba(4,2,12,.55);--glass:rgba(19,17,26,.92);
+  --display:"Bricolage Grotesque","Onest","Segoe UI",system-ui,sans-serif;
+}
+[data-theme=midnight]{--bg-0:#000;--bg-1:#09080d;--bg-2:#0e0c13;--bg-3:#17141e;--bg-4:#211d2a;--tile-bg:#13111a}
+/* panels float on the night background with small gaps */
+.app{gap:8px;padding:8px 8px 8px 0}
+.sidebar{border-radius:16px;background:var(--bg-1);border:1px solid var(--line)}
+.main{border-radius:16px;overflow:hidden;background:var(--bg-2);border:1px solid var(--line)}
+.rail{padding:8px 0}
+/* headings get the display face */
+.side-head{font:700 17px/1.2 var(--display);letter-spacing:-.01em;height:56px;border-bottom:1px solid var(--line)}
+.topbar{height:56px;box-shadow:none;border-bottom:1px solid var(--line);background:var(--bg-2)}
+.topbar .title{font:700 17px/1.2 var(--display);letter-spacing:-.01em}
+.topbar .topic{font-size:13.5px}
+.ch-welcome h2,.voice-empty h2,.home-hero h1,.modal .mh h2,.settings h2,.auth h1,.empty h2{font-family:var(--display);font-weight:800;letter-spacing:-.025em}
+.ch-welcome h2{font-size:32px}
+.ch-welcome .big{border-radius:20px;background:var(--accent-soft);color:var(--accent-2)}
+/* rail */
+.rail-btn,.rail-btn.home{background:var(--bg-2);border:1px solid var(--line)}
+.rail-item.active .rail-btn,.rail-btn:hover{border-color:transparent}
+.rail-item .pill{left:-8px;width:4px}
+/* channel list */
+.cat{padding:16px 6px 6px 8px;font-size:11.5px;letter-spacing:.04em}
+.ch,.dm-item{border-radius:8px}
+.ch.active,.dm-item.active{background:var(--bg-active);color:var(--text)}
+.ch.active .ico{color:var(--accent-2)}
+.side-search{background:var(--bg-0);border-radius:10px;border-color:transparent;padding:9px 12px}
+/* your panel: a card tucked into the bottom of the sidebar */
+.user-panel{margin:8px;border-radius:12px;background:var(--bg-0);border:1px solid var(--line);height:56px}
+.voice-bar{margin:0 8px;border-radius:12px;background:color-mix(in oklab,var(--green) 7%,var(--bg-0));border:1px solid var(--line)}
+/* messages */
+.msg:hover{background:rgba(214,204,255,.03)}
+.msg .meta .name{font-weight:650}
+.msg .meta .ts{font-size:11.5px}
+.divider.date span{background:var(--bg-2);border-color:var(--line);font-size:11.5px;font-weight:600}
+.reply-ref::before{border-color:var(--bg-4)}
+.react{background:var(--bg-3);border-radius:9px}
+.react.mine{background:var(--accent-soft)}
+.toolbar{background:var(--bg-1);border:1px solid var(--line-2);border-radius:10px;box-shadow:0 8px 24px rgba(4,2,12,.4)}
+/* composer: a soft floating bar */
+.composer{padding:0 16px 16px}
+.cbox{background:var(--bg-3);border:1px solid var(--line);border-radius:14px;padding:4px 6px 4px 8px;transition:border-color .15s,box-shadow .15s}
+.cbox:focus-within{border-color:color-mix(in oklab,var(--accent) 45%,transparent);box-shadow:0 0 0 3px var(--accent-soft)}
+.send-btn{border-radius:10px}
+.send-btn.ready{box-shadow:0 4px 14px -4px color-mix(in oklab,var(--accent) 70%,transparent)}
+/* member list */
+.members{background:var(--bg-2);border-left:1px solid var(--line)}
+.members h4{color:var(--dim)}
+.mem{border-radius:10px}
+/* popups and menus */
+.menu{background:var(--bg-1);border:1px solid var(--line-2);border-radius:12px;padding:6px;box-shadow:var(--shadow)}
+.menu button{border-radius:7px}
+.modal{background:var(--bg-1);border:1px solid var(--line-2);border-radius:18px}
+.modal .mf{background:var(--bg-0);border-top-color:var(--line)}
+.popout,.pc-pop .profile-card,.self-pop .profile-card{border-radius:16px}
+.tip{background:var(--bg-0);border-radius:8px;font-weight:600}
+.toast{background:var(--bg-1);border:1px solid var(--line-2);border-radius:12px}
+/* buttons */
+.btn{border-radius:10px}
+.btn.primary{box-shadow:inset 0 1px 0 rgba(255,255,255,.14)}
+/* home / friends */
+.fh-top{border-bottom-color:var(--line)}
+.friend-row{border-top-color:var(--line)}
+/* calls sit on the deepest layer */
+.voice-view,.call-strip{background:var(--bg-0)}
+/* phones: panels go edge to edge */
+@media (max-width:760px){
+  .app{gap:0;padding:0}
+  .sidebar,.main{border-radius:0;border:0}
+  .user-panel{margin:6px 8px calc(6px + env(safe-area-inset-bottom))}
+}
+.fh-top{border-bottom:0;padding-top:12px}
+/* unread badges: clean pill, crisp outline that matches the rail */
+.badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:10px;font:700 12px/1 var(--font);font-variant-numeric:tabular-nums;letter-spacing:0;background:var(--red);color:#fff}
+.rail-item .badge{position:absolute;right:-4px;bottom:-4px;box-shadow:0 0 0 3px var(--bg-0);border:0;pointer-events:none}
+.rail-btn[data-dm] .av{width:48px;height:48px}
+.rail-item.active .rail-btn.home img,.rail-btn.home:hover img{filter:brightness(0) invert(1)}

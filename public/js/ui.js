@@ -200,15 +200,16 @@ function renderShell() {
 const softRefresh = debounce((full) => { renderSidebar(); renderMembers(); if (full) { renderRail(); renderTopbar(); refreshMessages(S.view.channel); if (S.thread) refreshMessages('t:' + S.thread.id); } renderVoiceArea(); }, 60);
 
 function unreadForServer(sid) { let c = 0, m = 0; const sm = isMuted(sid); for (const [cid, u] of Object.entries(S.unread)) if (u.server_id === sid) { if (!sm && !isMuted(cid)) c += u.count; m += u.mentions; } return { c, m }; }
+const badgeNum = (n) => (n > 99 ? '99+' : String(n));
 function renderRail() {
   const rail = $('.rail'); if (!rail) return;
   const dmUnread = S.dms.filter(d => S.unread[d.id]);
-  const dmMentions = dmUnread.reduce((a, d) => a + (S.unread[d.id].mentions || 0), 0) + incomingCount();
+  const dmMentions = incomingCount();   // Home only shows friend requests; unread DMs get their own bubble below
   rail.innerHTML = `
-    <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${dmMentions}</span>` : ''}</div>
-    ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${d.type === 'group' ? groupAvatar(d, '') : avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
+    <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${badgeNum(dmMentions)}</span>` : ''}</div>
+    ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${d.type === 'group' ? groupAvatar(d, '') : avatar(d.user, '')}</button><span class="badge">${badgeNum(S.unread[d.id].mentions || S.unread[d.id].count)}</span></div>`).join('')}
     <div class="rail-sep"></div>
-    ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''} ${isMuted(s.id) ? 'muted' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${u.m}</span>` : ''}</div>`; }).join('')}
+    ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''} ${isMuted(s.id) ? 'muted' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${badgeNum(u.m)}</span>` : ''}</div>`; }).join('')}
     <div class="rail-item" data-tip="Add a Server"><button class="rail-btn action" data-add>${I.plus}</button></div>
     <div class="rail-item" data-tip="Join with an invite"><button class="rail-btn action" data-join>${I.compass}</button></div>`;
   rail.onclick = (e) => {
