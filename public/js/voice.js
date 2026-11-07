@@ -11,7 +11,7 @@ const ICE = { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.
 
 const Voice = {
   channel: null, state: 'idle', muted: false, deaf: false, video: false, screen: false,
-  local: null, videoTrack: null, peers: new Map(), speaking: new Set(), focus: null, socket: null,
+  local: null, videoTrack: null, peers: new Map(), speaking: new Set(), focus: null, socket: null, volumes: {}, localMutes: new Set(),
   _analysers: new Map(), _raf: null,
 
   bindSocket(sock) {
@@ -73,7 +73,7 @@ const Voice = {
     if (id === S.me.id || this.peers.has(id)) return this.peers.get(id);
     const pc = new RTCPeerConnection(ICE);
     const peer = { id, pc, polite: S.me.id > id, makingOffer: false, ignoreOffer: false, stream: new MediaStream(), audio: new Audio(), videoStream: null };
-    peer.audio.autoplay = true; peer.audio.muted = this.deaf;
+    peer.audio.autoplay = true; peer.audio.muted = this.deaf || this.localMutes.has(id); peer.audio.volume = this.volumes[id] ?? 1;
     this.peers.set(id, peer);
     this.local?.getAudioTracks().forEach(t => pc.addTrack(t, this.local));
     if (this.videoTrack) pc.addTrack(this.videoTrack, this.local);
@@ -127,6 +127,8 @@ const Voice = {
   },
 
   applyMute() { this.local?.getAudioTracks().forEach(t => (t.enabled = !this.muted && !this.deaf)); },
+  setUserVolume(id, v) { this.volumes[id] = v; const p = this.peers.get(id); if (p) { p.audio.volume = v; if (v > 0 && this.localMutes.has(id)) { this.localMutes.delete(id); p.audio.muted = this.deaf; } } },
+  toggleUserMute(id) { const on = !this.localMutes.has(id); on ? this.localMutes.add(id) : this.localMutes.delete(id); const p = this.peers.get(id); if (p) p.audio.muted = this.deaf || on; return on; },
   toggleMute() {
     if (this.deaf && this.muted) { this.deaf = false; this.peers.forEach(p => (p.audio.muted = false)); }
     this.muted = !this.muted;
@@ -172,8 +174,16 @@ const Voice = {
     if (!this.channel) return toast('Join a voice channel first');
     if (this.screen) return this.setVideoTrack(null);
     try {
-      const s = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
-      const t = s.getVideoTracks()[0];
+      let stream;
+      if (window.orbitDesktop?.getScreenSources) {
+        const pick = await pickScreenSource();
+        if (!pick) return;
+        const q = pick.quality || {};
+        stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { mandatory: { chromeMediaSource: 'desktop', chromeMediaSourceId: pick.id, maxWidth: q.w || 1920, maxHeight: q.h || 1080, maxFrameRate: q.fps || 30 } } });
+      } else {
+        stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30, width: { ideal: 1920 } }, audio: false });
+      }
+      const t = stream.getVideoTracks()[0];
       t.contentHint = 'detail';
       t.onended = () => { if (this.videoTrack === t) this.setVideoTrack(null); };
       this.setVideoTrack(t, 'screen');
@@ -307,6 +317,7 @@ function drawStage(wrap, cid, sid) {
     const t = e.target.closest('[data-tile]'); if (t && !e.target.closest('video') && !e.target.closest('button')) { const id = t.dataset.tile; if (hasVideoOf(id)) { Voice.focus = Voice.focus === id ? null : id; renderVoiceArea(); } else profilePopout(id, t); }
   };
   wrap.ondblclick = (e) => { const t = e.target.closest('[data-tile]'); if (t && hasVideoOf(t.dataset.tile)) toggleFullscreen(t); };
+  wrap.oncontextmenu = (e) => { const t = e.target.closest('[data-tile]'); if (t) { e.preventDefault(); callUserMenu(e, t.dataset.tile); } };
 }
 function toggleFullscreen(tile) {
   if (!tile) return;
@@ -329,4 +340,38 @@ function bindVoiceControls(root) {
     if (v === 'cam') Voice.toggleCamera(); if (v === 'screen') Voice.toggleScreen();
     if (v === 'mute') Voice.toggleMute(); if (v === 'deaf') Voice.toggleDeaf(); if (v === 'leave') Voice.leave();
   };
+}
+
+/* Discord-style screen/window picker (desktop app only; browsers use their native picker) */
+async function pickScreenSource() {
+  let sources = [];
+  try { sources = await window.orbitDesktop.getScreenSources(); } catch { toast('Couldn’t list your screens.', true); return null; }
+  if (!sources.length) { toast('No screens or windows found to share.', true); return null; }
+  return new Promise((resolve) => {
+    let tab = 'app', quality = { label: '1080p 30', w: 1920, h: 1080, fps: 30 }, chosen = null;
+    const QUAL = [{ label: '720p 30', w: 1280, h: 720, fps: 30 }, { label: '1080p 30', w: 1920, h: 1080, fps: 30 }, { label: '1080p 60', w: 1920, h: 1080, fps: 60 }, { label: '1440p 60', w: 2560, h: 1440, fps: 60 }];
+    const screens = sources.filter(s => s.type === 'screen');
+    const apps = sources.filter(s => s.type === 'window');
+    const { close } = modal(`<div class="screen-picker">
+      <div class="sp-tabs"><button data-t="app" class="on">${I.screen} Applications</button><button data-t="screen">${I.screen} Entire Screen</button></div>
+      <div class="sp-grid"></div>
+      <div class="sp-foot"><div class="sp-qual"></div><div class="sp-actions"><button class="btn ghost" data-cancel>Cancel</button><button class="btn primary" data-go disabled>Go Live</button></div></div>
+    </div>`, (m, closeFn) => {
+      const grid = $('.sp-grid', m);
+      const draw = () => {
+        const list = tab === 'screen' ? screens : apps;
+        grid.innerHTML = list.length ? list.map(s => `<button class="sp-item ${chosen === s.id ? 'sel' : ''}" data-id="${esc(s.id)}"><div class="sp-thumb"><img src="${esc(s.thumb)}" alt=""></div><div class="sp-label">${s.icon ? `<img class="sp-ico" src="${esc(s.icon)}">` : ''}<span>${esc(s.name)}</span></div></button>`).join('') : `<div class="sp-empty">Nothing here to share.</div>`;
+      };
+      $$('[data-t]', m).forEach(b => b.onclick = () => { tab = b.dataset.t; chosen = null; $$('[data-t]', m).forEach(x => x.classList.toggle('on', x === b)); $('[data-go]', m).disabled = true; draw(); });
+      $('.sp-qual', m).innerHTML = QUAL.map(q => `<button class="${q.label === quality.label ? 'on' : ''}" data-q="${q.label}">${q.label.replace(' ', 'p·')}fps</button>`).join('').replace(/pp/g, 'p');
+      $('.sp-qual', m).innerHTML = QUAL.map(q => `<button class="${q.label === quality.label ? 'on' : ''}" data-q="${q.label}">${q.label}</button>`).join('');
+      $('.sp-qual', m).onclick = (e) => { const b = e.target.closest('[data-q]'); if (!b) return; quality = QUAL.find(q => q.label === b.dataset.q); $$('.sp-qual button', m).forEach(x => x.classList.toggle('on', x === b)); };
+      grid.onclick = (e) => { const it = e.target.closest('[data-id]'); if (!it) return; chosen = it.dataset.id; $$('.sp-item', m).forEach(x => x.classList.toggle('sel', x === it)); $('[data-go]', m).disabled = false; };
+      grid.ondblclick = (e) => { const it = e.target.closest('[data-id]'); if (it) { chosen = it.dataset.id; done(); } };
+      const done = () => { if (!chosen) return; closeFn(); resolve({ id: chosen, quality }); };
+      $('[data-go]', m).onclick = done;
+      $('[data-cancel]', m).onclick = () => { closeFn(); resolve(null); };
+      draw();
+    }, 'sp-modal');
+  });
 }

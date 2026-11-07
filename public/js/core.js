@@ -21,12 +21,21 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '' },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
 try { Object.assign(S.prefs, JSON.parse(localStorage.getItem('orbit-prefs') || '{}')); } catch {}
 const savePrefs = () => { try { localStorage.setItem('orbit-prefs', JSON.stringify(S.prefs)); } catch {} };
+const RINGTONES = [['ring1', 'Orbital'], ['ring2', 'Orbital II'], ['ring3', 'Orbital III']];
+const NOTIFSOUNDS = [['notif1', 'Ping'], ['notif2', 'Ping II'], ['notif3', 'Ping III']];
+if (!S.prefs.ringtone) S.prefs.ringtone = RINGTONES[Math.floor(Math.random() * RINGTONES.length)][0];
+if (!S.prefs.notifSound) S.prefs.notifSound = NOTIFSOUNDS[Math.floor(Math.random() * NOTIFSOUNDS.length)][0];
+savePrefs();
+const soundUrl = (id) => '/sounds/' + id + '.mp3';
+let _notifAudio;
+function playNotif() { if (!S.prefs.sounds) return; try { _notifAudio = _notifAudio || new Audio(); _notifAudio.src = soundUrl(S.prefs.notifSound || 'notif1'); _notifAudio.volume = 0.6; _notifAudio.currentTime = 0; _notifAudio.play().catch(() => {}); } catch {} }
+function previewSound(id, vol) { try { const a = new Audio(soundUrl(id)); a.volume = vol ?? 0.6; a.play().catch(() => {}); return a; } catch {} }
 
 /* ---------- dom helpers ---------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -190,6 +199,8 @@ ic('link', '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d
 ic('crop', '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>');
 ic('external', '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>');
 ic('arrow', '<path d="M5 12h14M12 5l7 7-7 7"/>');
+ic('play', '<path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"/>');
+ic('pause', '<rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none"/>');
 ic('fs', '<path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M16 21h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>');
 ic('group', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>');
 ic('leave', '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>');
@@ -261,36 +272,16 @@ function beep(kind) {
 
 /* A warmer, repeating call ringtone (two gentle chimes, like a phone trill). */
 const Ringtone = {
-  timer: null, ctx: null,
-  _chord(ctx, t, notes, dur) {
-    notes.forEach((f, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain(), lp = ctx.createBiquadFilter();
-      lp.type = 'lowpass'; lp.frequency.value = 2200;
-      o.type = 'triangle'; o.frequency.value = f; o.connect(g); g.connect(lp); lp.connect(ctx.destination);
-      const gain = 0.085 - i * 0.02;
-      g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.03);
-      g.gain.setValueAtTime(gain, t + dur - 0.08); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      o.start(t); o.stop(t + dur + 0.02);
-    });
-  },
-  _ring() {
-    try {
-      const ctx = this.ctx; const t = ctx.currentTime + 0.02;
-      // two quick trills then rest — classic incoming-call feel
-      this._chord(ctx, t, [587, 880], 0.26);        // D5 + A5
-      this._chord(ctx, t + 0.34, [659, 988], 0.30);  // E5 + B5
-    } catch {}
-  },
+  audio: null,
   start() {
-    if (!S.prefs.sounds || this.timer) return;
+    if (!S.prefs.sounds || this.audio) return;
     try {
-      this.ctx = audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-      if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
-      this._ring();
-      this.timer = setInterval(() => this._ring(), 2600);
+      this.audio = new Audio(soundUrl(S.prefs.ringtone || 'ring1'));
+      this.audio.loop = true; this.audio.volume = 0.7;
+      this.audio.play().catch(() => {});
     } catch {}
   },
-  stop() { if (this.timer) { clearInterval(this.timer); this.timer = null; } },
+  stop() { if (this.audio) { try { this.audio.pause(); this.audio.currentTime = 0; } catch {} this.audio = null; } },
 };
 
 /* ---------- appearance ---------- */

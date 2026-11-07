@@ -1,7 +1,7 @@
 // Orbit desktop app. Opens straight to Orbit — no setup screen.
 // It connects to the server address in electron/config.json ("serverUrl").
 // If that is empty, it runs a private Orbit server inside the app so it still works offline/for testing.
-const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -21,6 +21,11 @@ function setupSession() {
   ses.setPermissionRequestHandler((wc, perm, cb) => cb(allowed.includes(perm)));
   ses.setPermissionCheckHandler((wc, perm) => allowed.includes(perm) || perm === 'media');
   ses.setDevicePermissionHandler(() => true);
+  ipcMain.handle('orbit:get-sources', async () => {
+    const srcs = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 360, height: 220 }, fetchWindowIcons: true });
+    return srcs.map(s => ({ id: s.id, name: s.name, type: s.id.startsWith('screen') ? 'screen' : 'window',
+      thumb: s.thumbnail ? s.thumbnail.toDataURL() : '', icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null }));
+  });
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
@@ -38,7 +43,7 @@ function createWindow(url) {
   win = new BrowserWindow({
     width: 1320, height: 840, minWidth: 420, minHeight: 520, backgroundColor: '#0c0a17', title: 'Orbit ' + app.getVersion(),
     icon: path.join(__dirname, 'icon-tile.png'), autoHideMenuBar: true, show: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: true },
+    webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
   });
   win.once('ready-to-show', () => win.show());
   Menu.setApplicationMenu(Menu.buildFromTemplate([

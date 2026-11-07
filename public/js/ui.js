@@ -497,6 +497,42 @@ function profileMoreMenu(e, sid, uidv) {
   else items.push(['Block', () => confirmModal('Block user', `Block <b>${esc(user(uidv).display_name)}</b>?`, 'Block', () => api('POST', `/api/friends/${uidv}/block`)), 'danger']);
   contextMenu(e, items.filter(Boolean));
 }
+function callUserMenu(e, uid) {
+  const L = layer();
+  const self = uid === S.me.id;
+  const u = user(uid);
+  const st = friendState(uid);
+  const muted = Voice.localMutes.has(uid);
+  const vol = Math.round((Voice.volumes[uid] ?? 1) * 100);
+  const friendRow = self ? '' : st === 'friend' ? `<button data-remove>${I.check} Friends</button>`
+    : st === 'incoming' ? `<button data-accept>Accept friend request</button>`
+    : st === 'outgoing' ? `<button data-cancel>Cancel friend request</button>`
+    : st === 'none' ? `<button data-add>${I.invite} Add friend</button>` : '';
+  const el = h(`<div class="menu call-menu">
+    <div class="cm-head">${avatar(u, 's32', true)}<b>${esc(u.display_name)}${badgeHtml(u)}</b></div>
+    <button data-profile>View profile</button>
+    ${self ? '' : `<button data-message>${I.message} Message</button>${friendRow}
+    <hr>
+    <button data-mute><span>${muted ? 'Unmute' : 'Mute'} for me</span><span class="check ${muted ? 'on' : ''}">${muted ? '✓' : ''}</span></button>
+    <div class="vol-row"><span>Volume</span><input type="range" min="0" max="150" value="${vol}"><b class="vol-val">${vol}%</b></div>
+    <hr>
+    <button class="danger" data-block>Block</button>`}
+  </div>`);
+  L.set(el);
+  place(el, e.clientX, e.clientY);
+  const act = async (fn) => { try { await fn(); } catch (ex) { toast(ex.message, true); } L.close(); };
+  el.querySelector('[data-profile]').onclick = () => { L.close(); profilePopout(uid, null); };
+  el.querySelector('[data-message]')?.addEventListener('click', () => { L.close(); openDM(uid); });
+  el.querySelector('[data-add]')?.addEventListener('click', () => act(() => api('POST', '/api/friends', { username: u.username })));
+  el.querySelector('[data-accept]')?.addEventListener('click', () => act(() => api('POST', `/api/friends/${uid}/accept`)));
+  el.querySelector('[data-cancel]')?.addEventListener('click', () => act(() => api('DELETE', '/api/friends/' + uid)));
+  el.querySelector('[data-remove]')?.addEventListener('click', () => { L.close(); confirmModal('Remove friend', `Remove <b>${esc(u.display_name)}</b>?`, 'Remove', () => api('DELETE', '/api/friends/' + uid)); });
+  el.querySelector('[data-block]')?.addEventListener('click', () => { L.close(); confirmModal('Block user', `Block <b>${esc(u.display_name)}</b>?`, 'Block', () => api('POST', `/api/friends/${uid}/block`)); });
+  const mb = el.querySelector('[data-mute]');
+  if (mb) mb.onclick = () => { const on = Voice.toggleUserMute(uid); mb.querySelector('span:last-child').className = 'check ' + (on ? 'on' : ''); mb.querySelector('span:last-child').textContent = on ? '✓' : ''; mb.querySelector('span:first-child').textContent = (on ? 'Unmute' : 'Mute') + ' for me'; };
+  const range = el.querySelector('input[type=range]');
+  if (range) range.oninput = () => { Voice.setUserVolume(uid, Number(range.value) / 100); el.querySelector('.vol-val').textContent = range.value + '%'; };
+}
 function friendMenu(e, uid) {
   const r = e.target.closest('[data-fmenu]').getBoundingClientRect();
   contextMenu({ clientX: r.left, clientY: r.bottom + 4 }, [
@@ -648,7 +684,7 @@ function messageHtml(m, sid, prev, isParent) {
     const t = a.type || '';
     if (t.startsWith('image/')) return `<img class="att-img" src="${esc(a.url)}" alt="${esc(a.name)}" loading="lazy" data-lightbox="${esc(a.url)}" data-name="${esc(a.name)}">`;
     if (t.startsWith('video/')) return `<video class="att-video" src="${esc(a.url)}" controls preload="metadata"></video>`;
-    if (t.startsWith('audio/')) return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}">${esc(a.name)}</a><audio class="att-audio" src="${esc(a.url)}" controls preload="none"></audio></div></div>`;
+    if (t.startsWith('audio/')) return `<div class="audio-embed" data-audio="${esc(a.url)}"><button class="ae-play">${I.play}</button><div class="ae-main"><div class="ae-name">${esc(a.name)}</div><div class="ae-bar"><div class="ae-fill"></div></div><div class="ae-time"><span class="ae-cur">0:00</span><span class="ae-dur">--:--</span></div></div><a class="ae-dl" href="${esc(a.url)}" download="${esc(a.name)}" title="Download">${I.download}</a></div>`;
     return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
   }).join('');
   const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).map(([e, v]) => `<button class="react ${v.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(v.map(x => nameIn(sid, x)).join(', '))}">${e}<b>${v.length}</b></button>`).join('');
@@ -688,6 +724,7 @@ function bindMessageList(box) {
     const mention = t.closest('.mention[data-uid]'); if (mention) return profilePopout(mention.dataset.uid, mention);
     const nm = t.closest('.name[data-uid], .left .av'); if (nm) return profilePopout(nm.dataset.uid, nm);
     const lb = t.closest('[data-lightbox]'); if (lb) return lightbox(lb.dataset.lightbox, lb.dataset.name);
+    const ae = t.closest('.audio-embed'); if (ae && !t.closest('.ae-dl')) { audioEmbedAction(ae, e); return; }
     const jump = t.closest('[data-jump]'); if (jump) return jumpTo(Number(jump.dataset.jump));
     if (!m) return;
     const r = t.closest('[data-react]'); if (r) return toggleReaction(m.id, r.dataset.react);
@@ -777,7 +814,7 @@ function onMessageNew(m) {
   if (mentioned && S.prefs.status !== 'dnd' && !viewing) notify(m, ch);
 }
 function notify(m, ch) {
-  beep('msg');
+  playNotif();
   if (!S.prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   const sid = ch.server_id;
   const title = ch.type === 'dm' ? nameIn(null, m.author_id) : ch.type === 'group' ? `${nameIn(null, m.author_id)} (${ch.name || 'Group chat'})` : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
@@ -1123,6 +1160,26 @@ async function profilePopout(uidv, anchor, side) {
     const d = await openDM(uidv);
     if (d) { const f = new FormData(); f.append('content', text); upload(`/api/channels/${d.id}/messages`, f).catch(x => toast(x.message, true)); }
   };
+}
+const audioPlayers = {};
+function audioEmbedAction(embed, e) {
+  const url = embed.dataset.audio;
+  let a = audioPlayers[url];
+  if (!a) { a = audioPlayers[url] = new Audio(url); ['timeupdate','loadedmetadata','ended','play','pause'].forEach(ev => a.addEventListener(ev, () => updateAudioEmbeds(url))); }
+  const bar = e.target.closest('.ae-bar');
+  if (bar) { const r = bar.getBoundingClientRect(); const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); if (a.duration) a.currentTime = pct * a.duration; return; }
+  if (a.paused) { Object.values(audioPlayers).forEach(x => x !== a && x.pause()); a.play().catch(() => {}); } else a.pause();
+}
+function updateAudioEmbeds(url) {
+  const a = audioPlayers[url]; if (!a) return;
+  const fmt = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  $$('.audio-embed').filter(x => x.dataset.audio === url).forEach(embed => {
+    embed.classList.toggle('playing', !a.paused);
+    $('.ae-play', embed).innerHTML = a.paused ? I.play : I.pause;
+    $('.ae-fill', embed).style.width = (a.duration ? a.currentTime / a.duration * 100 : 0) + '%';
+    $('.ae-cur', embed).textContent = fmt(a.currentTime);
+    if (a.duration) $('.ae-dur', embed).textContent = fmt(a.duration);
+  });
 }
 function lightbox(url, name) {
   const el = h(`<div class="lightbox"><div><img src="${esc(url)}" alt=""><a href="${esc(url)}" target="_blank" download="${esc(name || '')}">Open original</a></div></div>`);

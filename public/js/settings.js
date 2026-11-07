@@ -246,11 +246,24 @@ async function userVoice(body) {
 }
 function userNotify(body) {
   const perm = 'Notification' in window ? Notification.permission : 'unsupported';
-  body.innerHTML = `<h2>Notifications</h2>
-    <label class="row-toggle"><span class="rt">Enable desktop notifications<small>Get notified for direct messages and when someone @mentions you.${perm === 'denied' ? ' <b style="color:var(--red)">Notifications are blocked in your browser settings.</b>' : ''}</small></span><span class="toggle"><input type="checkbox" data-p="notify" ${S.prefs.notify ? 'checked' : ''}><span></span></span></label>
-    <label class="row-toggle"><span class="rt">Sounds<small>Play sounds for messages, calls and voice join/leave.</small></span><span class="toggle"><input type="checkbox" data-p="sounds" ${S.prefs.sounds ? 'checked' : ''}><span></span></span></label>
-    <p style="color:var(--muted);font-size:13px;margin-top:12px">Set your status to Do Not Disturb to silence all notifications.</p>`;
+  const pick = (kind, list, cur) => `<div class="sound-pick">${list.map(([id, name]) => `<button class="sound-opt ${cur === id ? 'on' : ''}" data-sound="${kind}" data-id="${id}"><span class="so-play" data-play="${id}">${I.play}</span><span class="so-name">${name}</span><span class="so-check">${cur === id ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''}</span></button>`).join('')}</div>`;
+  body.innerHTML = `<h2>Notifications & Sounds</h2>
+    <label class="row-toggle"><span class="rt">Desktop notifications<small>Get notified for direct messages and @mentions.${perm === 'denied' ? ' <b style="color:var(--red)">Blocked in your browser settings.</b>' : ''}</small></span><span class="toggle"><input type="checkbox" data-p="notify" ${S.prefs.notify ? 'checked' : ''}><span></span></span></label>
+    <label class="row-toggle"><span class="rt">Sounds<small>Play sounds for messages, calls, and voice join/leave.</small></span><span class="toggle"><input type="checkbox" data-p="sounds" ${S.prefs.sounds ? 'checked' : ''}><span></span></span></label>
+    <h3>Notification sound</h3><p class="hint">Plays when you get a message. Tap to preview.</p>${pick('notifSound', NOTIFSOUNDS, S.prefs.notifSound)}
+    <h3>Ringtone</h3><p class="hint">Plays for incoming calls. Tap to preview.</p>${pick('ringtone', RINGTONES, S.prefs.ringtone)}
+    <p class="hint" style="margin-top:16px">A random pair is chosen for you the first time — change them here anytime. Set your status to Do Not Disturb to silence everything.</p>`;
   $$('[data-p]', body).forEach(el => el.onchange = () => { S.prefs[el.dataset.p] = el.checked; savePrefs(); if (el.dataset.p === 'notify' && el.checked && perm === 'default') Notification.requestPermission(); });
+  let preview;
+  body.addEventListener('click', (e) => {
+    const pl = e.target.closest('[data-play]');
+    const opt = e.target.closest('[data-sound]');
+    if (!opt) return;
+    const kind = opt.dataset.sound, id = opt.dataset.id;
+    if (preview) { try { preview.pause(); } catch {} }
+    preview = previewSound(id, kind === 'ringtone' ? 0.7 : 0.6);
+    if (!pl) { S.prefs[kind] = id; savePrefs(); $$(`[data-sound="${kind}"]`, body).forEach(b => { b.classList.toggle('on', b.dataset.id === id); $('.so-check', b).innerHTML = b.dataset.id === id ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''; }); }
+  });
 }
 function userAbout(body) {
   body.innerHTML = `<h2>About Orbit</h2><div style="display:flex;gap:16px;align-items:center"><img src="${LOGO}" style="width:72px;height:72px;object-fit:contain"><div><b style="font-size:20px">Orbit ${esc(S.info.version || '')}</b><p style="color:var(--muted)">Connected to ${esc(location.host)}</p></div></div>
