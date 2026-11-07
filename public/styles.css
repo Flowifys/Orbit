@@ -710,3 +710,37 @@ select.input{appearance:auto}
 /* modals */
 .modal .mh h2{letter-spacing:-.005em}
 @media (max-width:760px){.home-view{padding:18px 14px 30px}.home-hero{padding:22px}.hh-logo{width:72px;height:72px}.home-hero h1{font-size:21px}}
+
+/* ============ 1.3 — groups, staff badge, mobile ============ */
+.av.gc{background:var(--bg-3);position:relative;overflow:visible}
+.av.gc .g1,.av.gc .g2{position:absolute;border-radius:50%;box-shadow:0 0 0 2px var(--bg-1)}
+.av.gc .g1{right:0;top:0}.av.gc .g2{left:0;bottom:0}
+.av.gc .av{width:62%;height:62%}
+.dm-item .av.gc .av,.rail-btn .av.gc .av{position:absolute}
+.badge-staff{display:inline-flex;align-items:center;gap:3px;vertical-align:middle;margin-left:6px;font-size:10px;font-weight:700;letter-spacing:.3px;
+  color:#fff;background:linear-gradient(135deg,#ff6b8b,#8b6dff);padding:2px 7px 2px 5px;border-radius:6px;position:relative;top:-1px}
+.badge-staff svg{color:#fff}
+.pchip{display:inline-flex;align-items:center;gap:6px;background:var(--bg-3);border-radius:20px;padding:3px 8px 3px 3px;font-size:13px}
+.pchip button{display:grid;place-items:center;color:var(--muted)}
+.pchip button:hover{color:var(--red)}
+.pick-check{margin-left:auto;color:var(--accent)}
+.ac-item.sel{background:var(--accent-soft)}
+.gmembers{max-height:300px;overflow:auto}
+.dm-item .nm small{display:block;font-size:12px;color:var(--dim)}
+
+/* mobile tuning */
+@media (max-width:760px){
+  .home-view .people{grid-template-columns:repeat(auto-fill,minmax(150px,1fr))}
+  .modal{border-radius:18px 18px 0 0;align-self:flex-end;max-height:92dvh;width:100%}
+  .modal-wrap{padding:0;place-items:end center}
+  .topbar .icon-btn{width:36px;height:36px}
+  .av.s80{width:72px;height:72px}
+  .pc-pop{width:min(360px,96vw)}
+  .settings .sbody{padding-bottom:120px}
+}
+/* installed PWA: pad for iOS safe areas */
+@media (display-mode:standalone){
+  .rail{padding-top:max(14px,env(safe-area-inset-top))}
+  .user-panel{margin-bottom:max(8px,env(safe-area-inset-bottom))}
+  .sidebar,.main{padding-top:env(safe-area-inset-top)}
+}

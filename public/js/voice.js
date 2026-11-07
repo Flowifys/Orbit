@@ -236,7 +236,7 @@ function renderVoiceArea() {
     view.innerHTML = `<div class="voice-grid"></div>${voiceControlsHtml()}`;
     drawTiles($('.voice-grid', view), ch.id, ch.server_id);
     bindVoiceControls(view);
-  } else if (ch.type === 'dm') {
+  } else if (ch.type === 'dm' || ch.type === 'group') {
     const slot = $('.call-slot'); if (!slot) return;
     const people = S.voice[ch.id] || [];
     if (Voice.channel === ch.id) {

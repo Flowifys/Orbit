@@ -83,9 +83,14 @@ const curServer = () => S.view.server !== '@me' ? S.serverData[S.view.server] : 
 function findChannel(id) {
   for (const sd of Object.values(S.serverData)) { const c = sd.channels.find(c => c.id === id); if (c) return c; }
   const dm = S.dms.find(d => d.id === id);
-  return dm ? { ...dm, type: 'dm', name: dm.user.display_name } : null;
+  if (!dm) return null;
+  if (dm.type === 'group') return { ...dm, type: 'group', server_id: null, name: dm.name || 'Group chat' };
+  return { ...dm, type: 'dm', server_id: null, name: dm.user.display_name };
 }
 const curChannel = () => S.view.channel ? findChannel(S.view.channel) : null;
+const isDM = (ch) => !!ch && (ch.type === 'dm' || ch.type === 'group');
+const isGroup = (ch) => !!ch && ch.type === 'group';
+function dmTitle(ch) { return ch.type === 'group' ? (ch.name || 'Group chat') : (ch.user ? ch.user.display_name : 'Direct Message'); }
 function user(id) { return S.users[id] || { id, username: 'unknown', display_name: 'Deleted User', accent: '#555' }; }
 function member(sid, uidv) { const sd = S.serverData[sid]; return sd && sd.members.find(m => m.id === uidv); }
 function nameIn(sid, uidv) { const m = sid && member(sid, uidv); return (m && (m.nick || m.display_name)) || user(uidv).display_name || user(uidv).username; }
@@ -173,6 +178,16 @@ ic('link', '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d
 ic('crop', '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>');
 ic('external', '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14 21 3"/>');
 ic('arrow', '<path d="M5 12h14M12 5l7 7-7 7"/>');
+ic('group', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/>');
+ic('leave', '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>');
+ic('star', '<path d="M12 2l3 7 7 .5-5.5 4.5 2 7-6.5-4-6.5 4 2-7L2 9.5 9 9z" fill="currentColor" stroke="none"/>');
+function badgeHtml(u) { return u && u.staff ? `<span class="badge-staff" title="Orbit Staff">${I.star.replace('width="20" height="20"', 'width="11" height="11"')}Staff</span>` : ''; }
+function groupAvatar(g, cls = '') {
+  if (g.icon) return `<div class="av ${cls}" style="background:var(--bg-3)"><span class="crop"><img src="${esc(g.icon)}" alt=""></span></div>`;
+  const ms = (g.members || []).filter(m => m.id !== S.me.id).slice(0, 2);
+  if (ms.length >= 2) return `<div class="av gc ${cls}"><span class="g1">${avatar(ms[0], 's24')}</span><span class="g2">${avatar(ms[1], 's24')}</span></div>`;
+  return `<div class="av ${cls}" style="background:linear-gradient(140deg,#8b6dff,#5b3ee0);color:#fff">${I.group.replace('width="20" height="20"', 'width="18" height="18"')}</div>`;
+}
 
 /* ---------- emoji ---------- */
 const EMOJI = {

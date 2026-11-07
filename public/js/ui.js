@@ -94,7 +94,7 @@ async function loadApp() {
   try { data = await api('GET', '/api/me'); } catch (e) { if (!S.token) return; $('#root').innerHTML = `<div class="auth"><div class="auth-card"><h1>Can’t connect</h1><p class="sub">${esc(e.message)}</p><button class="btn primary block" onclick="location.reload()">Retry</button></div></div>`; return; }
   S.me = data.me; S.users[S.me.id] = S.me;
   S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {};
-  S.dms.forEach(d => (S.users[d.user.id] = d.user));
+  S.dms.forEach(d => { if (d.user) S.users[d.user.id] = d.user; (d.members || []).forEach(m => S.users[m.id] = { ...S.users[m.id], ...m }); });
   await Promise.all(S.servers.map(s => fetchServer(s.id)));
   renderShell();
   connectSocket();
@@ -141,24 +141,26 @@ function connectSocket() {
   socket.on('activity', ({ user_id, activity }) => { if (activity) S.activities[user_id] = activity; else delete S.activities[user_id]; renderMembers(); const card = $(`.profile-card[data-card="${user_id}"] .activity-slot`); if (card) card.innerHTML = activityHtml(user_id); if (S.view.server === '@me' && !S.view.channel) renderMain(); if (user_id === S.me.id) renderUserPanel(); });
   socket.on('presence', ({ user_id, status }) => { S.presence[user_id] = status; if (user_id === S.me.id) return renderUserPanel(); softRefresh(); });
   socket.on('user:update', (u) => { S.users[u.id] = { ...S.users[u.id], ...u }; Object.values(S.serverData).forEach(sd => { const m = sd.members.find(x => x.id === u.id); if (m) Object.assign(m, u); });
-    S.dms.forEach(d => { if (d.user.id === u.id) d.user = u; }); if (u.id === S.me.id) S.me = { ...S.me, ...u }; softRefresh(true); });
+    S.dms.forEach(d => { if (d.user && d.user.id === u.id) d.user = u; if (d.members) d.members = d.members.map(m => m.id === u.id ? u : m); }); if (u.id === S.me.id) S.me = { ...S.me, ...u }; softRefresh(true); });
   socket.on('server:refresh', async ({ server_id }) => { await fetchServer(server_id).catch(() => {}); if (S.view.server === server_id) { const c = curChannel(); if (!c) selectServer(server_id); } softRefresh(true); });
   socket.on('server:added', async ({ server_id }) => { if (!S.serverData[server_id]) { await fetchServer(server_id); renderRail(); } });
-  socket.on('server:removed', ({ server_id, reason }) => {
+  socket.on('server:removed', ({ server_id, reason, channel_id, group }) => {
+    if (group && channel_id) { S.dms = S.dms.filter(d => d.id !== channel_id); if (Voice.channel === channel_id) Voice.leave(); if (S.view.channel === channel_id) selectServer('@me'); else { renderSidebar(); renderRail(); } return; }
     const name = S.serverData[server_id]?.name;
     delete S.serverData[server_id]; S.servers = S.servers.filter(s => s.id !== server_id);
     if (Voice.channel && findChannel(Voice.channel) == null) Voice.leave();
     if (reason === 'kicked' || reason === 'banned') toast(`You were ${reason} from ${name || 'a server'}.`, true);
     if (S.view.server === server_id) selectServer('@me'); else renderRail();
   });
-  socket.on('dm:activity', ({ channel_id, user: u }) => {
-    S.users[u.id] = { ...S.users[u.id], ...u };
-    let d = S.dms.find(x => x.id === channel_id);
-    if (!d) { d = { id: channel_id, type: 'dm', user: u, last_id: 0, last_at: Date.now() }; S.dms.unshift(d); }
-    d.last_at = Date.now();
+  socket.on('dm:update', (entry) => {
+    if (entry.user) S.users[entry.user.id] = { ...S.users[entry.user.id], ...entry.user };
+    (entry.members || []).forEach(m => S.users[m.id] = { ...S.users[m.id], ...m });
+    const i = S.dms.findIndex(x => x.id === entry.id);
+    if (i >= 0) S.dms[i] = { ...S.dms[i], ...entry }; else S.dms.unshift(entry);
     S.dms.sort((a, b) => b.last_at - a.last_at);
     if (S.view.server === '@me') renderSidebar();
     renderRail();
+    if (S.view.channel === entry.id) renderTopbar();
   });
   socket.on('voice:state', ({ channel_id, users }) => {
     const prev = (S.voice[channel_id] || []).map(u => u.user_id);
@@ -197,7 +199,7 @@ function renderRail() {
   const dmMentions = dmUnread.reduce((a, d) => a + (S.unread[d.id].mentions || 0), 0);
   rail.innerHTML = `
     <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${dmMentions}</span>` : ''}</div>
-    ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
+    ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${d.type === 'group' ? groupAvatar(d, '') : avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
     <div class="rail-sep"></div>
     ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${u.m}</span>` : ''}</div>`; }).join('')}
     <div class="rail-item" data-tip="Add a Server"><button class="rail-btn action" data-add>${I.plus}</button></div>
@@ -263,7 +265,8 @@ function renderSidebar() {
         <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">People</span></button>
         <div class="cat"><span>Direct messages</span><button data-find title="New message">+</button></div>
         ${S.dms.length ? S.dms.map(d => { const un = S.unread[d.id]; const inCall = (S.voice[d.id] || []).length;
-          return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${avatar(d.user, 's32', true)}<span class="nm">${esc(d.user.display_name)}${d.user.status_text ? `<small>${esc(d.user.status_text)}</small>` : ''}</span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`; }).join('')
+          if (d.type === 'group') return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${groupAvatar(d, 's32')}<span class="nm">${esc(d.name || 'Group chat')}<small>${d.member_count} members</small></span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`;
+          return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${avatar(d.user, 's32', true)}<span class="nm">${esc(d.user.display_name)}${activityLine(d.user.id) ? `<small>${esc(activityLine(d.user.id))}</small>` : d.user.status_text ? `<small>${esc(d.user.status_text)}</small>` : ''}</span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`; }).join('')
           : `<p style="color:var(--dim);font-size:13px;padding:8px">No conversations yet. Click someone’s name to message them.</p>`}
       </div>${voiceBarHtml()}${userPanelHtml()}`;
   } else {
@@ -378,7 +381,7 @@ function renderMain() {
     return;
   }
   if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
-  content.innerHTML = `<div class="chat">${ch.type === 'dm' ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${ch.type !== 'dm' && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
+  content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${!isDM(ch) && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
   renderMembers();
   bindComposer($('.chat .composer', content), ch.id, null);
   bindMessageList($('.messages', content));
@@ -394,6 +397,11 @@ function renderTopbar() {
     bar.innerHTML = `${back}${avatar(u, 's24', false)}<span class="title" data-uid="${u.id}" style="cursor:pointer">${esc(u.display_name)}</span><span class="topic" style="cursor:default">@${esc(u.username)} · ${statusLabel(statusOf(u.id))}</span>
       <button class="icon-btn" data-call title="Start voice call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
       <input class="search" placeholder="Search" data-search>`;
+  } else if (ch.type === 'group') {
+    bar.innerHTML = `${back}${groupAvatar(ch, 's24')}<span class="title" data-gsettings style="cursor:pointer">${esc(ch.name || 'Group chat')}</span><span class="topic" data-gsettings>${ch.member_count} members</span>
+      <button class="icon-btn" data-call title="Start group call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
+      <button class="icon-btn" data-gadd title="Add people">${I.invite}</button><button class="icon-btn" data-gmenu title="Group settings">${I.gear}</button>
+      <input class="search" placeholder="Search" data-search>`;
   } else if (ch.type === 'voice') {
     bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span>`;
   } else {
@@ -408,6 +416,8 @@ function renderTopbar() {
     if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
     if (e.target.closest('[data-call]')) return Voice.join(ch.id);
     if (e.target.closest('[data-vcall]')) return Voice.join(ch.id, { video: true });
+    if (e.target.closest('[data-gadd]')) return addToGroupModal(ch.id);
+    if (e.target.closest('[data-gmenu]') || e.target.closest('[data-gsettings]')) return groupSettingsModal(ch.id);
     const t = e.target.closest('[data-uid]'); if (t) profilePopout(t.dataset.uid, t);
   };
   const search = $('[data-search]', bar);
@@ -418,7 +428,7 @@ const statusLabel = (s) => ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Distu
 function renderHome(content) {
   const people = new Map();
   Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
-  S.dms.forEach(d => d.user.id !== S.me.id && people.set(d.user.id, S.users[d.user.id] || d.user));
+  S.dms.forEach(d => { if (d.user && d.user.id !== S.me.id) people.set(d.user.id, S.users[d.user.id] || d.user); (d.members || []).forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)); });
   const list = [...people.values()].sort((a, b) => (statusOf(a.id) === 'offline') - (statusOf(b.id) === 'offline') || a.display_name.localeCompare(b.display_name));
   const online = list.filter(u => statusOf(u.id) !== 'offline');
   const listening = online.filter(u => activityOf(u.id));
@@ -426,7 +436,7 @@ function renderHome(content) {
   const greet = hr < 5 ? 'Up late' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
   const card = (u) => { const a = activityOf(u.id); return `<button class="person" data-uid="${u.id}" style="${themeStyle(u)}">
       <span class="p-banner">${bannerHtml(u, 'pb')}</span>${avatar(u, 's56', true)}
-      <b style="${nameStyle(u)}">${esc(u.display_name)}</b><small>${a ? `${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(a.title)}` : esc(u.status_text || statusLabel(statusOf(u.id)))}</small>
+      <b style="${nameStyle(u)}">${esc(u.display_name)}${badgeHtml(u)}</b><small>${a ? `${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(a.title)}` : esc(u.status_text || statusLabel(statusOf(u.id)))}</small>
       <span class="p-actions"><span class="icon-btn" data-msg="${u.id}" title="Message">${I.message}</span><span class="icon-btn" data-callu="${u.id}" title="Call">${I.phone}</span></span></button>`; };
   content.innerHTML = `<div class="home-view">
     <section class="home-hero"><div class="hh-text"><h1>${greet}, ${esc(S.me.display_name)}</h1><p>${online.length ? `${online.length} ${online.length === 1 ? 'person you know is' : 'people you know are'} online right now.` : 'Nobody you know is online yet.'}</p></div><img class="hh-logo" src="${LOGO}" alt=""></section>
@@ -452,7 +462,7 @@ function renderHome(content) {
 async function openDM(userId) {
   try {
     const d = await api('POST', '/api/dms', { user_id: userId });
-    S.users[d.user.id] = { ...S.users[d.user.id], ...d.user };
+    if (d.user) S.users[d.user.id] = { ...S.users[d.user.id], ...d.user };
     if (!S.dms.find(x => x.id === d.id)) S.dms.unshift(d);
     S.view.server = '@me';
     selectChannel(d.id, true);
@@ -478,7 +488,7 @@ function renderMembers() {
   const sortName = (a, b) => nameIn(sd.id, a.id).localeCompare(nameIn(sd.id, b.id));
   box.innerHTML = groups.map(([t, list]) => `<h4>${esc(t)} — ${list.length}</h4>` + list.sort(sortName).map(m => {
     const color = colorIn(sd.id, m.id);
-    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
+    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(S.users[m.id] || m)}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
   }).join('')).join('');
   box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
   box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (b) { e.preventDefault(); memberMenu(e, sd.id, b.dataset.uid); } };
@@ -557,7 +567,8 @@ function messageListHtml(key) {
     html += `<div class="divider">${list.length} ${list.length === 1 ? 'reply' : 'replies'}</div>`;
   } else if (S.hasMore[key]) html += `<div class="loader">Loading older messages…</div>`;
   else if (ch) {
-    if (ch.type === 'dm') html += `<div class="ch-welcome">${avatar(ch.user, 's80')}<h2 style="margin-top:12px">${esc(ch.user.display_name)}</h2><p>This is the beginning of your direct message history with <b>@${esc(ch.user.username)}</b>.</p></div>`;
+    if (ch.type === 'group') html += `<div class="ch-welcome">${groupAvatar(ch, 's80')}<h2 style="margin-top:12px">${esc(ch.name || 'Group chat')}</h2><p>This is the start of the <b>${esc(ch.name || 'group chat')}</b>. ${ch.member_count} people are here.</p></div>`;
+    else if (ch.type === 'dm') html += `<div class="ch-welcome">${avatar(ch.user, 's80')}<h2 style="margin-top:12px">${esc(ch.user.display_name)}</h2><p>This is the beginning of your direct message history with <b>@${esc(ch.user.username)}</b>.</p></div>`;
     else html += `<div class="ch-welcome"><div class="big orbit-ring">${ch.private ? I.lock : I.hash}</div><h2>Welcome to #${esc(ch.name)}!</h2><p>This is the start of the #${esc(ch.name)} channel.${ch.topic ? ' ' + esc(ch.topic) : ''}</p></div>`;
   }
   let prev = null, lastDay = '';
@@ -607,7 +618,7 @@ function messageHtml(m, sid, prev, isParent) {
   const tag = sd && m.author_id === sd.owner_id ? '' : '';
   return `<div class="msg ${grouped ? '' : 'head'} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
-    <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
+    <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
       ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
     </div>${tools}</div>`;
 }
@@ -707,7 +718,7 @@ function onMessageNew(m) {
   const viewing = S.view.channel === m.channel_id && document.hasFocus() && !document.hidden;
   const box = containersFor(m.channel_id)[0];
   const atBottom = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
-  const mentioned = m.mention_everyone || (m.mentions || []).includes(S.me.id) || ch.type === 'dm';
+  const mentioned = m.mention_everyone || (m.mentions || []).includes(S.me.id) || isDM(ch);
   if (!m.thread_id && !(viewing && atBottom)) {
     const u = S.unread[m.channel_id] || { count: 0, mentions: 0, server_id: ch.server_id || null };
     u.count++; if (mentioned) u.mentions++;
@@ -720,7 +731,7 @@ function notify(m, ch) {
   beep('msg');
   if (!S.prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   const sid = ch.server_id;
-  const title = ch.type === 'dm' ? nameIn(null, m.author_id) : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
+  const title = ch.type === 'dm' ? nameIn(null, m.author_id) : ch.type === 'group' ? `${nameIn(null, m.author_id)} (${ch.name || 'Group chat'})` : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
   try {
     const n = new Notification(title, { body: plainPreview(m.content) || 'Sent an attachment', icon: user(m.author_id).avatar || LOGO, tag: 'orbit-' + m.channel_id });
     n.onclick = () => { window.focus(); selectChannel(m.channel_id); n.close(); };
@@ -741,12 +752,12 @@ window.addEventListener('focus', () => { if (S.view.channel) markRead(S.view.cha
 /* ================= COMPOSER ================= */
 function composerHtml(ch, thread) {
   const sd = ch.server_id && S.serverData[ch.server_id];
-  const canSend = ch.type === 'dm' || can(PERM.SEND, ch.server_id);
-  const placeholder = thread ? 'Message thread' : !canSend ? 'You do not have permission to send messages in this channel.' : ch.type === 'dm' ? `Message @${ch.user.display_name}` : `Message #${ch.name}`;
+  const canSend = isDM(ch) || can(PERM.SEND, ch.server_id);
+  const placeholder = thread ? 'Message thread' : !canSend ? 'You do not have permission to send messages in this channel.' : ch.type === 'dm' ? `Message @${ch.user.display_name}` : ch.type === 'group' ? `Message ${ch.name || 'the group'}` : `Message #${ch.name}`;
   return `<div class="composer" data-cid="${ch.id}" ${thread ? `data-thread="${thread}"` : ''}>
     <div class="reply-slot"></div><div class="attach-slot"></div>
     <div class="cbox ${canSend ? '' : 'disabled'}">
-      ${canSend && (ch.type === 'dm' || can(PERM.ATTACH, ch.server_id)) ? `<button class="icon-btn" data-attach title="Upload a file">${I.plus}</button>` : ''}
+      ${canSend && (isDM(ch) || can(PERM.ATTACH, ch.server_id)) ? `<button class="icon-btn" data-attach title="Upload a file">${I.plus}</button>` : ''}
       <textarea rows="1" placeholder="${esc(placeholder)}" ${canSend ? '' : 'disabled'} maxlength="4000"></textarea>
       ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button><button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
     </div><input type="file" multiple hidden>
@@ -859,7 +870,7 @@ function mentionAutocomplete(comp, ta, cid) {
   if (!mm) return;
   const q = mm[2].toLowerCase();
   const ch = findChannel(cid);
-  let pool = ch.type === 'dm' ? [S.me, ch.user] : (S.serverData[ch.server_id]?.members || []);
+  let pool = ch.type === 'dm' ? [S.me, ch.user] : ch.type === 'group' ? (ch.members || []) : (S.serverData[ch.server_id]?.members || []);
   pool = pool.filter(u => u.username.toLowerCase().startsWith(q) || (u.display_name || '').toLowerCase().startsWith(q) || (ch.server_id && nameIn(ch.server_id, u.id).toLowerCase().startsWith(q))).slice(0, 8);
   const extra = ch.type !== 'dm' && can(PERM.MENTION_EVERYONE, ch.server_id) ? ['everyone', 'here'].filter(x => x.startsWith(q)) : [];
   if (!pool.length && !extra.length) return;
@@ -969,7 +980,7 @@ function profileCardHtml(u, opts = {}) {
     <div class="avwrap">${avatar(u, 's80', true)}</div>
     ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
     <div class="inner">
-      <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}</div>
+      <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}${badgeHtml(u)}</div>
       <div class="un">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</div>
       ${u.status_text ? `<div class="stt">${esc(u.status_text)}</div>` : ''}
       <div class="activity-slot">${activityHtml(u.id)}</div>
@@ -1136,18 +1147,63 @@ function channelSettingsModal(cid) {
   });
 }
 function deleteChannel(c) { confirmModal('Delete Channel', `Are you sure you want to delete <b>${c.type === 'voice' ? '' : '#'}${esc(c.name)}</b>? This cannot be undone.`, 'Delete Channel', () => api('DELETE', '/api/channels/' + c.id)); }
-function newDmModal() {
+function peopleIKnow() {
   const people = new Map();
   Object.values(S.serverData).forEach(sd => sd.members.forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)));
-  S.dms.forEach(d => people.set(d.user.id, d.user));
-  const list = [...people.values()];
-  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Select a person</h2><p>Start a conversation with someone you share a server with.</p></div>
+  S.dms.forEach(d => { if (d.user && d.user.id !== S.me.id) people.set(d.user.id, S.users[d.user.id] || d.user); (d.members || []).forEach(m => m.id !== S.me.id && people.set(m.id, S.users[m.id] || m)); });
+  return [...people.values()];
+}
+function newDmModal() {
+  const list = peopleIKnow();
+  const picked = new Set();
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>New message</h2><p>Pick one person for a direct message, or several for a group chat (up to 35).</p></div>
+    <div class="mb"><input class="input" placeholder="Type a username"><div class="chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div><div class="pl" style="margin-top:10px;max-height:300px;overflow:auto"></div></div>
+    <div class="mf"><span class="sp"></span><button class="btn primary" data-go disabled>Message</button></div>`, (m, close) => {
+    const draw = (q = '') => { const f = list.filter(u => !q || u.username.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q));
+      $('.pl', m).innerHTML = f.length ? f.map(u => `<button class="ac-item ${picked.has(u.id) ? 'sel' : ''}" data-u="${u.id}">${avatar(u, 's32', true)}<span>${esc(u.display_name)}</span><small>@${esc(u.username)}</small><span class="pick-check">${picked.has(u.id) ? I.check.replace('width="20" height="20"', 'width="16" height="16"') : ''}</span></button>`).join('') : '<p style="color:var(--muted);padding:8px">No one found. Join a server to meet people.</p>'; };
+    const sync = () => {
+      $('.chips', m).innerHTML = [...picked].map(id => { const u = user(id); return `<span class="pchip">${avatar(u, 's24')}${esc(u.display_name)}<button data-un="${id}">${I.x.replace('width="20" height="20"', 'width="12" height="12"')}</button></span>`; }).join('');
+      const go = $('[data-go]', m); go.disabled = picked.size === 0; go.textContent = picked.size > 1 ? `Create group (${picked.size})` : 'Message';
+    };
+    draw(); sync();
+    $('input', m).oninput = (e) => draw(e.target.value.toLowerCase());
+    $('.pl', m).onclick = (e) => { const b = e.target.closest('[data-u]'); if (!b) return; const id = b.dataset.u; picked.has(id) ? picked.delete(id) : (picked.size < 35 && picked.add(id)); draw($('input', m).value.toLowerCase()); sync(); };
+    $('.chips', m).onclick = (e) => { const b = e.target.closest('[data-un]'); if (b) { picked.delete(b.dataset.un); draw($('input', m).value.toLowerCase()); sync(); } };
+    $('[data-go]', m).onclick = async () => {
+      const ids = [...picked]; close();
+      try { const entry = ids.length > 1 ? await api('POST', '/api/groups', { members: ids }) : await openDM(ids[0]);
+        if (ids.length > 1 && entry) { if (!S.dms.find(d => d.id === entry.id)) S.dms.unshift(entry); (entry.members || []).forEach(x => S.users[x.id] = { ...S.users[x.id], ...x }); S.view.server = '@me'; selectChannel(entry.id, true); renderRail(); showMainMobile(); }
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+}
+function addToGroupModal(cid) {
+  const ch = findChannel(cid); if (!ch) return;
+  const inGroup = new Set((ch.members || []).map(m => m.id));
+  const list = peopleIKnow().filter(u => !inGroup.has(u.id));
+  const room = 35 - (ch.member_count || inGroup.size);
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Add people</h2><p>${room > 0 ? `You can add ${room} more.` : 'This group is full (35).'}</p></div>
     <div class="mb"><input class="input" placeholder="Type a username"><div class="pl" style="margin-top:10px;max-height:320px;overflow:auto"></div></div>`, (m, close) => {
     const draw = (q = '') => { const f = list.filter(u => !q || u.username.toLowerCase().includes(q) || u.display_name.toLowerCase().includes(q));
-      $('.pl', m).innerHTML = f.length ? f.map(u => `<button class="ac-item" data-u="${u.id}">${avatar(u, 's32', true)}<span>${esc(u.display_name)}</span><small>@${esc(u.username)}</small></button>`).join('') : '<p style="color:var(--muted);padding:8px">No one found. Join a server to meet people.</p>'; };
+      $('.pl', m).innerHTML = f.length ? f.map(u => `<button class="ac-item" data-u="${u.id}" ${room <= 0 ? 'disabled style="opacity:.5"' : ''}>${avatar(u, 's32', true)}<span>${esc(u.display_name)}</span><small>@${esc(u.username)}</small></button>`).join('') : '<p style="color:var(--muted);padding:8px">Everyone you know is already here.</p>'; };
     draw();
     $('input', m).oninput = (e) => draw(e.target.value.toLowerCase());
-    $('.pl', m).onclick = (e) => { const b = e.target.closest('[data-u]'); if (b) { close(); openDM(b.dataset.u); } };
+    $('.pl', m).onclick = async (e) => { const b = e.target.closest('[data-u]'); if (!b || room <= 0) return; try { await api('POST', `/api/channels/${cid}/recipients`, { user_id: b.dataset.u }); close(); } catch (er) { toast(er.message, true); } };
+  });
+}
+function groupSettingsModal(cid) {
+  const ch = findChannel(cid); if (!ch) return;
+  const isOwner = ch.owner === S.me.id;
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh"><label class="upload-circle" data-icon style="margin-bottom:10px">${ch.icon ? `<img src="${esc(ch.icon)}">` : I.group}<input type="file" accept="image/*" hidden></label>
+    <input class="input" name="name" maxlength="60" value="${esc(ch.name || '')}" placeholder="Group name" style="text-align:center"></div>
+    <div class="mb"><h3 style="font-size:13px;color:var(--muted);margin-bottom:8px">${ch.member_count} members</h3><div class="gmembers">${(ch.members || []).map(u => `<div class="list-row">${avatar(u, 's32', true)}<div class="grow"><b>${esc(u.display_name)}${badgeHtml(u)}</b><small>@${esc(u.username)}${u.id === ch.owner ? ' · owner' : ''}</small></div>${isOwner && u.id !== S.me.id ? `<button class="icon-btn danger" data-remove="${u.id}" title="Remove">${I.x}</button>` : ''}</div>`).join('')}</div>
+    <button class="btn secondary sm" data-add style="margin-top:10px">${I.invite} Add people</button></div>
+    <div class="mf"><button class="btn danger" data-leave>Leave group</button><span class="sp"></span><button class="btn ghost" data-close>Close</button><button class="btn primary" data-save>Save</button></div>`, (m, close) => {
+    $('[data-icon] input', m).onchange = async (e) => { const f = e.target.files[0]; if (!f) return; const fd = new FormData(); fd.append('file', f); try { await upload(`/api/groups/${cid}/icon`, fd); toast('Group icon updated'); } catch (er) { toast(er.message, true); } };
+    $('[data-save]', m).onclick = async () => { try { await api('PATCH', '/api/groups/' + cid, { name: $('[name=name]', m).value.trim() }); close(); } catch (er) { toast(er.message, true); } };
+    $('[data-add]', m).onclick = () => { close(); addToGroupModal(cid); };
+    $('[data-leave]', m).onclick = () => confirmModal('Leave group', `Leave <b>${esc(ch.name || 'this group')}</b>? You’ll need to be added back to rejoin.`, 'Leave', async () => { await api('DELETE', `/api/channels/${cid}/recipients/${S.me.id}`); if (S.view.channel === cid) selectServer('@me'); });
+    $('.gmembers', m).onclick = async (e) => { const b = e.target.closest('[data-remove]'); if (b) { try { await api('DELETE', `/api/channels/${cid}/recipients/${b.dataset.remove}`); groupSettingsModal(cid); close(); } catch (er) { toast(er.message, true); } } const uu = e.target.closest('[data-uid]'); };
   });
 }
 function memberRolesModal(sid, uidv) {

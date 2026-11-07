@@ -30,7 +30,9 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
+const STAFF = new Set((process.env.STAFF_USERS || '..').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
+const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
 const all0 = (db, sql) => db.prepare(sql).all();
 const now = () => Date.now();
@@ -105,6 +107,8 @@ function start(opts = {}) {
     CREATE TABLE IF NOT EXISTS reads(user_id TEXT, channel_id TEXT, last_id INTEGER, PRIMARY KEY(user_id,channel_id));
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
+  const chanCols = all0(db, "PRAGMA table_info(channels)").map(c => c.name);
+  [['is_group', 'INTEGER DEFAULT 0'], ['gc_owner', 'TEXT'], ['gc_icon', 'TEXT']].forEach(([c, t]) => { if (!chanCols.includes(c)) db.exec(`ALTER TABLE channels ADD COLUMN ${c} ${t}`); });
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
@@ -120,8 +124,9 @@ function start(opts = {}) {
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
     theme_primary: u.theme_primary || null, theme_accent: u.theme_accent || null, name_color: u.name_color || null, name_color2: u.name_color2 || null,
     avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []),
-    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null });
+    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()) });
   const getUser = (id) => publicUser(one('SELECT * FROM users WHERE id=?', id));
+  const nameOf = (id) => getUser(id)?.display_name || getUser(id)?.username || 'Someone';
   const isMember = (sid, uidv) => !!one('SELECT 1 FROM members WHERE server_id=? AND user_id=?', sid, uidv);
   function permsOf(sid, uidv) {
     const s = one('SELECT owner_id FROM servers WHERE id=?', sid);
@@ -185,12 +190,23 @@ function start(opts = {}) {
       channels, roles, members, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
+  function groupName(c, uidv, members) {
+    if (c.name) return c.name;
+    const others = members.filter(id => id !== uidv).map(id => getUser(id)?.display_name).filter(Boolean);
+    return others.length ? others.join(', ') : 'Group chat';
+  }
+  function dmEntry(c, uidv) {
+    const memberIds = all('SELECT user_id FROM dm_members WHERE channel_id=?', c.id).map(r => r.user_id);
+    const last = one('SELECT MAX(id) id, MAX(created) t FROM messages WHERE channel_id=?', c.id);
+    const base = { id: c.id, last_id: last?.id || 0, last_at: last?.t || c.created };
+    if (c.is_group) return { ...base, type: 'group', name: groupName(c, uidv, memberIds), icon: c.gc_icon || null, owner: c.gc_owner,
+      members: memberIds.map(getUser).filter(Boolean), member_count: memberIds.length };
+    const other = memberIds.find(id => id !== uidv) || uidv;
+    return { ...base, type: 'dm', user: getUser(other) };
+  }
   function dmList(uidv) {
-    return all(`SELECT c.* FROM channels c JOIN dm_members d ON d.channel_id=c.id WHERE c.type='dm' AND d.user_id=?`, uidv).map(c => {
-      const other = one('SELECT user_id FROM dm_members WHERE channel_id=? AND user_id<>?', c.id, uidv);
-      const last = one('SELECT MAX(id) id, MAX(created) t FROM messages WHERE channel_id=?', c.id);
-      return { id: c.id, type: 'dm', user: getUser(other ? other.user_id : uidv), last_id: last?.id || 0, last_at: last?.t || c.created };
-    }).sort((a, b) => b.last_at - a.last_at);
+    return all(`SELECT c.* FROM channels c JOIN dm_members d ON d.channel_id=c.id WHERE c.type='dm' AND d.user_id=?`, uidv)
+      .map(c => dmEntry(c, uidv)).sort((a, b) => b.last_at - a.last_at);
   }
   function unreadFor(uidv) {
     // per visible channel: unread count + mention count since last read
@@ -679,7 +695,7 @@ function start(opts = {}) {
   app.post('/api/dms', auth, wrap((req, res) => {
     const other = req.body?.user_id;
     if (!other || !getUser(other)) throw err(404, 'User not found');
-    let ch = one(`SELECT c.* FROM channels c WHERE c.type='dm' AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?)
+    let ch = one(`SELECT c.* FROM channels c WHERE c.type='dm' AND c.is_group=0 AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?)
       AND (SELECT COUNT(*) FROM dm_members WHERE channel_id=c.id)=?`, req.user.id, other, other === req.user.id ? 1 : 2);
     if (!ch) {
       const id = uid();
@@ -690,7 +706,87 @@ function start(opts = {}) {
       });
       ch = chanRow(id);
     }
-    res.json({ id: ch.id, type: 'dm', user: getUser(other), last_id: 0, last_at: ch.created });
+    res.json(dmEntry(chanRow(ch.id), req.user.id));
+  }));
+
+  function gcSystem(cid, text) {
+    const r = run('INSERT INTO messages(channel_id,author_id,content,created,system) VALUES(?,?,?,?,1)', cid, null, text, now());
+    emitToChannel(chanRow(cid), 'message:new', msgById(Number(r.lastInsertRowid)));
+  }
+  function pushDm(cid) {
+    const ch = chanRow(cid);
+    all('SELECT user_id FROM dm_members WHERE channel_id=?', cid).forEach(r => io.to('u:' + r.user_id).emit('dm:update', dmEntry(ch, r.user_id)));
+  }
+  // create a group chat (or a 1-1 DM when only one other person is chosen)
+  app.post('/api/groups', auth, wrap((req, res) => {
+    const ids = [...new Set((Array.isArray(req.body?.members) ? req.body.members : []).filter(x => x && x !== req.user.id && getUser(x)))];
+    if (!ids.length) throw err(400, 'Pick at least one person');
+    if (ids.length + 1 > GROUP_MAX) throw err(400, `Group chats can have up to ${GROUP_MAX} people`);
+    if (ids.length === 1) {
+      // fall back to a normal DM
+      let ch = one(`SELECT c.* FROM channels c WHERE c.type='dm' AND c.is_group=0 AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND (SELECT COUNT(*) FROM dm_members WHERE channel_id=c.id)=2`, req.user.id, ids[0]);
+      if (!ch) { const id = uid(); tx(() => { run(`INSERT INTO channels(id,server_id,type,name,created) VALUES(?,NULL,'dm','',?)`, id, now()); run('INSERT INTO dm_members VALUES(?,?)', id, req.user.id); run('INSERT INTO dm_members VALUES(?,?)', id, ids[0]); }); ch = chanRow(id); }
+      return res.json(dmEntry(chanRow(ch.id), req.user.id));
+    }
+    const id = uid();
+    tx(() => {
+      run(`INSERT INTO channels(id,server_id,type,name,is_group,gc_owner,created) VALUES(?,NULL,'dm','',1,?,?)`, id, req.user.id, now());
+      run('INSERT INTO dm_members VALUES(?,?)', id, req.user.id);
+      ids.forEach(u => run('INSERT INTO dm_members VALUES(?,?)', id, u));
+    });
+    gcSystem(id, `${req.user.display_name || req.user.username} started a group chat.`);
+    pushDm(id);
+    res.json(dmEntry(chanRow(id), req.user.id));
+  }));
+  const isGroupMember = (cid, uidv) => !!one('SELECT 1 FROM dm_members WHERE channel_id=? AND user_id=?', cid, uidv);
+  app.post('/api/channels/:id/recipients', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || !ch.is_group || !isGroupMember(ch.id, req.user.id)) throw err(403, 'No access');
+    const target = req.body?.user_id;
+    if (!getUser(target)) throw err(404, 'User not found');
+    if (isGroupMember(ch.id, target)) throw err(400, 'They are already in this group');
+    const count = one('SELECT COUNT(*) c FROM dm_members WHERE channel_id=?', ch.id).c;
+    if (count >= GROUP_MAX) throw err(400, `Group chats can have up to ${GROUP_MAX} people`);
+    run('INSERT INTO dm_members VALUES(?,?)', ch.id, target);
+    io.to('u:' + target).emit('dm:update', dmEntry(chanRow(ch.id), target));
+    gcSystem(ch.id, `${nameOf(req.user.id)} added ${nameOf(target)}.`);
+    pushDm(ch.id);
+    res.json({ ok: true });
+  }));
+  app.delete('/api/channels/:id/recipients/:uid', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    const target = req.params.uid;
+    if (!ch || !ch.is_group) throw err(404, 'Not found');
+    const self = target === req.user.id;
+    if (!self && ch.gc_owner !== req.user.id) throw err(403, 'Only the group owner can remove people');
+    if (!isGroupMember(ch.id, target)) throw err(404, 'Not in this group');
+    run('DELETE FROM dm_members WHERE channel_id=? AND user_id=?', ch.id, target);
+    io.to('u:' + target).emit('server:removed', { channel_id: ch.id, group: true });
+    io.in('u:' + target).socketsLeave('dm:' + ch.id);
+    for (const [cid, room] of voice) if (cid === ch.id && room.has(target)) leaveVoice(target);
+    const remaining = all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id);
+    if (!remaining.length) { run('DELETE FROM channels WHERE id=?', ch.id); return res.json({ ok: true }); }
+    if (self && ch.gc_owner === target) run('UPDATE channels SET gc_owner=? WHERE id=?', remaining[0], ch.id);
+    gcSystem(ch.id, self ? `${nameOf(target)} left the group.` : `${nameOf(req.user.id)} removed ${nameOf(target)}.`);
+    pushDm(ch.id);
+    res.json({ ok: true });
+  }));
+  app.patch('/api/groups/:id', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || !ch.is_group || !isGroupMember(ch.id, req.user.id)) throw err(403, 'No access');
+    const name = String(req.body?.name ?? ch.name).slice(0, 60);
+    run('UPDATE channels SET name=? WHERE id=?', name, ch.id);
+    gcSystem(ch.id, `${nameOf(req.user.id)} named the group ${name || 'Group chat'}.`);
+    pushDm(ch.id);
+    res.json({ ok: true });
+  }));
+  app.post('/api/groups/:id/icon', auth, imageOnly.single('file'), wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!ch || !ch.is_group || !isGroupMember(ch.id, req.user.id)) throw err(403, 'No access');
+    if (!req.file) throw err(400, 'Upload an image');
+    run('UPDATE channels SET gc_icon=? WHERE id=?', fileUrl(req.file), ch.id);
+    pushDm(ch.id);
+    res.json({ ok: true });
   }));
 
   // ----- messages -----
@@ -745,7 +841,7 @@ function start(opts = {}) {
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, msg.id);
     emitToChannel(ch, 'message:new', msg);
     if (thread) emitToChannel(ch, 'message:update', msgById(thread.id));
-    if (ch.type === 'dm') viewersOf(ch).forEach(v => io.to('u:' + v).emit('dm:activity', { channel_id: ch.id, user: getUser(viewersOf(ch).find(x => x !== v) || v) }));
+    if (ch.type === 'dm') viewersOf(ch).forEach(v => io.to('u:' + v).emit('dm:update', dmEntry(ch, v)));
     stopTyping(ch.id, req.user.id);
     res.json(msg);
   }));
