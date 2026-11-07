@@ -21,11 +21,13 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#5865f2', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
 try { Object.assign(S.prefs, JSON.parse(localStorage.getItem('orbit-prefs') || '{}')); } catch {}
+// 1.8: move everyone still on the old purple default to the new accent (custom picks are kept)
+if (!S.prefs.v18) { if (!S.prefs.accent || S.prefs.accent === '#8b6dff') S.prefs.accent = '#5865f2'; S.prefs.v18 = true; }
 const savePrefs = () => { try { localStorage.setItem('orbit-prefs', JSON.stringify(S.prefs)); } catch {} };
 const RINGTONES = [['ring1', 'Orbital'], ['ring2', 'Orbital II'], ['ring3', 'Orbital III']];
 const NOTIFSOUNDS = [['notif1', 'Ping'], ['notif2', 'Ping II'], ['notif3', 'Ping III']];
@@ -116,11 +118,11 @@ const cropStyle = (c) => c ? `object-position:${c.x}% ${c.y}%;transform-origin:$
 function avatar(u, cls = '', withStatus = false) {
   u = typeof u === 'string' ? user(u) : u;
   const st = withStatus ? `<i class="st ${statusOf(u.id)}"></i>` : '';
-  const a = u.accent || '#8b6dff';
-  return `<div class="av ${cls}" data-uid="${esc(u.id)}" style="background:linear-gradient(140deg,${esc(a)},color-mix(in oklab,${esc(a)} 62%,#0c0a17))">${u.avatar ? `<span class="crop"><img src="${esc(u.avatar)}" alt="" loading="lazy" style="${cropStyle(u.avatar_crop)}"></span>` : `<span class="ini">${esc(initials(u.display_name || u.username))}</span>`}${st}</div>`;
+  const a = u.accent || '#5865f2';
+  return `<div class="av ${cls}" data-uid="${esc(u.id)}" style="background:${esc(a)}">${u.avatar ? `<span class="crop"><img src="${esc(u.avatar)}" alt="" loading="lazy" style="${cropStyle(u.avatar_crop)}"></span>` : `<span class="ini">${esc(initials(u.display_name || u.username))}</span>`}${st}</div>`;
 }
 function bannerHtml(u, cls = 'banner') {
-  const bg = u.banner_color || u.theme_primary || u.accent || '#8b6dff';
+  const bg = u.banner_color || u.theme_primary || u.accent || '#5865f2';
   return `<div class="${cls}" style="background:${esc(bg)}">${u.banner ? `<img src="${esc(u.banner)}" alt="" style="${cropStyle(u.banner_crop)}">` : ''}</div>`;
 }
 function nameStyle(u) {
@@ -152,7 +154,7 @@ const incomingCount = () => (S.friends.incoming || []).length;
 const isFriend = (uid) => friendState(uid) === 'friend';
 function activityLine(uidv) { const a = activityOf(uidv); return a && a.type === 'listening' ? `Listening to ${a.name}` : ''; }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
-function gradFor(str) { const h = hueOf(str); return `linear-gradient(135deg,hsl(${h} 72% 62%),hsl(${(h + 48) % 360} 70% 44%))`; }
+function gradFor(str) { return 'transparent'; }  // server initials sit on the rail's own neutral tile (no gradients)
 function serverIcon(s) { return s.icon ? `<img src="${esc(s.icon)}" alt="">` : `<span class="srv-ini" style="background:${gradFor(s.id + s.name)}">${esc(initials(s.name))}</span>`; }
 
 /* ---------- icons ---------- */
@@ -194,6 +196,8 @@ ic('pin', '<path d="M12 17v5M9 10.8V4h6v6.8l3 3.2v2H6v-2z"/>');
 ic('bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>');
 ic('check', '<path d="M20 6 9 17l-5-5"/>');
 ic('expand', '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>');
+ic('shrink', '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>');
+ic('usersOff', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m2 2 20 20"/>');
 ic('message', '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l2-5.2a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 8.4-9 8.4 8.4 0 0 1 8.5 8.5z"/>');
 ic('music', '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>');
 ic('link', '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>');
@@ -212,7 +216,7 @@ function groupAvatar(g, cls = '') {
   if (g.icon) return `<div class="av ${cls}" style="background:var(--bg-3)"><span class="crop"><img src="${esc(g.icon)}" alt=""></span></div>`;
   const ms = (g.members || []).filter(m => m.id !== S.me.id).slice(0, 2);
   if (ms.length >= 2) return `<div class="av gc ${cls}"><span class="g1">${avatar(ms[0], 's24')}</span><span class="g2">${avatar(ms[1], 's24')}</span></div>`;
-  return `<div class="av ${cls}" style="background:linear-gradient(140deg,#8b6dff,#5b3ee0);color:#fff">${I.group.replace('width="20" height="20"', 'width="18" height="18"')}</div>`;
+  return `<div class="av ${cls}" style="background:var(--accent);color:#fff">${I.group.replace('width="20" height="20"', 'width="18" height="18"')}</div>`;
 }
 
 /* ---------- emoji ---------- */
@@ -290,9 +294,9 @@ const Ringtone = {
 function applyAppearance() {
   const p = S.prefs, r = document.documentElement;
   r.dataset.theme = p.theme || 'dark';
-  r.style.setProperty('--accent', p.accent || '#8b6dff');
-  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#8b6dff'} 78%, white)`);
-  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#8b6dff'} 18%, transparent)`);
+  r.style.setProperty('--accent', p.accent || '#5865f2');
+  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#5865f2'} 78%, white)`);
+  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#5865f2'} 18%, transparent)`);
   r.style.setProperty('--fs', (p.fontSize || 15) + 'px');
   r.classList.toggle('compact', !!p.compact);
   r.classList.toggle('reduce-motion', !!p.reduceMotion);

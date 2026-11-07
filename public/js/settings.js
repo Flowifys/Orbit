@@ -194,8 +194,8 @@ function userConnections(body) {
 function userAppearance(body) {
   const p = S.prefs;
   body.innerHTML = `<h2>Appearance</h2>
-    <h3>Theme</h3><div class="theme-pick">${[['dark', 'Dusk'], ['midnight', 'Midnight'], ['light', 'Daylight']].map(([k, l]) => `<button data-th="${k}" class="${p.theme === k ? 'on' : ''}"><span class="th-prev th-${k}"><i></i><i></i><i></i></span>${l}</button>`).join('')}</div>
-    <h3>Accent color</h3><div class="swatches">${['#8b6dff', '#5b8def', '#22c3b5', '#3fbf74', '#e8b23a', '#ff8a5b', '#ff5c7a', '#e05cb7'].map(c => `<button class="swatch ${c === p.accent ? 'sel' : ''}" data-ac="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-acc value="${esc(p.accent)}"></label></div>
+    <h3>Theme</h3><div class="theme-pick">${[['dark', 'Dark'], ['midnight', 'Midnight'], ['light', 'Light']].map(([k, l]) => `<button data-th="${k}" class="${p.theme === k ? 'on' : ''}"><span class="th-prev th-${k}"><i></i><i></i><i></i></span>${l}</button>`).join('')}</div>
+    <h3>Accent color</h3><div class="swatches">${['#5865f2', '#8b6dff', '#5b8def', '#22c3b5', '#3fbf74', '#e8b23a', '#ff8a5b', '#ff5c7a', '#e05cb7'].map(c => `<button class="swatch ${c === p.accent ? 'sel' : ''}" data-ac="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-acc value="${esc(p.accent)}"></label></div>
     <h3>Message display</h3>
     <label class="row-toggle"><span class="rt">Compact mode<small>Fit more messages on screen and hide avatars on grouped lines.</small></span><span class="toggle"><input type="checkbox" data-pp="compact" ${p.compact ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Reduce motion<small>Turn off animations.</small></span><span class="toggle"><input type="checkbox" data-pp="reduceMotion" ${p.reduceMotion ? 'checked' : ''}><span></span></span></label>

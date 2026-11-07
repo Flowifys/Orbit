@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.7.2';
+const VERSION = '1.8.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');

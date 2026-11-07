@@ -26,8 +26,16 @@ function setupSession() {
     return srcs.map(s => ({ id: s.id, name: s.name, type: s.id.startsWith('screen') ? 'screen' : 'window',
       thumb: s.thumbnail ? s.thumbnail.toDataURL() : '', icon: s.appIcon && !s.appIcon.isEmpty() ? s.appIcon.toDataURL() : null }));
   });
+  let pendingShare = null;
+  ipcMain.handle('orbit:set-share', (e, { id, audio } = {}) => { pendingShare = { id: String(id || ''), audio: !!audio, at: Date.now() }; return true; });
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
     try {
+      // the in-app picker already chose a source
+      if (pendingShare && Date.now() - pendingShare.at < 30000) {
+        const want = pendingShare; pendingShare = null;
+        const src = (await desktopCapturer.getSources({ types: ['screen', 'window'] })).find(s => s.id === want.id);
+        if (src) return cb({ video: src, audio: want.audio && process.platform === 'win32' ? 'loopback' : undefined });
+      }
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       if (!sources.length) return cb({});
       const names = sources.slice(0, 12).map(s => s.name);
@@ -41,7 +49,7 @@ function setupSession() {
 
 function createWindow(url) {
   win = new BrowserWindow({
-    width: 1320, height: 840, minWidth: 420, minHeight: 520, backgroundColor: '#0c0a17', title: 'Orbit ' + app.getVersion(),
+    width: 1320, height: 840, minWidth: 420, minHeight: 520, backgroundColor: '#111214', title: 'Orbit ' + app.getVersion(),
     icon: path.join(__dirname, 'icon-tile.png'), autoHideMenuBar: true, show: false,
     webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
   });
@@ -56,8 +64,8 @@ function createWindow(url) {
   win.webContents.on('will-navigate', (e, u) => { if (!u.startsWith(origin)) { e.preventDefault(); shell.openExternal(u); } });
   win.webContents.on('did-fail-load', (e, code, desc, failed) => {
     if (!failed.startsWith(origin) || code === -3) return;
-    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<body style="margin:0;height:100vh;display:grid;place-items:center;background:#0c0a17;color:#efedff;font-family:system-ui;text-align:center">
-      <div><h2 style="font-weight:600">Can’t reach Orbit</h2><p style="color:#9d98c0">Check your internet connection. Retrying in a few seconds…</p></div>
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(`<body style="margin:0;height:100vh;display:grid;place-items:center;background:#111214;color:#f2f3f5;font-family:system-ui;text-align:center">
+      <div><h2 style="font-weight:600">Can’t reach Orbit</h2><p style="color:#949ba4">Check your internet connection. Retrying in a few seconds…</p></div>
       <script>setTimeout(()=>location.replace(${JSON.stringify(url)}),4000)</script></body>`));
   });
   win.loadURL(url);
