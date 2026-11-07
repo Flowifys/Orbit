@@ -131,6 +131,7 @@ function connectSocket() {
   socket.on('friends:request', ({ from }) => { S.users[from.id] = { ...S.users[from.id], ...from }; playNotif(); toast(`${from.display_name} sent you a friend request`); });
   socket.on('friends:accepted', ({ user: u }) => { S.users[u.id] = { ...S.users[u.id], ...u }; playNotif(); toast(`${u.display_name} accepted your friend request`); });
   socket.on('message:new', onMessageNew);
+  socket.on('timeout', ({ server_id, until, reason }) => { toast(`You were timed out in ${S.serverData[server_id]?.name || 'a server'} until ${new Date(until).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}${reason ? ` — ${reason}` : ''}`, true); });
   socket.on('message:update', (m) => { upsertMessage(m); });
   socket.on('message:delete', ({ id, channel_id, thread_id }) => {
     const key = thread_id ? 't:' + thread_id : channel_id;
@@ -197,7 +198,7 @@ function renderShell() {
 }
 const softRefresh = debounce((full) => { renderSidebar(); renderMembers(); if (full) { renderRail(); renderTopbar(); refreshMessages(S.view.channel); if (S.thread) refreshMessages('t:' + S.thread.id); } renderVoiceArea(); }, 60);
 
-function unreadForServer(sid) { let c = 0, m = 0; for (const [, u] of Object.entries(S.unread)) if (u.server_id === sid) { c += u.count; m += u.mentions; } return { c, m }; }
+function unreadForServer(sid) { let c = 0, m = 0; const sm = isMuted(sid); for (const [cid, u] of Object.entries(S.unread)) if (u.server_id === sid) { if (!sm && !isMuted(cid)) c += u.count; m += u.mentions; } return { c, m }; }
 function renderRail() {
   const rail = $('.rail'); if (!rail) return;
   const dmUnread = S.dms.filter(d => S.unread[d.id]);
@@ -206,7 +207,7 @@ function renderRail() {
     <div class="rail-item ${S.view.server === '@me' ? 'active' : ''}" data-tip="Home"><i class="pill"></i><button class="rail-btn home" data-s="@me"><img src="${LOGO}" alt="Home"></button>${dmMentions ? `<span class="badge">${dmMentions}</span>` : ''}</div>
     ${dmUnread.filter(d => d.id !== S.view.channel).slice(0, 3).map(d => `<div class="rail-item" data-tip="${esc(d.type === 'group' ? (d.name || 'Group chat') : d.user.display_name)}"><i class="pill"></i><button class="rail-btn" data-dm="${d.id}" style="background:none">${d.type === 'group' ? groupAvatar(d, '') : avatar(d.user, '')}</button><span class="badge">${S.unread[d.id].mentions || S.unread[d.id].count}</span></div>`).join('')}
     <div class="rail-sep"></div>
-    ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${u.m}</span>` : ''}</div>`; }).join('')}
+    ${S.servers.map(s => { const u = unreadForServer(s.id); return `<div class="rail-item ${S.view.server === s.id ? 'active' : ''} ${u.c ? 'unread' : ''} ${isMuted(s.id) ? 'muted' : ''}" data-tip="${esc(s.name)}"><i class="pill"></i><button class="rail-btn" data-s="${s.id}">${serverIcon(s)}</button>${u.m ? `<span class="badge">${u.m}</span>` : ''}</div>`; }).join('')}
     <div class="rail-item" data-tip="Add a Server"><button class="rail-btn action" data-add>${I.plus}</button></div>
     <div class="rail-item" data-tip="Join with an invite"><button class="rail-btn action" data-join>${I.compass}</button></div>`;
   rail.onclick = (e) => {
@@ -271,8 +272,8 @@ function renderSidebar() {
         <button class="dm-item ${!S.view.channel ? 'active' : ''}" data-home><span class="icon-btn" style="width:32px">${I.users}</span><span class="nm">Friends</span>${incomingCount() ? `<span class="badge">${incomingCount()}</span>` : ''}</button>
         <div class="cat"><span>Direct messages</span><button data-find title="New message">+</button></div>
         ${S.dms.length ? S.dms.map(d => { const un = S.unread[d.id]; const inCall = (S.voice[d.id] || []).length;
-          if (d.type === 'group') return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${groupAvatar(d, 's32')}<span class="nm">${esc(d.name || 'Group chat')}<small>${d.member_count} members</small></span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`;
-          return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un ? 'unread' : ''}" data-dm="${d.id}">${avatar(d.user, 's32', true)}<span class="nm">${esc(d.user.display_name)}${activityLine(d.user.id) ? `<small>${esc(activityLine(d.user.id))}</small>` : d.user.status_text ? `<small>${esc(d.user.status_text)}</small>` : ''}</span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`; }).join('')
+          if (d.type === 'group') return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un && !isMuted(d.id) ? 'unread' : ''} ${isMuted(d.id) ? 'muted' : ''}" data-dm="${d.id}">${groupAvatar(d, 's32')}<span class="nm">${esc(d.name || 'Group chat')}<small>${d.member_count} members</small></span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`;
+          return `<button class="dm-item ${S.view.channel === d.id ? 'active' : ''} ${un && !isMuted(d.id) ? 'unread' : ''} ${isMuted(d.id) ? 'muted' : ''}" data-dm="${d.id}">${avatar(d.user, 's32', true)}<span class="nm">${esc(d.user.display_name)}${activityLine(d.user.id) ? `<small>${esc(activityLine(d.user.id))}</small>` : d.user.status_text ? `<small>${esc(d.user.status_text)}</small>` : ''}</span>${inCall ? `<span style="color:var(--green)">${I.phone}</span>` : ''}${un ? `<span class="badge">${un.count}</span>` : ''}</button>`; }).join('')
           : `<p style="color:var(--dim);font-size:13px;padding:8px">No conversations yet. Click someone’s name to message them.</p>`}
       </div>${voiceBarHtml()}${userPanelHtml()}`;
   } else {
@@ -282,7 +283,8 @@ function renderSidebar() {
       const un = S.unread[c.id];
       const icon = c.type === 'voice' ? I.speaker : I.hash;
       const people = c.type === 'voice' ? (S.voice[c.id] || []) : [];
-      return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && S.view.channel !== c.id ? 'unread' : ''}" data-ch="${c.id}">
+      const muted = isMuted(c.id) || isMuted(sd.id);
+      return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && !muted && S.view.channel !== c.id ? 'unread' : ''} ${muted ? 'muted' : ''}" data-ch="${c.id}">
         <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
         ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
         <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
@@ -291,10 +293,10 @@ function renderSidebar() {
     const head = `<div class="side-head" data-smenu><span class="sh-icon">${serverIcon(sd)}</span><span class="t">${esc(sd.name)}</span>${I.chevron}</div>`;
     side.innerHTML = `${sd.banner ? `<div class="side-banner" style="background-image:url('${esc(sd.banner)}')">${head}</div>` : head}
       <div class="side-list">
-        <div class="cat"><span>Text channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="text" title="Create channel">+</button>` : ''}</div>
-        ${text.map(chanBtn).join('')}
-        <div class="cat"><span>Voice channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="voice" title="Create channel">+</button>` : ''}</div>
-        ${voice.map(chanBtn).join('')}
+        <div class="cat ${isCollapsed(sd.id + ':text') ? 'collapsed' : ''}" data-collapse="${sd.id}:text"><span>${I.chevron}Text channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="text" title="Create channel">+</button>` : ''}</div>
+        ${text.filter(c => !isCollapsed(sd.id + ':text') || S.view.channel === c.id || (S.unread[c.id] && !isMuted(c.id))).map(chanBtn).join('')}
+        <div class="cat ${isCollapsed(sd.id + ':voice') ? 'collapsed' : ''}" data-collapse="${sd.id}:voice"><span>${I.chevron}Voice channels</span>${can(PERM.MANAGE_CHANNELS) ? `<button data-new="voice" title="Create channel">+</button>` : ''}</div>
+        ${voice.filter(c => !isCollapsed(sd.id + ':voice') || S.view.channel === c.id || Voice.channel === c.id || (S.voice[c.id] || []).length).map(chanBtn).join('')}
       </div>${voiceBarHtml()}${userPanelHtml()}`;
   }
   const list = $('.side-list', side); if (list) list.scrollTop = scroll;
@@ -306,6 +308,7 @@ function renderSidebar() {
     if (t.closest('[data-invite]')) { e.stopPropagation(); return inviteModal(S.view.server); }
     const ed = t.closest('[data-edit]'); if (ed) { e.stopPropagation(); return channelSettingsModal(ed.dataset.edit); }
     const nw = t.closest('[data-new]'); if (nw) return createChannelModal(nw.dataset.new);
+    const col = t.closest('[data-collapse]'); if (col) return toggleCollapsed(col.dataset.collapse);
     const vu = t.closest('.vc-user'); if (vu) return profilePopout(vu.dataset.uid, vu);
     const ch = t.closest('[data-ch]');
     if (ch) { const c = findChannel(ch.dataset.ch); if (c.type === 'voice') { if (Voice.channel !== c.id) Voice.join(c.id); S.view.channel = c.id; saveView(); renderSidebar(); renderMain(); showMainMobile(); } else { selectChannel(c.id); showMainMobile(); } return; }
@@ -313,11 +316,16 @@ function renderSidebar() {
     voiceBarClick(e); userPanelClick(e);
   };
   side.oncontextmenu = (e) => {
+    const dmEl = e.target.closest('[data-dm]');
+    if (dmEl) { e.preventDefault(); const d = S.dms.find(x => x.id === dmEl.dataset.dm); if (!d) return; const label = d.type === 'group' ? (d.name || 'this group') : '@' + d.user.username;
+      return contextMenu(e, [S.unread[d.id] && ['Mark as read', () => markRead(d.id, true)], [isMuted(d.id) ? `Unmute ${esc(label)}` : `Mute ${esc(label)}`, () => toggleMuteId(d.id, label)],
+        d.user && ['Profile', () => profilePopout(d.user.id, dmEl)], d.user && ['Call', () => { selectChannel(d.id); Voice.join(d.id); }], ['Copy channel ID', () => copy(d.id)]]); }
     const ch = e.target.closest('[data-ch]'); if (!ch) return;
     e.preventDefault();
     const c = findChannel(ch.dataset.ch);
     contextMenu(e, [
       S.unread[c.id] && ['Mark as read', () => markRead(c.id, true)],
+      [isMuted(c.id) ? 'Unmute channel' : 'Mute channel', () => toggleMuteId(c.id, (c.type === 'voice' ? '' : '#') + c.name)],
       can(PERM.CREATE_INVITE) && ['Invite people', () => inviteModal(S.view.server)],
       ['Copy channel link', () => copy(location.origin + '/app/' + c.id)],
       can(PERM.MANAGE_CHANNELS) && '-', can(PERM.MANAGE_CHANNELS) && ['Edit channel', () => channelSettingsModal(c.id)],
@@ -337,7 +345,7 @@ function userPanelClick(e) {
   if (e.target.closest('[data-mute]')) Voice.toggleMute();
   else if (e.target.closest('[data-deaf]')) Voice.toggleDeaf();
   else if (e.target.closest('[data-settings]')) openUserSettings();
-  else if (e.target.closest('[data-status]')) statusMenu(e.target.closest('[data-status]'));
+  else if (e.target.closest('[data-status]')) selfProfilePopout(e.target.closest('.user-panel'));
 }
 function statusMenu(anchor) {
   const opts = [['online', 'Online', 'var(--green)'], ['idle', 'Idle', 'var(--yellow)'], ['dnd', 'Do Not Disturb', 'var(--red)'], ['invisible', 'Invisible', '#5d5c6b']];
@@ -371,6 +379,7 @@ function serverRailMenu(e, sid) {
     can(PERM.MANAGE_CHANNELS, sid) && [`Create Channel ${I.plus}`, () => { selectServer(sid); createChannelModal('text'); }],
     ['Edit Server Profile', () => nickModal(sid)],
     unread && [`Mark As Read ${I.check}`, () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
+    [isMuted(sid) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sid, sd.name)],
     ['Copy Server Name', () => copy(sd.name)],
     '-', !owner && ['Leave Server', () => confirmModal('Leave server', `Are you sure you want to leave <b>${esc(sd.name)}</b>? You won’t be able to rejoin unless you are re-invited.`, 'Leave Server', async () => { await api('POST', `/api/servers/${sid}/leave`); }), 'danger'],
     owner && ['Delete Server', () => confirmModal('Delete server', `Delete <b>${esc(sd.name)}</b>? This cannot be undone and removes it for everyone.`, 'Delete', () => api('DELETE', '/api/servers/' + sid)), 'danger'],
@@ -385,6 +394,7 @@ function serverMenu(anchor) {
     can(PERM.MANAGE_CHANNELS) && [`Create Channel ${I.plus}`, () => createChannelModal('text')],
     ['Edit Server Profile', () => nickModal(sd.id)],
     ['Mark all as read', () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
+    [isMuted(sd.id) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sd.id, sd.name)],
     '-', !owner && ['Leave Server', () => confirmModal('Leave server', `Are you sure you want to leave <b>${esc(sd.name)}</b>? You won’t be able to rejoin unless you are re-invited.`, 'Leave Server', async () => { await api('POST', `/api/servers/${sd.id}/leave`); }), 'danger'],
   ], '', 240);
 }
@@ -402,7 +412,7 @@ function renderMain() {
     return;
   }
   if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
-  content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${!isDM(ch) && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
+  content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${(ch.type === 'group' || !isDM(ch)) && S.membersOpen ? '<aside class="members"></aside>' : ''}`;
   renderMembers();
   bindComposer($('.chat .composer', content), ch.id, null);
   bindMessageList($('.messages', content));
@@ -417,24 +427,27 @@ function renderTopbar() {
     const u = S.users[ch.user.id] || ch.user;
     bar.innerHTML = `${back}${avatar(u, 's24', false)}<span class="title" data-uid="${u.id}" style="cursor:pointer">${esc(u.display_name)}</span><span class="topic" style="cursor:default">@${esc(u.username)} · ${statusLabel(statusOf(u.id))}</span>
       <button class="icon-btn" data-call title="Start voice call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
+      <button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button>
       <input class="search" placeholder="Search" data-search>`;
   } else if (ch.type === 'group') {
     bar.innerHTML = `${back}${groupAvatar(ch, 's24')}<span class="title" data-gsettings style="cursor:pointer">${esc(ch.name || 'Group chat')}</span><span class="topic" data-gsettings>${ch.member_count} members</span>
       <button class="icon-btn" data-call title="Start group call">${I.phone}</button><button class="icon-btn" data-vcall title="Start video call">${I.video}</button>
-      <button class="icon-btn" data-gadd title="Add people">${I.invite}</button><button class="icon-btn" data-gmenu title="Group settings">${I.gear}</button>
+      <button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button><button class="icon-btn" data-gadd title="Add people">${I.invite}</button>
+      <button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button><button class="icon-btn" data-gmenu title="Group settings">${I.gear}</button>
       <input class="search" placeholder="Search" data-search>`;
   } else if (ch.type === 'voice') {
     bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span>`;
   } else {
     bar.innerHTML = `${back}<span class="ico">${ch.private ? I.lock : I.hash}</span><span class="title">${esc(ch.name)}</span>
       <span class="topic" data-topic title="${esc(ch.topic || '')}">${esc(ch.topic || (can(PERM.MANAGE_CHANNELS) ? 'Add a channel topic' : ''))}</span>
-      ${S.thread ? '' : ''}<button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button>
+      ${ch.slowmode ? `<span class="slow-tag" title="Slowmode: ${slowLabel(ch.slowmode)}">${I.clock}</span>` : ''}<button class="icon-btn" data-pins title="Pinned messages">${I.pin}</button><button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button>
       <input class="search" placeholder="Search" data-search>`;
   }
   bar.onclick = (e) => {
     if (e.target.closest('[data-back]')) return $('.app').classList.remove('show-main');
     if (e.target.closest('[data-members]')) { S.membersOpen = !S.membersOpen; const m = $('.members'); if (window.innerWidth <= 1100) { if (m) m.classList.toggle('force'); else { S.membersOpen = true; renderMain(); setTimeout(() => $('.members')?.classList.add('force')); } } else renderMain(); return; }
     if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
+    if (e.target.closest('[data-pins]')) return pinsPopout(ch.id, e.target.closest('[data-pins]'));
     if (e.target.closest('[data-call]')) return Voice.join(ch.id);
     if (e.target.closest('[data-vcall]')) return Voice.join(ch.id, { video: true });
     if (e.target.closest('[data-gadd]')) return addToGroupModal(ch.id);
@@ -502,7 +515,8 @@ function renderHome(content) {
 }
 function profileMoreMenu(e, sid, uidv) {
   const st = friendState(uidv);
-  const items = [];
+  const items = [['Copy username', () => copy(user(uidv).username)], ['Copy User ID', () => copy(uidv)], '-'];
+  if (sid && uidv !== S.me.id && can(PERM.KICK, sid) && uidv !== S.serverData[sid]?.owner_id) items.push(member(sid, uidv)?.timeout_until ? ['Remove timeout', () => api('PUT', `/api/servers/${sid}/members/${uidv}/timeout`, { minutes: 0 }).catch(x => toast(x.message, true))] : ['Time out', () => timeoutModal(sid, uidv), 'danger']);
   if (sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && uidv !== S.serverData[sid]?.owner_id) {
     if (can(PERM.KICK, sid)) items.push(['Kick from server', () => kickMember(sid, uidv), 'danger']);
     if (can(PERM.BAN, sid)) items.push(['Ban from server', () => banMember(sid, uidv), 'danger']);
@@ -575,8 +589,10 @@ async function openDM(userId) {
 
 /* ================= MEMBERS ================= */
 function renderMembers() {
-  const box = $('.members'); const sd = curServer(); if (!box || !sd) return;
+  const box = $('.members'); if (!box) return;
   const ch = curChannel();
+  if (ch && ch.type === 'group') return renderGroupMembers(box, ch);
+  const sd = curServer(); if (!sd) return;
   let mem = sd.members;
   if (ch && ch.private) mem = mem.filter(m => m.id === sd.owner_id || (sd.roles.some(r => m.roles.includes(r.id) && ch.allowed_roles.includes(r.id))) || sd.roles.some(r => m.roles.includes(r.id) && (r.perms & PERM.ADMIN)));
   const online = mem.filter(m => statusOf(m.id) !== 'offline'), offline = mem.filter(m => statusOf(m.id) === 'offline');
@@ -589,7 +605,7 @@ function renderMembers() {
   const sortName = (a, b) => nameIn(sd.id, a.id).localeCompare(nameIn(sd.id, b.id));
   box.innerHTML = groups.map(([t, list]) => `<h4>${esc(t)} — ${list.length}</h4>` + list.sort(sortName).map(m => {
     const color = colorIn(sd.id, m.id);
-    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(S.users[m.id] || m)}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
+    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${memBanner(S.users[m.id] || m)}${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(S.users[m.id] || m)}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
   }).join('')).join('');
   box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
   box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (b) { e.preventDefault(); memberMenu(e, sd.id, b.dataset.uid); } };
@@ -602,6 +618,7 @@ function memberMenu(e, sid, uidv) {
     ['Mention', () => { const ta = $('.chat .composer textarea'); if (ta) { ta.value += `@${user(uidv).username} `; ta.focus(); } }],
     ['Copy username', () => copy(user(uidv).username)],
     can(PERM.MANAGE_ROLES, sid) && '-', can(PERM.MANAGE_ROLES, sid) && ['Edit roles', () => memberRolesModal(sid, uidv)],
+    !self && uidv !== sd.owner_id && can(PERM.KICK, sid) && (member(sid, uidv)?.timeout_until ? ['Remove timeout', () => api('PUT', `/api/servers/${sid}/members/${uidv}/timeout`, { minutes: 0 }).catch(x => toast(x.message, true))] : ['Time out ' + nameIn(sid, uidv), () => timeoutModal(sid, uidv), 'danger']),
     !self && uidv !== sd.owner_id && can(PERM.KICK, sid) && ['Kick ' + nameIn(sid, uidv), () => kickMember(sid, uidv), 'danger'],
     !self && uidv !== sd.owner_id && can(PERM.BAN, sid) && ['Ban ' + nameIn(sid, uidv), () => banMember(sid, uidv), 'danger'],
   ]);
@@ -705,7 +722,7 @@ function messageHtml(m, sid, prev, isParent) {
     if (t.startsWith('audio/')) return `<div class="audio-embed" data-audio="${esc(a.url)}"><button class="ae-play">${I.play}</button><div class="ae-main"><div class="ae-name">${esc(a.name)}</div><div class="ae-bar"><div class="ae-fill"></div></div><div class="ae-time"><span class="ae-cur">0:00</span><span class="ae-dur">--:--</span></div></div><a class="ae-dl" href="${esc(a.url)}" download="${esc(a.name)}" title="Download">${I.download}</a></div>`;
     return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
   }).join('');
-  const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).map(([e, v]) => `<button class="react ${v.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(v.map(x => nameIn(sid, x)).join(', '))}">${e}<b>${v.length}</b></button>`).join('');
+  const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).map(([e, v]) => `<button class="react ${v.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(v.map(x => nameIn(sid, x)).join(', '))}">${emojiHtml(e)}<b>${v.length}</b></button>`).join('');
   const body = editing
     ? `<textarea class="edit-box" data-edit="${m.id}" rows="1">${esc(m.content)}</textarea><div class="edit-hint">escape to <button data-cancel-edit>cancel</button> • enter to <button data-save-edit>save</button></div>`
     : `${m.content ? `<div class="text">${formatText(m.content, sid)}${m.edited ? ` <span class="edited" title="${esc(fmtDate(m.edited))}">(edited)</span>` : ''}</div>` : ''}`;
@@ -719,10 +736,10 @@ function messageHtml(m, sid, prev, isParent) {
       ${mine || canManage ? `<button data-act="delete" class="danger" title="Delete">${I.trash}</button>` : ''}
     </div>`;
   const tag = sd && m.author_id === sd.owner_id ? '' : '';
-  return `<div class="msg ${grouped ? '' : 'head'} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
+  return `<div class="msg ${grouped ? '' : 'head'} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
     <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
-      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
+      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
     </div>${tools}</div>`;
 }
 function findMsg(id) {
@@ -732,6 +749,7 @@ function findMsg(id) {
 }
 function bindMessageList(box) {
   const key = () => box.dataset.key;
+  setupJumpBar(box);
   box.addEventListener('scroll', () => { if (box.scrollTop < 200 && S.hasMore[key()] && !S.loading[key()]) loadMessages(key(), true); if (box.scrollHeight - box.scrollTop - box.clientHeight < 40) markRead(S.view.channel); });
   box.addEventListener('click', async (e) => {
     const t = e.target;
@@ -747,6 +765,8 @@ function bindMessageList(box) {
     const jump = t.closest('[data-jump]'); if (jump) return jumpTo(Number(jump.dataset.jump));
     if (!m) return;
     const r = t.closest('[data-react]'); if (r) return toggleReaction(m.id, r.dataset.react);
+    const v = t.closest('[data-vote]'); if (v) return api('PUT', `/api/messages/${m.id}/poll/${v.dataset.vote}`).catch(x => toast(x.message, true));
+    if (t.closest('[data-unembed]')) return api('DELETE', `/api/messages/${m.id}/embeds`).catch(x => toast(x.message, true));
     const q = t.closest('[data-quick]'); if (q) return toggleReaction(m.id, q.dataset.quick);
     if (t.closest('[data-open-thread]')) return openThread(m);
     if (t.closest('[data-cancel-edit]')) { S.editing = null; return refreshMessages(key()); }
@@ -776,7 +796,9 @@ function bindMessageList(box) {
       mine && ['Edit message', () => { S.editing = m.id; refreshMessages(key()); }],
       ['Reply', () => startReply(m, box.closest('.chat, .thread-panel'))],
       !m.thread_id && !key().startsWith('t:') && ['Create thread', () => openThread(m)],
+      canPinIn(m.channel_id) && !m._pending && (m.pinned ? ['Unpin message', () => api('DELETE', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))] : ['Pin message', () => api('PUT', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))]),
       ['Copy text', () => copy(m.content)],
+      ['Copy message ID', () => copy(String(m.id))],
       img && ['Copy image link', () => copy(location.origin + img.getAttribute('src'))],
       ['Mark unread', () => { S.unread[S.view.channel] = { count: 1, mentions: 0, server_id: sid }; renderSidebar(); renderRail(); }],
       (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && '-', (mine || (sid && can(PERM.MANAGE_MESSAGES, sid))) && ['Delete message', () => confirmModal('Delete Message', 'Are you sure you want to delete this message?', 'Delete', () => api('DELETE', '/api/messages/' + m.id)), 'danger'],
@@ -824,6 +846,8 @@ function onMessageNew(m) {
   const box = containersFor(m.channel_id)[0];
   const atBottom = box && box.scrollHeight - box.scrollTop - box.clientHeight < 120;
   const mentioned = m.mention_everyone || (m.mentions || []).includes(S.me.id) || isDM(ch);
+  const directMention = (m.mentions || []).includes(S.me.id) || ch.type === 'dm';
+  if (chanMuted(m.channel_id) && !directMention) { if (!m.thread_id && !(viewing && atBottom)) { const u = S.unread[m.channel_id] || { count: 0, mentions: 0, server_id: ch.server_id || null }; u.count++; S.unread[m.channel_id] = u; renderSidebar(); renderRail(); } else if (viewing) markRead(m.channel_id); return; }
   if (!m.thread_id && !(viewing && atBottom)) {
     const u = S.unread[m.channel_id] || { count: 0, mentions: 0, server_id: ch.server_id || null };
     u.count++; if (mentioned) u.mentions++;
@@ -857,14 +881,16 @@ window.addEventListener('focus', () => { if (S.view.channel) markRead(S.view.cha
 /* ================= COMPOSER ================= */
 function composerHtml(ch, thread) {
   const sd = ch.server_id && S.serverData[ch.server_id];
-  const canSend = isDM(ch) || can(PERM.SEND, ch.server_id);
-  const placeholder = thread ? 'Message thread' : !canSend ? 'You do not have permission to send messages in this channel.' : ch.type === 'dm' ? `Message @${ch.user.display_name}` : ch.type === 'group' ? `Message ${ch.name || 'the group'}` : `Message #${ch.name}`;
+  const timedOut = ch.server_id ? myTimeout(ch.server_id) : 0;
+  const canSend = (isDM(ch) || can(PERM.SEND, ch.server_id)) && !timedOut;
+  const placeholder = timedOut ? `You’re timed out until ${new Date(timedOut).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}` : thread ? 'Message thread' : !canSend ? 'You do not have permission to send messages in this channel.' : ch.type === 'dm' ? `Message @${ch.user.display_name}` : ch.type === 'group' ? `Message ${ch.name || 'the group'}` : `Message #${ch.name}`;
   return `<div class="composer" data-cid="${ch.id}" ${thread ? `data-thread="${thread}"` : ''}>
     <div class="reply-slot"></div><div class="attach-slot"></div>
     <div class="cbox ${canSend ? '' : 'disabled'}">
       ${canSend && (isDM(ch) || can(PERM.ATTACH, ch.server_id)) ? `<button class="icon-btn" data-attach title="Upload a file">${I.plus}</button>` : ''}
       <textarea rows="1" placeholder="${esc(placeholder)}" ${canSend ? '' : 'disabled'} maxlength="4000"></textarea>
       ${canSend && S.info.gif ? `<button class="icon-btn gif-btn" data-gif title="GIF">GIF</button>` : ''}
+      ${canSend && ch.slowmode && !bypassSlow(ch) ? `<span class="slow-ind" title="Slowmode is on: one message every ${slowLabel(ch.slowmode)}">${I.clock}<span></span></span>` : ''}
       ${canSend ? `<button class="icon-btn" data-emoji title="Emoji">${I.smile}</button><button class="send-btn" data-send title="Send (Enter)">${I.arrow}</button>` : ''}
     </div><input type="file" multiple hidden>
     ${thread ? '' : '<div class="typing"></div>'}</div>`;
@@ -902,13 +928,13 @@ function bindComposer(comp, cid, threadId) {
     slot.onclick = (e) => { if (e.target.closest('[data-cancel]')) comp._setReply(null); if (e.target.closest('[data-ping]')) { state.mentionReply = !state.mentionReply; comp._setReply(m); } };
     ta.focus();
   };
-  $('[data-attach]', comp)?.addEventListener('click', () => file.click());
+  $('[data-attach]', comp)?.addEventListener('click', (e) => attachMenu(e.currentTarget, comp, cid, threadId));
   const sendBtn = $('[data-send]', comp);
   const syncSend = () => sendBtn && sendBtn.classList.toggle('ready', !!(ta.value.trim() || state.files.length));
   sendBtn?.addEventListener('click', () => { send(); syncSend(); });
   ta.addEventListener('input', syncSend); comp._syncSend = syncSend;
   file.onchange = () => { addFiles(file.files); file.value = ''; };
-  $('[data-emoji]', comp)?.addEventListener('click', (e) => emojiPicker(e.currentTarget, (em) => { insertAtCursor(ta, em); }, true));
+  $('[data-emoji]', comp)?.addEventListener('click', (e) => emojiPicker(e.currentTarget, (em, info) => { insertAtCursor(ta, info ? `:${info.name}: ` : em); }, true));
   $('[data-gif]', comp)?.addEventListener('click', (e) => gifPicker(e.currentTarget, cid, threadId, state, comp));
   ta.addEventListener('paste', (e) => { const fs = [...(e.clipboardData?.files || [])]; if (fs.length) { e.preventDefault(); addFiles(fs); } });
   let lastTyping = 0;
@@ -943,8 +969,11 @@ function bindComposer(comp, cid, threadId) {
     zone.addEventListener('drop', (e) => { e.preventDefault(); depth = 0; $('.drop-overlay', zone)?.remove(); if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files); });
   }
   async function send() {
-    const content = ta.value.trim();
+    const chNow = findChannel(cid);
+    const content = resolveEmojiText(ta.value.trim(), chNow?.server_id);
     if (!content && !state.files.length) return;
+    const wait = Math.ceil(((S.slowUntil[cid] || 0) - Date.now()) / 1000);
+    if (wait > 0) return toast(`Slowmode is on. You can send another message in ${fmtWait(wait)}.`, true);
     if (content.length > 4000) return toast('Message is too long (4000 characters max)', true);
     const key = threadId ? 't:' + threadId : cid;
     const form = new FormData();
@@ -958,6 +987,7 @@ function bindComposer(comp, cid, threadId) {
     ta.value = ''; S.drafts[draftKey] = ''; autoGrow(ta);
     state.files.forEach(f => f._url && URL.revokeObjectURL(f._url));
     state.files = []; renderAttach(); comp._setReply(null); comp._syncSend && comp._syncSend();
+    if (chNow && chNow.slowmode && !bypassSlow(chNow)) S.slowUntil[cid] = Date.now() + chNow.slowmode * 1000;
     try {
       const m = await upload(`/api/channels/${cid}/messages`, form, hadFiles ? (p) => { const el = $(`[data-mid="${temp.id}"] .text`); if (el) el.textContent = `${content ? content + ' — ' : ''}Uploading… ${Math.round(p * 100)}%`; } : null);
       const list = S.messages[key];
@@ -1035,14 +1065,20 @@ async function runSearch(cid, q) {
 }
 
 /* ================= POPOUTS / MENUS ================= */
+// popups stack: a menu opened from a profile card sits above it, and clicking outside the menu
+// only closes the menu (not the card underneath), like Discord
+const layerStack = [];
 function layer(onClose) {
-  const l = h('<div class="layer"></div>'); document.body.appendChild(l);
-  const close = () => { l.remove(); pop?.remove(); document.removeEventListener('keydown', esc_); onClose && onClose(); };
+  const z = 100 + layerStack.length * 2;
+  const l = h(`<div class="layer" style="z-index:${z}"></div>`); document.body.appendChild(l);
+  const me = { close: null };
+  const close = () => { if (!l.isConnected) return; l.remove(); pop?.remove(); const i = layerStack.indexOf(me); if (i >= 0) layerStack.splice(i, 1); document.removeEventListener('keydown', esc_); onClose && onClose(); };
+  me.close = close; layerStack.push(me);
   let pop = null;
-  const esc_ = (e) => e.key === 'Escape' && close();
+  const esc_ = (e) => { if (e.key === 'Escape' && layerStack[layerStack.length - 1] === me) { e.stopImmediatePropagation(); close(); } };
   document.addEventListener('keydown', esc_);
   l.onmousedown = close; l.oncontextmenu = (e) => { e.preventDefault(); close(); };
-  return { set(el) { pop = el; document.body.appendChild(el); }, close };
+  return { set(el) { pop = el; el.style.zIndex = z + 1; document.body.appendChild(el); }, close };
 }
 function place(el, x, y, opts = {}) {
   const w = el.offsetWidth, hh = el.offsetHeight;
@@ -1117,12 +1153,15 @@ function gifPicker(anchor, cid, threadId, state, comp) {
 function emojiPicker(anchor, onPick, keepOpen) {
   const L = layer();
   const cats = Object.entries(EMOJI);
-  const el = h(`<div class="popout emoji-picker"><input class="input" placeholder="Search emoji by category…"><div class="grid">${cats.map(([c, list]) => `<h6>${c}</h6>` + list.split(' ').map(e => `<button data-e="${e}" data-c="${c.toLowerCase()}">${e}</button>`).join('')).join('')}</div></div>`);
+  const custom = myEmojis();
+  const bySrv = {}; custom.forEach(e => (bySrv[e.server] = bySrv[e.server] || []).push(e));
+  const customHtml = Object.entries(bySrv).map(([srv, list]) => `<h6>${esc(srv)}</h6>` + list.map(e => `<button data-e="<:${esc(e.name)}:${esc(e.id)}>" data-cname="${esc(e.name)}" data-c="${esc(e.name.toLowerCase())} ${esc(srv.toLowerCase())}" title=":${esc(e.name)}:"><img src="${esc(e.url)}" alt=":${esc(e.name)}:" loading="lazy"></button>`).join('')).join('');
+  const el = h(`<div class="popout emoji-picker"><input class="input" placeholder="Search emoji…"><div class="grid">${customHtml}${cats.map(([c, list]) => `<h6>${c}</h6>` + list.split(' ').map(e => `<button data-e="${e}" data-c="${c.toLowerCase()}">${e}</button>`).join('')).join('')}</div></div>`);
   L.set(el);
   const r = anchor.getBoundingClientRect();
   place(el, r.right - 340, r.top - 8, { above: true });
   $('input', el).oninput = (e) => { const q = e.target.value.toLowerCase(); $$('.grid button', el).forEach(b => b.classList.toggle('hidden', q && !b.dataset.c.includes(q))); $$('.grid h6', el).forEach(x => x.classList.toggle('hidden', !!q)); };
-  el.onclick = (e) => { const b = e.target.closest('[data-e]'); if (!b) return; onPick(b.dataset.e); if (!keepOpen || !e.shiftKey) L.close(); };
+  el.onclick = (e) => { const b = e.target.closest('[data-e]'); if (!b) return; onPick(b.dataset.e, b.dataset.cname ? { name: b.dataset.cname } : null); if (!keepOpen || !e.shiftKey) L.close(); };
   if (window.innerWidth > 760) $('input', el).focus();
 }
 function activityHtml(uidv) {
@@ -1195,7 +1234,7 @@ async function profilePopout(uidv, anchor, side) {
     if (await fa('[data-cancelreq]', id => api('DELETE', '/api/friends/' + id))) return;
     if (await fa('[data-unblockp]', id => api('DELETE', `/api/friends/${id}/block`))) return;
     if (e.target.closest('[data-unfriend]')) { L.close(); confirmModal('Remove friend', `Remove <b>${esc(u.display_name)}</b>?`, 'Remove', () => api('DELETE', '/api/friends/' + uidv)); return; }
-    if (e.target.closest('[data-mod]')) { const r = e.target.getBoundingClientRect(); L.close(); profileMoreMenu({ clientX: r.left, clientY: r.bottom }, sid, uidv); }
+    if (e.target.closest('[data-mod]')) { const r = e.target.closest('[data-mod]').getBoundingClientRect(); profileMoreMenu({ clientX: r.left, clientY: r.bottom + 4 }, sid, uidv); }
   };
   const mb = $('.msgbox', el);
   if (mb) mb.onkeydown = async (e) => {
@@ -1335,12 +1374,12 @@ function channelSettingsModal(cid) {
     <div class="mb"><div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
     ${c.type === 'text' ? `<div class="field"><label>Channel topic</label><textarea class="input" name="topic" maxlength="300" placeholder="Let everyone know how to use this channel!">${esc(c.topic || '')}</textarea></div>` : ''}
     <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles (and admins) can view it.</small></span><span class="toggle"><input type="checkbox" name="priv" ${c.private ? 'checked' : ''}><span></span></span></label>
-    <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div></div>
+    <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div>${c.type === 'text' ? `<div class="field" style="margin-top:14px"><label>Slowmode</label><select class="input" name="slow">${SLOW_OPTS.map(([v, l]) => `<option value="${v}" ${v === (c.slowmode || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select><p class="hint" style="margin:6px 0 0">Members can send one message per this interval. People who can manage messages or channels aren’t limited.</p></div>` : ''}</div>
     <div class="mf"><button class="btn danger" data-del>Delete Channel</button><span class="sp"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
     $('[name=priv]', m).onchange = (e) => $('.roles-pick', m).classList.toggle('hidden', !e.target.checked);
     $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
     $('[data-ok]', m).onclick = async () => {
-      try { await api('PATCH', '/api/channels/' + cid, { name: $('[name=name]', m).value, topic: $('[name=topic]', m)?.value, private: $('[name=priv]', m).checked, allowed_roles: roles }); close(); }
+      try { await api('PATCH', '/api/channels/' + cid, { name: $('[name=name]', m).value, topic: $('[name=topic]', m)?.value, private: $('[name=priv]', m).checked, allowed_roles: roles, ...($('[name=slow]', m) ? { slowmode: Number($('[name=slow]', m).value) } : {}) }); close(); }
       catch (e) { toast(e.message, true); }
     };
     $('[data-del]', m).onclick = () => { close(); deleteChannel(c); };

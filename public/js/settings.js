@@ -195,7 +195,7 @@ function userAppearance(body) {
   const p = S.prefs;
   body.innerHTML = `<h2>Appearance</h2>
     <h3>Theme</h3><div class="theme-pick">${[['dark', 'Dark'], ['midnight', 'Midnight'], ['light', 'Light']].map(([k, l]) => `<button data-th="${k}" class="${p.theme === k ? 'on' : ''}"><span class="th-prev th-${k}"><i></i><i></i><i></i></span>${l}</button>`).join('')}</div>
-    <h3>Accent color</h3><div class="swatches">${['#5865f2', '#8b6dff', '#5b8def', '#22c3b5', '#3fbf74', '#e8b23a', '#ff8a5b', '#ff5c7a', '#e05cb7'].map(c => `<button class="swatch ${c === p.accent ? 'sel' : ''}" data-ac="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-acc value="${esc(p.accent)}"></label></div>
+    <h3>Accent color</h3><div class="swatches">${['#10919f', '#8b6dff', '#5b8def', '#22c3b5', '#3fbf74', '#e8b23a', '#ff8a5b', '#ff5c7a', '#e05cb7'].map(c => `<button class="swatch ${c === p.accent ? 'sel' : ''}" data-ac="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-acc value="${esc(p.accent)}"></label></div>
     <h3>Message display</h3>
     <label class="row-toggle"><span class="rt">Compact mode<small>Fit more messages on screen and hide avatars on grouped lines.</small></span><span class="toggle"><input type="checkbox" data-pp="compact" ${p.compact ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Reduce motion<small>Turn off animations.</small></span><span class="toggle"><input type="checkbox" data-pp="reduceMotion" ${p.reduceMotion ? 'checked' : ''}><span></span></span></label>
@@ -276,12 +276,12 @@ function userAbout(body) {
 function openServerSettings(sid, first) {
   const sd = S.serverData[sid];
   const owner = sd.owner_id === S.me.id;
-  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
+  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
     can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans']].filter(Boolean);
   const ui = settingsShell(`<h6>${esc(sd.name)}</h6>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}${owner ? '<hr><button class="danger" data-action="delete">Delete Server</button>' : ''}`, (tab, body, close) => {
     const cur = S.serverData[sid]; if (!cur) return close();
     if (tab === '@delete') return confirmModal(`Delete ‘${cur.name}’`, `Are you sure you want to delete <b>${esc(cur.name)}</b>? This action cannot be undone.`, 'Delete Server', async () => { await api('DELETE', '/api/servers/' + sid); close(); });
-    ({ overview: srvOverview, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans })[tab](body, sid, close);
+    ({ overview: srvOverview, emoji: srvEmojis, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans })[tab](body, sid, close);
   }, first || tabs[0]?.[0]);
   return ui;
 }

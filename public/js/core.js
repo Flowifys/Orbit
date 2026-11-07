@@ -21,13 +21,14 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#5865f2', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#10919f', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [] },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
 try { Object.assign(S.prefs, JSON.parse(localStorage.getItem('orbit-prefs') || '{}')); } catch {}
 // 1.8: move everyone still on the old purple default to the new accent (custom picks are kept)
-if (!S.prefs.v18) { if (!S.prefs.accent || S.prefs.accent === '#8b6dff') S.prefs.accent = '#5865f2'; S.prefs.v18 = true; }
+// 1.10: Orbit's own teal accent replaces the old defaults (custom picks are kept)
+if (!S.prefs.v110) { if (!S.prefs.accent || ['#8b6dff', '#5865f2'].includes(S.prefs.accent)) S.prefs.accent = '#10919f'; S.prefs.v18 = S.prefs.v110 = true; }
 const savePrefs = () => { try { localStorage.setItem('orbit-prefs', JSON.stringify(S.prefs)); } catch {} };
 const RINGTONES = [['ring1', 'Orbital'], ['ring2', 'Orbital II'], ['ring3', 'Orbital III']];
 const NOTIFSOUNDS = [['notif1', 'Ping'], ['notif2', 'Ping II'], ['notif3', 'Ping III']];
@@ -118,11 +119,11 @@ const cropStyle = (c) => c ? `object-position:${c.x}% ${c.y}%;transform-origin:$
 function avatar(u, cls = '', withStatus = false) {
   u = typeof u === 'string' ? user(u) : u;
   const st = withStatus ? `<i class="st ${statusOf(u.id)}"></i>` : '';
-  const a = u.accent || '#5865f2';
+  const a = u.accent || '#10919f';
   return `<div class="av ${cls}" data-uid="${esc(u.id)}" style="background:${esc(a)}">${u.avatar ? `<span class="crop"><img src="${esc(u.avatar)}" alt="" loading="lazy" style="${cropStyle(u.avatar_crop)}"></span>` : `<span class="ini">${esc(initials(u.display_name || u.username))}</span>`}${st}</div>`;
 }
 function bannerHtml(u, cls = 'banner') {
-  const bg = u.banner_color || u.theme_primary || u.accent || '#5865f2';
+  const bg = u.banner_color || u.theme_primary || u.accent || '#10919f';
   return `<div class="${cls}" style="background:${esc(bg)}">${u.banner ? `<img src="${esc(u.banner)}" alt="" style="${cropStyle(u.banner_crop)}">` : ''}</div>`;
 }
 function nameStyle(u) {
@@ -196,6 +197,8 @@ ic('pin', '<path d="M12 17v5M9 10.8V4h6v6.8l3 3.2v2H6v-2z"/>');
 ic('bell', '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>');
 ic('check', '<path d="M20 6 9 17l-5-5"/>');
 ic('expand', '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>');
+ic('clock', '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>');
+ic('poll', '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>');
 ic('shrink', '<path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7"/>');
 ic('usersOff', '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="m2 2 20 20"/>');
 ic('message', '<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l2-5.2a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 8.4-9 8.4 8.4 0 0 1 8.5 8.5z"/>');
@@ -232,6 +235,11 @@ const EMOJI = {
 const QUICK_REACTS = ['👍', '❤️', '😂', '🔥', '😮', '😢'];
 
 /* ---------- message formatting ---------- */
+function customEmojiImg(name, id) { return `<img class="cemoji" src="/emoji/${esc(id)}" alt=":${esc(name)}:" title=":${esc(name)}:" draggable="false" loading="lazy">`; }
+// render an emoji key (unicode or <:name:id>) for reactions / pickers
+function emojiHtml(e) { const m = /^<:(\w{2,32}):([\w-]{6,20})>$/.exec(e); return m ? customEmojiImg(m[1], m[2]) : esc(e); }
+// every custom emoji you can use: [{id,name,url,server}]
+function myEmojis() { const out = []; for (const sd of Object.values(S.serverData)) (sd.emojis || []).forEach(e => out.push({ ...e, server: sd.name, sid: sd.id })); return out; }
 function formatText(text, sid) {
   if (!text) return '';
   const blocks = [];
@@ -239,7 +247,18 @@ function formatText(text, sid) {
   const inline = [];
   s = s.replace(/`([^`\n]+)`/g, (_, c) => { inline.push(`<code>${esc(c)}</code>`); return `\u0001${inline.length - 1}\u0001`; });
   s = esc(s);
-  s = s.replace(/(https?:\/\/[^\s<]+[^\s<.,:;"')\]!?])/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+  // custom emoji <:name:id>  (after escaping it looks like &lt;:name:id&gt;)
+  const emo = [];
+  s = s.replace(/&lt;:(\w{2,32}):([\w-]{6,20})&gt;/g, (_, n, id) => { emo.push(customEmojiImg(n, id)); return `\u0002${emo.length - 1}\u0002`; });
+  // masked links [text](https://…) — only real http(s) links, and the real address is shown on hover
+  const links = [];
+  s = s.replace(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)/g, (_, t, u) => { links.push(`<a href="${u}" target="_blank" rel="noopener noreferrer" title="${u}">${t}</a>`); return `\u0003${links.length - 1}\u0003`; });
+  s = s.replace(/&lt;(https?:\/\/[^\s<]+?)&gt;/g, '$1');   // <link> = link without preview
+  s = s.replace(/(https?:\/\/[^\s<\u0003]+[^\s<.,:;"')\]!?\u0003])/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`);
+  // block markdown: headers, subtext, lists
+  s = s.replace(/^### (.+)$/gm, '<div class="md-h3">$1</div>').replace(/^## (.+)$/gm, '<div class="md-h2">$1</div>').replace(/^# (.+)$/gm, '<div class="md-h1">$1</div>')
+    .replace(/^-# (.+)$/gm, '<div class="md-sub">$1</div>').replace(/^\s{0,3}[-*] (.+)$/gm, '<div class="md-li">$1</div>')
+    .replace(/(<div class="md-[a-z0-9]+">.*?<\/div>)\n/g, '$1');
   s = s.replace(/\*\*\*(.+?)\*\*\*/g, '<b><i>$1</i></b>').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/__(.+?)__/g, '<u>$1</u>')
     .replace(/(^|[^\w*])\*(?!\s)(.+?)\*(?!\w)/g, '$1<i>$2</i>').replace(/(^|[^\w])_(?!\s)(.+?)_(?!\w)/g, '$1<i>$2</i>')
     .replace(/~~(.+?)~~/g, '<s>$1</s>').replace(/\|\|(.+?)\|\|/g, '<span class="spoiler">$1</span>');
@@ -251,8 +270,9 @@ function formatText(text, sid) {
     const u = pool.find(x => x.username && x.username.toLowerCase() === lower);
     return u ? `${pre}<span class="mention" data-uid="${esc(u.id)}">@${esc(sid ? nameIn(sid, u.id) : u.display_name)}</span>` : m;
   });
-  s = s.replace(/\u0001(\d+)\u0001/g, (_, i) => inline[i]).replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
+  s = s.replace(/\u0001(\d+)\u0001/g, (_, i) => inline[i]).replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]).replace(/\u0002(\d+)\u0002/g, (_, i) => emo[i]).replace(/\u0003(\d+)\u0003/g, (_, i) => links[i]);
   const plain = String(text).trim();
+  if (/^(\s*<:\w{2,32}:[\w-]{6,20}>\s*|\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,27}$/u.test(plain) && /<:\w+:[\w-]+>/.test(plain)) return `<span class="big-emoji">${s}</span>`;
   if (/^(\p{Extended_Pictographic}|\p{Emoji_Component}|‍|️|\s){1,24}$/u.test(plain) && /\p{Extended_Pictographic}/u.test(plain) && [...plain.replace(/\s/g, '')].length <= 27) s = `<span class="big-emoji">${s}</span>`;
   return s;
 }
@@ -294,9 +314,9 @@ const Ringtone = {
 function applyAppearance() {
   const p = S.prefs, r = document.documentElement;
   r.dataset.theme = p.theme || 'dark';
-  r.style.setProperty('--accent', p.accent || '#5865f2');
-  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#5865f2'} 78%, white)`);
-  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#5865f2'} 18%, transparent)`);
+  r.style.setProperty('--accent', p.accent || '#10919f');
+  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#10919f'} 78%, white)`);
+  r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#10919f'} 18%, transparent)`);
   r.style.setProperty('--fs', (p.fontSize || 15) + 'px');
   r.classList.toggle('compact', !!p.compact);
   r.classList.toggle('reduce-motion', !!p.reduceMotion);

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -115,6 +115,15 @@ function start(opts = {}) {
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+  // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
+  const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
+  [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
+  if (!chanCols.includes('slowmode')) db.exec('ALTER TABLE channels ADD COLUMN slowmode INTEGER DEFAULT 0');
+  const memCols = all0(db, "PRAGMA table_info(members)").map(c => c.name);
+  if (!memCols.includes('timeout_until')) db.exec('ALTER TABLE members ADD COLUMN timeout_until INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS emojis(id TEXT PRIMARY KEY, server_id TEXT REFERENCES servers(id) ON DELETE CASCADE, name TEXT, url TEXT, creator TEXT, created INTEGER);
+    CREATE TABLE IF NOT EXISTS poll_votes(message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE, user_id TEXT, opt INTEGER, PRIMARY KEY(message_id,user_id,opt));
+    CREATE INDEX IF NOT EXISTS idx_msg_pins ON messages(channel_id, pinned);`);
   const q = (sql) => db.prepare(sql);
   const one = (sql, ...a) => q(sql).get(...a);
   const all = (sql, ...a) => q(sql).all(...a);
@@ -169,6 +178,7 @@ function start(opts = {}) {
     return p;
   }
   const has = (sid, uidv, perm) => (permsOf(sid, uidv) & perm) === perm;
+  const timedOutUntil = (sid, uidv) => { const r = sid && one('SELECT timeout_until t FROM members WHERE server_id=? AND user_id=?', sid, uidv); return r && r.t > now() ? r.t : 0; };
   const memberRoleIds = (sid, uidv) => all('SELECT role_id FROM member_roles WHERE server_id=? AND user_id=?', sid, uidv).map(r => r.role_id);
   function canView(ch, uidv) {
     if (!ch) return false;
@@ -194,6 +204,10 @@ function start(opts = {}) {
     const replyIds = [...new Set(rows.map(r => r.reply_to).filter(Boolean))];
     const replies = replyIds.length ? all(`SELECT id, author_id, content, attachments FROM messages WHERE id IN (${replyIds.map(() => '?').join(',')})`, ...replyIds) : [];
     const threadCounts = all(`SELECT thread_id, COUNT(*) c, MAX(created) last FROM messages WHERE thread_id IN (${ph}) GROUP BY thread_id`, ...ids);
+    const pollIds = rows.filter(r => r.poll).map(r => r.id);
+    const votes = pollIds.length ? all(`SELECT message_id, user_id, opt FROM poll_votes WHERE message_id IN (${pollIds.map(() => '?').join(',')})`, ...pollIds) : [];
+    const pollOf = (r) => { const p = pj(r.poll, null); if (!p) return null;
+      return { ...p, voters: p.answers.map((_, i) => votes.filter(v => v.message_id === r.id && v.opt === i).map(v => v.user_id)) }; };
     return rows.map(r => {
       const rx = {};
       reacts.filter(x => x.message_id === r.id).forEach(x => (rx[x.emoji] = rx[x.emoji] || []).push(x.user_id));
@@ -203,7 +217,7 @@ function start(opts = {}) {
         attachments: JSON.parse(r.attachments || '[]'), mentions: JSON.parse(r.mentions || '[]'), mention_everyone: !!r.mention_everyone,
         edited: r.edited, created: r.created, system: !!r.system, reactions: rx,
         reply: rep ? { id: rep.id, author_id: rep.author_id, content: rep.content.slice(0, 200), has_attachments: rep.attachments !== '[]' } : (r.reply_to ? { id: r.reply_to, deleted: true } : null),
-        thread: tc ? { count: tc.c, last: tc.last } : null };
+        thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []), poll: pollOf(r) };
     });
   }
   const msgById = (id) => fmtMessages(all('SELECT * FROM messages WHERE id=?', id))[0];
@@ -214,10 +228,11 @@ function start(opts = {}) {
     const channels = all('SELECT * FROM channels WHERE server_id=? ORDER BY position, created', sid).filter(c => canView(c, uidv)).map(fmtChannel);
     const roles = all('SELECT * FROM roles WHERE server_id=? ORDER BY position DESC', sid).map(r => ({ ...r, hoist: !!r.hoist, is_default: !!r.is_default }));
     const mrs = all('SELECT user_id, role_id FROM member_roles WHERE server_id=?', sid);
-    const members = all('SELECT m.user_id, m.nick, m.joined, u.* FROM members m JOIN users u ON u.id=m.user_id WHERE m.server_id=?', sid)
-      .map(m => ({ ...publicUser(m), nick: m.nick, joined: m.joined, roles: mrs.filter(x => x.user_id === m.user_id).map(x => x.role_id) }));
+    const members = all('SELECT m.user_id, m.nick, m.joined, m.timeout_until AS t_until, u.* FROM members m JOIN users u ON u.id=m.user_id WHERE m.server_id=?', sid)
+      .map(m => ({ ...publicUser(m), nick: m.nick, joined: m.joined, roles: mrs.filter(x => x.user_id === m.user_id).map(x => x.role_id), timeout_until: m.t_until > now() ? m.t_until : null }));
+    const emojis = all('SELECT id, name, url FROM emojis WHERE server_id=? ORDER BY created', sid);
     return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, owner_id: s.owner_id,
-      channels, roles, members, my_perms: permsOf(sid, uidv) };
+      channels, roles, members, emojis, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
   function groupName(c, uidv, members) {
@@ -493,7 +508,7 @@ function start(opts = {}) {
     const sid = uid();
     tx(() => {
       run('INSERT INTO servers(id,name,owner_id,created) VALUES(?,?,?,?)', sid, name, req.user.id, now());
-      run('INSERT INTO members VALUES(?,?,?,?)', sid, req.user.id, null, now());
+      run('INSERT INTO members(server_id,user_id,nick,joined) VALUES(?,?,?,?)', sid, req.user.id, null, now());
       run('INSERT INTO roles(id,server_id,name,color,perms,position,hoist,is_default) VALUES(?,?,?,?,?,?,?,1)', uid(), sid, '@everyone', '', DEFAULT_PERMS, 0, 0);
       createChannel(sid, 'text', 'general');
       createChannel(sid, 'text', 'media');
@@ -599,7 +614,7 @@ function start(opts = {}) {
     if (!i) throw err(404, 'This invite is invalid or has expired');
     if (one('SELECT 1 FROM bans WHERE server_id=? AND user_id=?', i.server_id, req.user.id)) throw err(403, 'You are banned from this server');
     if (!isMember(i.server_id, req.user.id)) {
-      run('INSERT INTO members VALUES(?,?,?,?)', i.server_id, req.user.id, null, now());
+      run('INSERT INTO members(server_id,user_id,nick,joined) VALUES(?,?,?,?)', i.server_id, req.user.id, null, now());
       run('UPDATE invites SET uses=uses+1 WHERE code=?', i.code);
       joinRooms(req.user.id, i.server_id);
       broadcastPresence(req.user.id);
@@ -624,6 +639,7 @@ function start(opts = {}) {
     const ch = chanRow(req.params.id);
     if (!ch || ch.type === 'dm' || !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'Missing permission');
     const b = req.body || {};
+    if (b.slowmode !== undefined) run('UPDATE channels SET slowmode=? WHERE id=?', Math.max(0, Math.min(21600, Math.floor(Number(b.slowmode) || 0))), ch.id);
     run('UPDATE channels SET name=?, topic=?, private=?, allowed_roles=?, position=? WHERE id=?',
       b.name !== undefined ? (cleanChanName(b.name, ch.type) || ch.name) : ch.name, b.topic !== undefined ? String(b.topic).slice(0, 300) : ch.topic,
       b.private !== undefined ? (b.private ? 1 : 0) : ch.private, b.allowed_roles !== undefined ? JSON.stringify(b.allowed_roles) : ch.allowed_roles,
@@ -898,6 +914,105 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // ----- link previews (embeds) -----
+  // Fetches the page the link points to and reads its title/description/image. Refuses private,
+  // local and cloud-metadata addresses (checked at connect time, so DNS tricks can't sneak past).
+  const dnsMod = require('dns'); const net = require('net'); const httpMod = require('http'); const httpsMod = require('https');
+  function privateIp(ip) {
+    if (opts.testAllowPrivateLinks === true) return false;   // only settable from code, for local tests
+    if (net.isIPv6(ip)) {
+      const v = ip.toLowerCase();
+      if (v.startsWith('::ffff:')) return privateIp(v.slice(7));
+      return v === '::' || v === '::1' || /^f[cd]/.test(v) || /^fe[89ab]/.test(v) || v.startsWith('ff') || v.startsWith('64:ff9b') || v.startsWith('2001:db8');
+    }
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19));
+  }
+  function safeLookup(host, opts, cb) {
+    dnsMod.lookup(host, { ...opts, all: true }, (e, addrs) => {
+      if (e) return cb(e);
+      const list = Array.isArray(addrs) ? addrs : [{ address: addrs, family: opts.family || 4 }];
+      if (!list.length || list.some(x => privateIp(x.address))) return cb(Object.assign(new Error('blocked address'), { code: 'EBLOCKED' }));
+      opts.all ? cb(null, list) : cb(null, list[0].address, list[0].family);
+    });
+  }
+  function fetchLimited(url, max = 600 * 1024, hops = 0) {
+    return new Promise((resolve, reject) => {
+      let u; try { u = new URL(url); } catch { return reject(new Error('bad url')); }
+      if (!/^https?:$/.test(u.protocol) || (u.port && !['80', '443', '8080', '8443'].includes(u.port))) return reject(new Error('bad url'));
+      if (net.isIP(u.hostname.replace(/^\[|\]$/g, '')) && privateIp(u.hostname.replace(/^\[|\]$/g, ''))) return reject(new Error('blocked'));
+      const mod = u.protocol === 'https:' ? httpsMod : httpMod;
+      const rq = mod.get(u, { lookup: safeLookup, timeout: 5000, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; OrbitLinkPreview/1.0)', Accept: 'text/html,application/xhtml+xml,image/*;q=0.8,*/*;q=0.5', 'Accept-Language': 'en' } }, (r) => {
+        if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) { r.resume(); if (hops >= 4) return reject(new Error('too many redirects')); return resolve(fetchLimited(new URL(r.headers.location, u).href, max, hops + 1)); }
+        if (r.statusCode !== 200) { r.resume(); return reject(new Error('status ' + r.statusCode)); }
+        const type = String(r.headers['content-type'] || '');
+        if (/^image\//.test(type)) { r.destroy(); return resolve({ url: u.href, type, body: '' }); }
+        if (!/html/.test(type)) { r.destroy(); return reject(new Error('not html')); }
+        let size = 0; const chunks = [];
+        r.on('data', (c) => { size += c.length; chunks.push(c); if (size > max) r.destroy(); });
+        r.on('close', () => resolve({ url: u.href, type, body: Buffer.concat(chunks).toString('utf8') }));
+        r.on('error', reject);
+      });
+      rq.on('timeout', () => rq.destroy(new Error('timeout')));
+      rq.on('error', reject);
+    });
+  }
+  const decodeEnt = (t) => String(t || '').replace(/&(#x?[0-9a-f]+|amp|lt|gt|quot|apos|#39|nbsp);/gi, (m, e) => {
+    const k = e.toLowerCase(); if (k === 'amp') return '&'; if (k === 'lt') return '<'; if (k === 'gt') return '>'; if (k === 'quot') return '"'; if (k === 'apos' || k === '#39') return "'"; if (k === 'nbsp') return ' ';
+    const n = k.startsWith('#x') ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10); return Number.isFinite(n) && n > 0 && n < 0x110000 ? String.fromCodePoint(n) : m; }).replace(/\s+/g, ' ').trim();
+  function parseMeta(html, base) {
+    const head = html.slice(0, 200000); const meta = {};
+    for (const tag of head.match(/<meta\b[^>]*>/gi) || []) {
+      const attr = (n) => { const m = tag.match(new RegExp(`\\b${n}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i')); return m ? (m[2] ?? m[3] ?? m[4]) : null; };
+      const key = (attr('property') || attr('name') || attr('itemprop') || '').toLowerCase(); const val = attr('content');
+      if (key && val != null && !(key in meta)) meta[key] = decodeEnt(val);
+    }
+    const title = meta['og:title'] || meta['twitter:title'] || decodeEnt((head.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1]);
+    let image = meta['og:image:secure_url'] || meta['og:image'] || meta['og:image:url'] || meta['twitter:image'] || meta['twitter:image:src'] || null;
+    try { if (image) { image = new URL(image, base).href; if (!/^https?:/.test(image)) image = null; } } catch { image = null; }
+    const color = /^#[0-9a-f]{6}$/i.test(meta['theme-color'] || '') ? meta['theme-color'] : null;
+    return { title: (title || '').slice(0, 256), description: (meta['og:description'] || meta['twitter:description'] || meta['description'] || '').slice(0, 350),
+      site: (meta['og:site_name'] || '').slice(0, 100), image, color, large: meta['twitter:card'] === 'summary_large_image' };
+  }
+  // links in a message (skipping ones wrapped in <...>, which means "no preview", like Discord)
+  function linksIn(content) {
+    const out = [];
+    for (const m of String(content || '').matchAll(/(<)?(https?:\/\/[^\s<>]+[^\s<>.,:;"')\]!?])(>)?/g)) { if (m[1] && m[3]) continue; if (!out.includes(m[2])) out.push(m[2]); }
+    return out.slice(0, 3);
+  }
+  const embedCache = new Map();
+  async function embedFor(url) {
+    const hit = embedCache.get(url); if (hit && hit.at > now() - 30 * 60e3) return hit.e;
+    let e = null;
+    try {
+      const r = await fetchLimited(url);
+      if (/^image\//.test(r.type)) e = { type: 'image', url, image: r.url };
+      else { const m = parseMeta(r.body, r.url); if (m.title || m.description || m.image) e = { type: 'link', url, host: new URL(r.url).hostname.replace(/^www\./, ''), ...m }; }
+    } catch {}
+    embedCache.set(url, { e, at: now() }); if (embedCache.size > 500) embedCache.delete(embedCache.keys().next().value);
+    return e;
+  }
+  function unfurlLater(id, content) {
+    const urls = linksIn(content).filter(u => !/^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(u));
+    if (!urls.length) return;
+    Promise.all(urls.map(embedFor)).then(list => {
+      const embeds = list.filter(Boolean); if (!embeds.length) return;
+      const m = one('SELECT id, channel_id, content FROM messages WHERE id=?', id);
+      if (!m || linksIn(m.content).join() !== linksIn(content).join()) return;   // deleted or edited meanwhile
+      run('UPDATE messages SET embeds=? WHERE id=?', JSON.stringify(embeds), id);
+      emitToChannel(chanRow(m.channel_id), 'message:update', msgById(id));
+    }).catch(() => {});
+  }
+  // remove one preview from your own message (the X on an embed)
+  app.delete('/api/messages/:id/embeds', auth, wrap((req, res) => {
+    const m = one('SELECT * FROM messages WHERE id=?', req.params.id); const ch = m && chanRow(m.channel_id);
+    if (!m) throw err(404, 'Not found');
+    if (m.author_id !== req.user.id && !(ch.type !== 'dm' && has(ch.server_id, req.user.id, P.MANAGE_MESSAGES))) throw err(403, 'Missing permission');
+    run(`UPDATE messages SET embeds='[]' WHERE id=?`, m.id);
+    emitToChannel(ch, 'message:update', msgById(m.id));
+    res.json({ ok: true });
+  }));
+
   // ----- messages -----
   function mentionsIn(content, ch, author) {
     const names = [...String(content).matchAll(/@([\w.]{2,32})/g)].map(m => m[1].toLowerCase());
@@ -936,10 +1051,28 @@ function start(opts = {}) {
     if (!canView(ch, req.user.id) || ch.type === 'voice') { cleanup(); throw err(403, 'No access'); }
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
+    if (ch.type !== 'dm') {
+      const until = timedOutUntil(ch.server_id, req.user.id);
+      if (until) { cleanup(); throw err(403, `You’re timed out in this server until ${new Date(until).toUTCString()}`); }
+      if (ch.slowmode > 0 && !has(ch.server_id, req.user.id, P.MANAGE_MESSAGES) && !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) {
+        const last = one('SELECT MAX(created) t FROM messages WHERE channel_id=? AND author_id=? AND system=0', ch.id, req.user.id)?.t || 0;
+        const wait = Math.ceil((last + ch.slowmode * 1000 - now()) / 1000);
+        if (wait > 0) { cleanup(); throw err(429, `Slowmode is on. You can send another message in ${wait}s.`); }
+      }
+    }
     const content = String(req.body?.content || '').slice(0, 4000);
     const gifUrl = String(req.body?.gif || '').trim();
     const gifOk = gifUrl && /^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(gifUrl);
-    if (!content.trim() && !req.files?.length && !gifOk) throw err(400, 'Message is empty');
+    let poll = null;
+    if (req.body?.poll) {
+      const p = pj(req.body.poll, null) || {};
+      const question = String(p.question || '').trim().slice(0, 300);
+      const answers = (Array.isArray(p.answers) ? p.answers : []).map(a => String(a || '').trim().slice(0, 55)).filter(Boolean).slice(0, 10);
+      if (!question || answers.length < 2) { cleanup(); throw err(400, 'A poll needs a question and at least 2 answers'); }
+      const hours = [1, 4, 8, 24, 72, 168].includes(Number(p.hours)) ? Number(p.hours) : 24;
+      poll = { question, answers, multi: !!p.multi, ends: now() + hours * 3600e3 };
+    }
+    if (!content.trim() && !req.files?.length && !gifOk && !poll) throw err(400, 'Message is empty');
     const attachments = (req.files || []).map(f => ({ url: fileUrl(f), name: f.originalname.slice(0, 200), size: f.size, type: f.mimetype }));
     if (gifOk) attachments.push({ url: gifUrl, name: 'GIF', type: 'image/gif', external: true, size: 0 });
     const reply = req.body?.reply_to ? one('SELECT id FROM messages WHERE id=? AND channel_id=?', Number(req.body.reply_to), ch.id) : null;
@@ -947,9 +1080,10 @@ function start(opts = {}) {
     const m = mentionsIn(content, ch, req.user.id);
     const replyAuthor = reply ? one('SELECT author_id FROM messages WHERE id=?', reply.id)?.author_id : null;
     if (replyAuthor && replyAuthor !== req.user.id && req.body?.mention_reply !== 'false' && !m.ids.includes(replyAuthor)) m.ids.push(replyAuthor);
-    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created) VALUES(?,?,?,?,?,?,?,?,?)',
-      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now());
+    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll) VALUES(?,?,?,?,?,?,?,?,?,?)',
+      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null);
     const msg = msgById(Number(r.lastInsertRowid));
+    unfurlLater(msg.id, content);
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, msg.id);
     emitToChannel(ch, 'message:new', msg);
     if (thread) emitToChannel(ch, 'message:update', msgById(thread.id));
@@ -965,7 +1099,10 @@ function start(opts = {}) {
     const ch = chanRow(m.channel_id);
     const mm = mentionsIn(content, ch, req.user.id);
     run('UPDATE messages SET content=?, edited=?, mentions=?, mention_everyone=? WHERE id=?', content, now(), JSON.stringify(mm.ids), mm.everyone ? 1 : 0, m.id);
+    const linksChanged = linksIn(content).join() !== linksIn(m.content).join();
+    if (linksChanged) run(`UPDATE messages SET embeds='[]' WHERE id=?`, m.id);
     emitToChannel(ch, 'message:update', msgById(m.id));
+    if (linksChanged) unfurlLater(m.id, content);
     res.json({ ok: true });
   }));
   function deleteMessage(id) {
@@ -990,7 +1127,9 @@ function start(opts = {}) {
     const m = one('SELECT * FROM messages WHERE id=?', req.params.id);
     const ch = m && chanRow(m.channel_id);
     if (!m || !canView(ch, req.user.id)) throw err(404, 'Not found');
-    const emoji = String(req.params.emoji).slice(0, 16);
+    if (ch.type !== 'dm' && timedOutUntil(ch.server_id, req.user.id)) throw err(403, 'You’re timed out in this server');
+    const emoji = String(req.params.emoji).slice(0, 64);
+    if (emoji.length > 16 && !/^<:[\w]{2,32}:[\w-]{6,20}>$/.test(emoji)) throw err(400, 'Unknown emoji');
     const exists = one('SELECT 1 FROM reactions WHERE message_id=? AND user_id=? AND emoji=?', m.id, req.user.id, emoji);
     if (exists) run('DELETE FROM reactions WHERE message_id=? AND user_id=? AND emoji=?', m.id, req.user.id, emoji);
     else {
@@ -1000,6 +1139,102 @@ function start(opts = {}) {
     emitToChannel(ch, 'message:update', msgById(m.id));
     res.json({ ok: true });
   }));
+  // pins
+  function canPin(ch, uidv) { return ch.type === 'dm' ? canView(ch, uidv) : has(ch.server_id, uidv, P.MANAGE_MESSAGES); }
+  function chanSystem(ch, text) {
+    const r = run('INSERT INTO messages(channel_id,author_id,content,created,system) VALUES(?,?,?,?,1)', ch.id, null, text, now());
+    emitToChannel(ch, 'message:new', msgById(Number(r.lastInsertRowid)));
+  }
+  app.get('/api/channels/:id/pins', auth, wrap((req, res) => {
+    const ch = chanRow(req.params.id);
+    if (!canView(ch, req.user.id)) throw err(403, 'No access');
+    res.json(fmtMessages(all('SELECT * FROM messages WHERE channel_id=? AND pinned>0 ORDER BY pinned DESC LIMIT 50', ch.id)));
+  }));
+  app.put('/api/messages/:id/pin', auth, wrap((req, res) => {
+    const m = one('SELECT * FROM messages WHERE id=?', req.params.id); const ch = m && chanRow(m.channel_id);
+    if (!m || !canView(ch, req.user.id)) throw err(404, 'Not found');
+    if (!canPin(ch, req.user.id)) throw err(403, 'You need Manage Messages to pin');
+    if (m.system) throw err(400, 'System messages can’t be pinned');
+    if (!m.pinned) {
+      if (one('SELECT COUNT(*) c FROM messages WHERE channel_id=? AND pinned>0', ch.id).c >= 50) throw err(400, 'This channel already has 50 pins. Unpin something first.');
+      run('UPDATE messages SET pinned=? WHERE id=?', now(), m.id);
+      emitToChannel(ch, 'message:update', msgById(m.id));
+      chanSystem(ch, `${nameOf(req.user.id)} pinned a message to this channel.`);
+    }
+    res.json({ ok: true });
+  }));
+  app.delete('/api/messages/:id/pin', auth, wrap((req, res) => {
+    const m = one('SELECT * FROM messages WHERE id=?', req.params.id); const ch = m && chanRow(m.channel_id);
+    if (!m || !canView(ch, req.user.id)) throw err(404, 'Not found');
+    if (!canPin(ch, req.user.id)) throw err(403, 'You need Manage Messages to unpin');
+    run('UPDATE messages SET pinned=0 WHERE id=?', m.id);
+    emitToChannel(ch, 'message:update', msgById(m.id));
+    res.json({ ok: true });
+  }));
+  // polls
+  app.put('/api/messages/:id/poll/:opt', auth, wrap((req, res) => {
+    const m = one('SELECT * FROM messages WHERE id=?', req.params.id); const ch = m && chanRow(m.channel_id);
+    if (!m || !canView(ch, req.user.id) || !m.poll) throw err(404, 'Not found');
+    if (ch.type !== 'dm' && timedOutUntil(ch.server_id, req.user.id)) throw err(403, 'You’re timed out in this server');
+    const p = pj(m.poll, null); const opt = Number(req.params.opt);
+    if (!p || !Number.isInteger(opt) || opt < 0 || opt >= p.answers.length) throw err(400, 'Unknown answer');
+    if (p.ends < now()) throw err(400, 'This poll has ended');
+    tx(() => {
+      const had = one('SELECT 1 FROM poll_votes WHERE message_id=? AND user_id=? AND opt=?', m.id, req.user.id, opt);
+      if (!p.multi) run('DELETE FROM poll_votes WHERE message_id=? AND user_id=?', m.id, req.user.id);
+      if (had) run('DELETE FROM poll_votes WHERE message_id=? AND user_id=? AND opt=?', m.id, req.user.id, opt);
+      else run('INSERT INTO poll_votes VALUES(?,?,?)', m.id, req.user.id, opt);
+    });
+    emitToChannel(ch, 'message:update', msgById(m.id));
+    res.json({ ok: true });
+  }));
+  // custom server emojis
+  app.post('/api/servers/:id/emojis', auth, imageOnly.single('file'), wrap((req, res) => {
+    const sid = req.params.id; const f = req.file;
+    const drop = () => f && fs.unlink(f.path, () => {});
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) { drop(); throw err(403, 'You need Manage Server to add emojis'); }
+    if (!f) throw err(400, 'Pick an image (PNG, GIF, JPG or WebP)');
+    if (f.size > 512 * 1024) { drop(); throw err(400, 'Emojis must be under 512 KB'); }
+    const name = String(req.body?.name || path.parse(f.originalname).name).replace(/[^\w]/g, '_').replace(/_+/g, '_').slice(0, 32);
+    if (name.length < 2) { drop(); throw err(400, 'Emoji names need at least 2 letters or numbers'); }
+    if (one('SELECT COUNT(*) c FROM emojis WHERE server_id=?', sid).c >= 100) { drop(); throw err(400, 'This server has the maximum of 100 emojis'); }
+    if (one('SELECT 1 FROM emojis WHERE server_id=? AND name=?', sid, name)) { drop(); throw err(409, `There’s already an emoji called :${name}:`); }
+    const id = uid();
+    run('INSERT INTO emojis VALUES(?,?,?,?,?,?)', id, sid, name, fileUrl(f), req.user.id, now());
+    refreshServer(sid);
+    res.json({ id, name, url: fileUrl(f) });
+  }));
+  app.patch('/api/emojis/:id', auth, wrap((req, res) => {
+    const e = one('SELECT * FROM emojis WHERE id=?', req.params.id);
+    if (!e || !has(e.server_id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    const name = String(req.body?.name || '').replace(/[^\w]/g, '_').slice(0, 32);
+    if (name.length < 2) throw err(400, 'Emoji names need at least 2 letters or numbers');
+    if (one('SELECT 1 FROM emojis WHERE server_id=? AND name=? AND id<>?', e.server_id, name, e.id)) throw err(409, `There’s already an emoji called :${name}:`);
+    run('UPDATE emojis SET name=? WHERE id=?', name, e.id);
+    refreshServer(e.server_id);
+    res.json({ ok: true });
+  }));
+  app.delete('/api/emojis/:id', auth, wrap((req, res) => {
+    const e = one('SELECT * FROM emojis WHERE id=?', req.params.id);
+    if (!e || !has(e.server_id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    run('DELETE FROM emojis WHERE id=?', e.id);
+    fs.unlink(path.join(uploadDir, path.basename(e.url)), () => {});
+    refreshServer(e.server_id);
+    res.json({ ok: true });
+  }));
+  // timeouts (moderation): needs Kick Members and a higher role than the target
+  app.put('/api/servers/:id/members/:uid/timeout', auth, wrap((req, res) => {
+    const sid = req.params.id, t = req.params.uid;
+    if (!isMember(sid, t)) throw err(404, 'Not a member');
+    if (!has(sid, req.user.id, P.KICK) || t === req.user.id || !outranks(sid, req.user.id, t)) throw err(403, 'You can’t time out this member');
+    const minutes = Math.max(0, Math.min(28 * 24 * 60, Number(req.body?.minutes) || 0));
+    const until = minutes ? now() + minutes * 60e3 : null;
+    run('UPDATE members SET timeout_until=? WHERE server_id=? AND user_id=?', until, sid, t);
+    if (until) for (const [cid, room] of voice) { const c = chanRow(cid); if (c && c.server_id === sid && room.has(t)) leaveVoice(t); }
+    if (until) io.to('u:' + t).emit('timeout', { server_id: sid, until, reason: String(req.body?.reason || '').slice(0, 200) });
+    refreshServer(sid);
+    res.json({ ok: true, until });
+  }));
   app.post('/api/channels/:id/read', auth, wrap((req, res) => {
     const ch = chanRow(req.params.id);
     if (!canView(ch, req.user.id)) throw err(403, 'No access');
@@ -1008,6 +1243,13 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // custom emoji image by id (works for emojis from servers you're not in, like Discord)
+  app.get('/emoji/:id', (req, res) => {
+    const e = one('SELECT url FROM emojis WHERE id=?', String(req.params.id));
+    if (!e) return res.status(404).end();
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(path.join(uploadDir, path.basename(e.url)));
+  });
   // SPA fallback (invite links like /invite/abc)
   app.get(/^\/(invite|app)(\/.*)?$/, (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'index.html')); });
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
@@ -1096,6 +1338,7 @@ function start(opts = {}) {
       const ch = chanRow(channel_id);
       const ok = ch && canView(ch, me) && (ch.type === 'dm' || (ch.type === 'voice' && has(ch.server_id, me, P.CONNECT)));
       if (!ok) return ack && ack({ error: 'You can’t join this voice channel' });
+      if (ch.type === 'voice' && timedOutUntil(ch.server_id, me)) return ack && ack({ error: 'You’re timed out in this server' });
       leaveVoice(me);
       if (!voice.has(ch.id)) voice.set(ch.id, new Map());
       const room = voice.get(ch.id);
