@@ -30,9 +30,12 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.16.1';
+const VERSION = '1.17.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
+// OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
+const OG_CUTOFF = Date.parse(process.env.OG_CUTOFF || '2026-12-01T00:00:00-07:00') || Date.parse('2026-12-01T07:00:00Z');
+const GRANTABLE_BADGES = ['og', 'trusted'];
 const uid = () => crypto.randomBytes(9).toString('base64url');
 const all0 = (db, sql) => db.prepare(sql).all();
 const now = () => Date.now();
@@ -114,7 +117,7 @@ function start(opts = {}) {
   [['is_group', 'INTEGER DEFAULT 0'], ['gc_owner', 'TEXT'], ['gc_icon', 'TEXT']].forEach(([c, t]) => { if (!chanCols.includes(c)) db.exec(`ALTER TABLE channels ADD COLUMN ${c} ${t}`); });
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
-   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -160,7 +163,13 @@ function start(opts = {}) {
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
     theme_primary: u.theme_primary || null, theme_accent: u.theme_accent || null, name_color: u.name_color || null, name_color2: u.name_color2 || null,
     avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []),
-    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()) });
+    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u) });
+  function badgeList(u) {
+    const raw = pj(u.badges, []);
+    const set = new Set(raw.filter(b => GRANTABLE_BADGES.includes(b)));
+    if (u.created && u.created < OG_CUTOFF && !raw.includes('-og')) set.add('og');   // '-og' = staff removed the automatic OG badge
+    return [...set];
+  }
   const getUser = (id) => publicUser(one('SELECT * FROM users WHERE id=?', id));
   const nameOf = (id) => getUser(id)?.display_name || getUser(id)?.username || 'Someone';
   const pair = (x, y) => (x < y ? [x, y] : [y, x]);
@@ -477,6 +486,17 @@ function start(opts = {}) {
     run(`UPDATE users SET ${req.params.kind}=?, ${req.params.kind}_crop=? WHERE id=?`, fileUrl(req.file), req.body?.crop ? (() => { try { const c = JSON.parse(req.body.crop); return JSON.stringify({ z: Math.min(4, Math.max(1, +c.z || 1)), x: Math.min(100, Math.max(0, +c.x)), y: Math.min(100, Math.max(0, +c.y)) }); } catch { return null; } })() : null, req.user.id);
     broadcastUser(req.user.id);
     res.json(getUser(req.user.id));
+  }));
+  // staff give / take away badges. Body: { badge: 'og' | 'trusted', on: true | false }
+  app.put('/api/users/:id/badges', auth, wrap((req, res) => {
+    if (!STAFF.has((req.user.username || '').toLowerCase())) throw err(403, 'Only Orbit staff can give badges');
+    const target = one('SELECT * FROM users WHERE id=?', req.params.id); if (!target) throw err(404, 'User not found');
+    const badge = String(req.body?.badge || ''); if (!GRANTABLE_BADGES.includes(badge)) throw err(400, 'Unknown badge');
+    const set = new Set(pj(target.badges, []));
+    if (req.body?.on) { set.add(badge); set.delete('-' + badge); } else { set.delete(badge); if (badge === 'og') set.add('-og'); }
+    run('UPDATE users SET badges=? WHERE id=?', JSON.stringify([...set]), target.id);
+    broadcastUser(target.id);
+    res.json(getUser(target.id));
   }));
   app.get('/api/users/:id', auth, wrap((req, res) => {
     const u = getUser(req.params.id);

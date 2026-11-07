@@ -1503,3 +1503,5 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .bdg-art svg{position:absolute;inset:0;width:100%!important;height:100%!important}
 .bdg-logo{position:absolute;left:8%;top:6%;width:84%;height:84%;object-fit:contain;filter:brightness(0) invert(1) drop-shadow(0 .5px 0 rgba(40,20,120,.35));pointer-events:none}
 .bdg .bdg-art{width:20px;height:20px}
+.menu .mi .bdg-art{width:18px;height:18px;flex:none}
+.menu .mi{display:flex;align-items:center;gap:10px}

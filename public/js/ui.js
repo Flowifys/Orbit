@@ -525,6 +525,12 @@ function renderHome(content) {
 function profileMoreMenu(e, sid, uidv) {
   const st = friendState(uidv);
   const items = [['Copy username', () => copy(user(uidv).username)], ['Copy User ID', () => copy(uidv)], ...groupOwnerItems(S.view.channel, uidv), '-'];
+  if (S.me.staff) {   // Orbit staff: give / take away badges
+    const has = new Set(user(uidv).badges || []);
+    const toggle = (b) => api('PUT', `/api/users/${uidv}/badges`, { badge: b, on: !has.has(b) }).then(u => { S.users[uidv] = { ...S.users[uidv], ...u }; toast(`${has.has(b) ? 'Removed' : 'Gave'} ${BADGE_INFO[b].split(':')[0]} ${has.has(b) ? 'from' : 'to'} ${u.display_name}`); }).catch(x => toast(x.message, true));
+    items.push([`<span class="mi">${badgeIcon('trusted')} ${has.has('trusted') ? 'Remove Trusted badge' : 'Give Trusted badge'}</span>`, () => toggle('trusted')],
+      [`<span class="mi">${badgeIcon('og')} ${has.has('og') ? 'Remove OG badge' : 'Give OG badge'}</span>`, () => toggle('og')], '-');
+  }
   if (sid && uidv !== S.me.id && can(PERM.KICK, sid) && uidv !== S.serverData[sid]?.owner_id) items.push(member(sid, uidv)?.timeout_until ? ['Remove timeout', () => api('PUT', `/api/servers/${sid}/members/${uidv}/timeout`, { minutes: 0 }).catch(x => toast(x.message, true))] : ['Time out', () => timeoutModal(sid, uidv), 'danger']);
   if (sid && (can(PERM.KICK, sid) || can(PERM.BAN, sid)) && uidv !== S.serverData[sid]?.owner_id) {
     if (can(PERM.KICK, sid)) items.push(['Kick from server', () => kickMember(sid, uidv), 'danger']);
