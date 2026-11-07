@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.10.1';
+const VERSION = '1.11.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 const uid = () => crypto.randomBytes(9).toString('base64url');
@@ -1253,6 +1253,10 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // download page + Windows installer link. Set WINDOWS_DOWNLOAD_URL on Render to point somewhere else.
+  const WIN_URL = process.env.WINDOWS_DOWNLOAD_URL || opts.windowsDownloadUrl || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.exe';
+  app.get(['/download', '/get', '/install'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'download.html')); });
+  app.get('/download/windows', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, WIN_URL); });
   // custom emoji image by id (works for emojis from servers you're not in, like Discord)
   app.get('/emoji/:id', (req, res) => {
     const e = one('SELECT url FROM emojis WHERE id=?', String(req.params.id));

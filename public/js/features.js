@@ -223,6 +223,8 @@ async function selfProfilePopout(anchor) {
           <div class="sm-sep"></div>
           <button data-sm="copy">${I.copy}<span>Copy User ID</span></button>
           <button data-sm="settings">${I.gear}<span>User Settings</span></button>
+          ${Install.canOffer() ? `<button data-sm="install">${I.download}<span>Install Orbit app</span></button>` : ''}
+          <button data-sm="apps">${I.external}<span>Download apps</span></button>
         </div>
         <div class="self-menu"><button data-sm="logout" class="danger">${I.logout}<span>Log Out</span></button></div>
       </div></div></div>`);
@@ -235,6 +237,8 @@ async function selfProfilePopout(anchor) {
     if (a === 'settings') { L.close(); openUserSettings(); }
     if (a === 'copy') { L.close(); copy(S.me.id); }
     if (a === 'logout') { L.close(); logout(); }
+    if (a === 'install') { L.close(); showInstallSheet(); }
+    if (a === 'apps') { L.close(); window.orbitDesktop ? (location.origin && window.open(location.origin + '/download', '_blank')) : window.open('/download', '_blank'); }
     if (a === 'status') { $('.sm-statuses', el).classList.toggle('hidden'); $('.sm-status', el).classList.toggle('open'); }
     const sb = e.target.closest('[data-st]');
     if (sb) { S.prefs.status = sb.dataset.st; savePrefs(); socket.emit('presence', sb.dataset.st); renderUserPanel(); L.close(); }
@@ -270,3 +274,49 @@ function resolveEmojiText(content, sid) {
   const pick = (n) => list.find(e => e.name === n && e.sid === sid) || list.find(e => e.name === n);
   return content.replace(/```[\s\S]*?```|`[^`\n]+`|<:\w+:[\w-]+>|(^|[^\w<]):(\w{2,32}):/g, (m, pre, n) => { if (!n) return m; const e = pick(n); return e ? `${pre}<:${e.name}:${e.id}>` : m; });
 }
+
+/* ---------- "Install Orbit" banner for phones (home-screen app) ---------- */
+const Install = {
+  deferred: null,
+  standalone: () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true || !!window.orbitDesktop,
+  ios: () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1),
+  iosSafari: () => Install.ios() && !/CriOS|FxiOS|EdgiOS|OPiOS|GSA\/|Instagram|FBAN|FBAV|Snapchat|Discord|Line\//.test(navigator.userAgent),
+  mobile: () => Install.ios() || /Android/.test(navigator.userAgent) || matchMedia('(pointer:coarse) and (max-width: 900px)').matches,
+  snoozed: () => { try { return Date.now() < Number(localStorage.getItem('orbit-install-snooze') || 0); } catch { return false; } },
+  snooze: (days) => { try { localStorage.setItem('orbit-install-snooze', String(Date.now() + days * 864e5)); } catch {} },
+  canOffer: () => !Install.standalone() && Install.mobile() && (Install.ios() || !!Install.deferred),
+};
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); Install.deferred = e; maybeShowInstall(); });
+window.addEventListener('appinstalled', () => { Install.deferred = null; $('.install-sheet')?.remove(); toast('Orbit is installed! Open it from your home screen.'); });
+function maybeShowInstall() { if (Install.canOffer() && !Install.snoozed() && !$('.install-sheet')) setTimeout(() => { if (!$('.install-sheet') && !$('.modal-wrap')) showInstallSheet(); }, 1800); }
+function showInstallSheet() {
+  $('.install-sheet')?.remove();
+  const shareIco = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>`;
+  const addIco = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="M12 8v8M8 12h8"/></svg>`;
+  const head = `<div class="is-head"><img src="/icon-192.png" alt=""><div><b>Get the Orbit app</b><span>Full screen, its own icon, and it updates by itself.</span></div><button class="icon-btn" data-isclose title="Close">${I.x}</button></div>`;
+  let body;
+  if (Install.ios() && !Install.iosSafari()) {
+    body = `<p class="is-note">To install Orbit on iPhone, open this page in <b>Safari</b>.</p>
+      <div class="is-actions"><button class="btn primary block" data-iscopy>${I.copy} Copy link, then paste it in Safari</button></div>`;
+  } else if (Install.ios()) {
+    body = `<ol class="is-steps">
+        <li><span class="is-n">1</span><span>Tap the <b>Share</b> button <span class="is-chip">${shareIco}</span> in Safari’s toolbar <small>(on newer iPhones, tap <b>•••</b> first, then <b>Share</b>)</small></span></li>
+        <li><span class="is-n">2</span><span>Scroll down and tap <b>Add to Home Screen</b> <span class="is-chip">${addIco}</span></span></li>
+        <li><span class="is-n">3</span><span>Tap <b>Add</b>, then open <b>Orbit</b> from your home screen</span></li>
+      </ol><p class="is-note">You’ll log in once inside the app.</p><div class="is-arrow" aria-hidden="true">${I.chevron}</div>`;
+  } else {
+    body = `<div class="is-actions"><button class="btn primary block" data-isinstall>${I.download} Install Orbit</button></div>`;
+  }
+  const el = h(`<div class="install-sheet" role="dialog" aria-label="Install Orbit">${head}${body}<button class="is-later" data-islater>Not now</button></div>`);
+  document.body.appendChild(el);
+  el.onclick = async (e) => {
+    if (e.target.closest('[data-isclose]') || e.target.closest('[data-islater]')) { Install.snooze(e.target.closest('[data-islater]') ? 7 : 2); el.remove(); }
+    if (e.target.closest('[data-iscopy]')) copy(location.origin);
+    if (e.target.closest('[data-isinstall]') && Install.deferred) {
+      const d = Install.deferred; Install.deferred = null;
+      d.prompt(); const r = await d.userChoice.catch(() => null);
+      el.remove(); if (!r || r.outcome !== 'accepted') Install.snooze(3);
+    }
+  };
+}
+window.addEventListener('load', maybeShowInstall);
