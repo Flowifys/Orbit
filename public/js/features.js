@@ -967,7 +967,7 @@ function gameTile(name) {
 /* real game icons / covers: looked up by the server (Steam, or the game's official site), cached here.
    Tiles show initials until the picture arrives, and stay that way if there isn't one. */
 const GameArt = {
-  map: (() => { try { return JSON.parse(localStorage.getItem('orbit-game-art') || '{}'); } catch { return {}; } })(),
+  map: (() => { try { return JSON.parse(localStorage.getItem('orbit-game-art-2') || '{}'); } catch { return {}; } })(),
   want: new Set(), timer: null,
   get(name) { const v = this.map[name]; if (v === undefined) { this.want.add(name); this.schedule(); } return v && v.u ? v.u : null; },
   schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.fetch(), 60); },
@@ -979,7 +979,7 @@ const GameArt = {
       for (const n of names) this.map[n] = { u: r[n] || null, at: Date.now() };
       // forget misses after a day so new art can show up later
       for (const [k, v] of Object.entries(this.map)) if (!v.u && Date.now() - v.at > 864e5) delete this.map[k];
-      try { localStorage.setItem('orbit-game-art', JSON.stringify(this.map)); } catch {}
+      try { localStorage.setItem('orbit-game-art-2', JSON.stringify(this.map)); } catch {}
       this.paint();
     } catch { names.forEach(n => delete this.map[n]); }
   },

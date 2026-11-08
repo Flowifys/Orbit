@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.8';
+const VERSION = '1.25.9';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -138,6 +138,7 @@ function start(opts = {}) {
     CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
     CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
     CREATE TABLE IF NOT EXISTS game_art(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
+    DELETE FROM game_art WHERE url IS NULL;
     CREATE TABLE IF NOT EXISTS twofa_tickets(ticket TEXT PRIMARY KEY, user_id TEXT, purpose TEXT, method TEXT, target TEXT, code_hash TEXT, expires INTEGER, tries INTEGER DEFAULT 0, sent INTEGER);
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
@@ -1632,6 +1633,22 @@ function start(opts = {}) {
     const og = parseMeta(page.body, page.url).image;
     return og || (best ? new URL(best, page.url).href : null);
   }
+  // Wikipedia's page image for the game (its cover or logo) — works for games that aren't on Steam and whose sites block us
+  async function wikiArt(name) {
+    for (const title of [`${name} (video game)`, name]) {
+      try {
+        const r = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title.replace(/ /g, '_')) + '?redirect=true', {
+          signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'OrbitChat/1.0 (game art lookup; https://orbital.sbs)', Accept: 'application/json' } });
+        if (!r.ok) continue;
+        const j = await r.json();
+        if (j.type !== 'standard' || !/game/i.test(`${j.description || ''} ${j.extract || ''}`.slice(0, 600))) continue;
+        const img = j.originalimage?.source || j.thumbnail?.source;
+        if (img && !/\.svg(\?|$)/i.test(img)) return img;
+        if (j.thumbnail?.source) return j.thumbnail.source;   // Wikipedia renders SVG logos to PNG thumbnails
+      } catch {}
+    }
+    return null;
+  }
   async function gameArt(name) {
     const key = normGame(name); if (!key) return null;
     const row = one('SELECT url, checked FROM game_art WHERE name=?', key);
@@ -1639,8 +1656,8 @@ function start(opts = {}) {
     if (artInflight.has(key)) return artInflight.get(key);
     const job = (async () => {
       let url = null;
-      try { url = OFFICIAL_SITES[key] ? await siteIcon(OFFICIAL_SITES[key]) : await steamArt(name); } catch {}
-      if (!url && OFFICIAL_SITES[key]) { try { url = await steamArt(name); } catch {} }
+      const tries = OFFICIAL_SITES[key] ? [() => siteIcon(OFFICIAL_SITES[key]), () => wikiArt(name), () => steamArt(name)] : [() => steamArt(name), () => wikiArt(name)];
+      for (const t of tries) { if (url) break; try { url = await t(); } catch {} }
       run('INSERT OR REPLACE INTO game_art(name, url, checked) VALUES(?,?,?)', key, url, now());
       return url;
     })().finally(() => artInflight.delete(key));
