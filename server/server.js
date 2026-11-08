@@ -30,12 +30,14 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.20.1';
+const VERSION = '1.21.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
 const OG_CUTOFF = Date.parse(process.env.OG_CUTOFF || '2026-12-01T00:00:00-07:00') || Date.parse('2026-12-01T07:00:00Z');
 const GRANTABLE_BADGES = ['og', 'trusted', 'dev'];
+// people who always have the Developer badge (staff can still take it away). Set DEV_USERS on Render to change.
+const DEV_USERS = new Set((process.env.DEV_USERS || '__,orbit').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const uid = () => crypto.randomBytes(9).toString('base64url');
 const all0 = (db, sql) => db.prepare(sql).all();
 const now = () => Date.now();
@@ -126,7 +128,8 @@ function start(opts = {}) {
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
-   ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"],
+   ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -189,6 +192,7 @@ function start(opts = {}) {
     const raw = pj(u.badges, []);
     const set = new Set(raw.filter(b => GRANTABLE_BADGES.includes(b)));
     if (u.created && u.created < OG_CUTOFF && !raw.includes('-og')) set.add('og');   // '-og' = staff removed the automatic OG badge
+    if (DEV_USERS.has(String(u.username || '').toLowerCase()) && !raw.includes('-dev')) set.add('dev');
     return [...set];
   }
   const getUser = (id) => publicUser(one('SELECT * FROM users WHERE id=?', id));
@@ -591,11 +595,39 @@ function start(opts = {}) {
     const target = one('SELECT * FROM users WHERE id=?', req.params.id); if (!target) throw err(404, 'User not found');
     const badge = String(req.body?.badge || ''); if (!GRANTABLE_BADGES.includes(badge)) throw err(400, 'Unknown badge');
     const set = new Set(pj(target.badges, []));
-    if (req.body?.on) { set.add(badge); set.delete('-' + badge); } else { set.delete(badge); if (badge === 'og') set.add('-og'); }
+    if (req.body?.on) { set.add(badge); set.delete('-' + badge); } else { set.delete(badge); if (badge === 'og' || badge === 'dev') set.add('-' + badge); }
     run('UPDATE users SET badges=? WHERE id=?', JSON.stringify([...set]), target.id);
     broadcastUser(target.id);
     res.json(getUser(target.id));
   }));
+  // ----- full profile: Board widgets, Activity (recently played), Wishlist -----
+  const WIDGET_KINDS = { like: 'Games I Like', rotation: 'Games in Rotation', want: 'Want to Play' };
+  const clip = (v, n) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  function cleanBoard(b) {
+    const widgets = (Array.isArray(b?.widgets) ? b.widgets : []).slice(0, 8).map(w => {
+      if (w?.type === 'favorite') { const game = clip(w.game, 64); return game ? { type: 'favorite', game, note: clip(w.note, 200) } : null; }
+      if (w?.type === 'games' && WIDGET_KINDS[w.kind]) { const games = [...new Set((Array.isArray(w.games) ? w.games : []).map(g => clip(g, 64)).filter(Boolean))].slice(0, 8); return games.length ? { type: 'games', kind: w.kind, games } : null; }
+      if (w?.type === 'custom') { const title = clip(w.title, 40), text = String(w.text ?? '').trim().slice(0, 600); return title || text ? { type: 'custom', title, text } : null; }
+      return null;
+    }).filter(Boolean);
+    const okUrl = (x) => { try { const l = new URL(String(x)); return /^https?:$/.test(l.protocol) ? l.href.slice(0, 300) : null; } catch { return null; } };
+    const wishlist = (Array.isArray(b?.wishlist) ? b.wishlist : []).slice(0, 30).map(x => { const name = clip(x?.name, 80); return name ? { name, url: x.url ? okUrl(x.url) : null, note: clip(x.note, 120) } : null; }).filter(Boolean);
+    return { widgets, wishlist };
+  }
+  app.get('/api/users/:id/board', auth, wrap((req, res) => {
+    const u = one('SELECT id, board, recent_games FROM users WHERE id=?', req.params.id); if (!u) throw err(404, 'User not found');
+    if (u.id !== req.user.id && eitherBlocks(u.id, req.user.id)) throw err(403, 'You can’t see this profile');
+    const hidden = u.id !== req.user.id && statusFor(u.id, req.user.id) === 'offline' && online.has(u.id);   // appear-offline / strict block: no live activity
+    res.json({ ...cleanBoard(pj(u.board, {})), recent_games: pj(u.recent_games, []), activity: hidden ? null : (activities.get(u.id) || null) });
+  }));
+  app.put('/api/me/board', auth, wrap((req, res) => {
+    limit('board:' + req.user.id, 40, 60e3, 'Too many profile changes.');
+    const cur = cleanBoard(pj(req.user.board, {}));
+    const next = cleanBoard({ widgets: req.body?.widgets ?? cur.widgets, wishlist: req.body?.wishlist ?? cur.wishlist });
+    run('UPDATE users SET board=? WHERE id=?', JSON.stringify(next), req.user.id);
+    res.json(next);
+  }));
+  app.delete('/api/me/recent-games', auth, wrap((req, res) => { run("UPDATE users SET recent_games='[]' WHERE id=?", req.user.id); res.json({ ok: true }); }));
   app.get('/api/users/:id', auth, wrap((req, res) => {
     const u = getUser(req.params.id);
     if (!u) throw err(404, 'User not found');
@@ -683,7 +715,19 @@ function start(opts = {}) {
   }
   // each person can have a Spotify song and a game/custom activity at once; a game wins over music
   const actParts = new Map();   // userId -> { spotify, game }
+  // when a game stops (or changes), add the time to that person's "Recently played"
+  function logGame(uidv, g) {
+    if (!g || g.type !== 'playing' || !g.start) return;
+    const mins = Math.round((now() - g.start) / 60000); if (mins < 1) return;
+    const list = pj(one('SELECT recent_games FROM users WHERE id=?', uidv)?.recent_games, []).filter(x => x && x.name);
+    const hit = list.find(x => x.name === g.name);
+    if (hit) { hit.minutes = (hit.minutes || 0) + mins; hit.last = now(); } else list.push({ name: g.name, minutes: mins, last: now() });
+    list.sort((a, b) => b.last - a.last);
+    run('UPDATE users SET recent_games=? WHERE id=?', JSON.stringify(list.slice(0, 20)), uidv);
+  }
   function setActivity(uidv, a, src = 'spotify') {
+    const before = actParts.get(uidv)?.game;
+    if ((src === 'game' || src === 'all') && before && (!a || src === 'all' || a.name !== before.name || a.type !== before.type)) logGame(uidv, before);
     const parts = src === 'all' ? {} : { ...(actParts.get(uidv) || {}), [src]: a || null };
     if (parts.spotify || parts.game) actParts.set(uidv, parts); else actParts.delete(uidv);
     const eff = parts.game || parts.spotify || null;

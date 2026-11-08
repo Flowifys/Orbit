@@ -1294,6 +1294,7 @@ function profileCardHtml(u, opts = {}) {
   const conns = (u.connections || []);
   return `<div class="profile-card ${themed ? 'themed' : ''} fx-${esc(u.effect || 'none')}" data-card="${esc(u.id)}" style="${themeStyle(u)}">
     ${bannerHtml(u)}
+    ${preview ? '' : `<button class="pc-full" data-fullp title="View full profile">${I.expand}<span>Full profile</span></button>`}
     <div class="avwrap">${avatar(u, 's80', true)}</div>
     ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
     <div class="inner">
