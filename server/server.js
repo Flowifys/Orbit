@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.5';
+const VERSION = '1.25.6';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -72,7 +72,7 @@ function start(opts = {}) {
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
   const SECRET = process.env.JWT_SECRET || cfg.jwtSecret;
   // email: Resend's web API (RESEND_API_KEY) works on Render's free plan, which blocks normal SMTP ports; SMTP still works on paid plans
-  const RESEND_KEY = process.env.RESEND_API_KEY || '';
+  const RESEND_KEY = String(process.env.RESEND_API_KEY || '').trim();
   const EMAIL_FROM = process.env.EMAIL_FROM || smtp.from || 'Orbit <no-reply@orbital.sbs>';
   const emailEnabled = !!(RESEND_KEY || smtp.host);
   let mailer = null;
@@ -514,7 +514,8 @@ function start(opts = {}) {
   // ----- two-step sign-in: a code by email or text message after the password, plus one-time backup codes -----
   // Twilio Verify (TWILIO_VERIFY_SID) sends and checks the codes itself and needs no A2P phone-number registration;
   // a plain Twilio number (TWILIO_FROM) works too once that number is registered for texting in the US.
-  const TWILIO = { sid: process.env.TWILIO_ACCOUNT_SID || '', key: process.env.TWILIO_AUTH_TOKEN || '', from: process.env.TWILIO_FROM || '', verify: process.env.TWILIO_VERIFY_SID || '' };
+  const envT = (k) => String(process.env[k] || '').replace(/\s+/g, '');   // pasted keys often carry spaces or line breaks
+  const TWILIO = { sid: envT('TWILIO_ACCOUNT_SID'), key: envT('TWILIO_AUTH_TOKEN'), from: envT('TWILIO_FROM'), verify: envT('TWILIO_VERIFY_SID') };
   const smsEnabled = !!(TWILIO.sid && TWILIO.key && (TWILIO.verify || TWILIO.from));
   const twilioAuth = () => 'Basic ' + Buffer.from(TWILIO.sid + ':' + TWILIO.key).toString('base64');
   async function verifyApi(pathPart, form) {
