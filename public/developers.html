@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orbit — Developer Portal</title>
+<meta name="description" content="Build bots for Orbit. Create a bot, get a token, and connect it to the gateway and REST API.">
+<meta name="theme-color" content="#0b0817">
+<link rel="icon" href="/logo.png">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Orbit — Developer Portal">
+<meta property="og:description" content="Create bots for Orbit and connect them to the gateway and REST API.">
+<meta property="og:image" content="/icon-512.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
+<style>
+  main.wrap{padding:36px 0 80px}
+  .dev-hero{margin:8px 0 10px}
+  .dev-hero h1{font:800 clamp(30px,5vw,46px)/1.05 var(--display);letter-spacing:-.02em;margin:0 0 10px}
+  .dev-hero .sub{color:var(--mist);font-size:17px;max-width:620px}
+  .me-chip{display:inline-flex;align-items:center;gap:9px;background:var(--glass);border:1px solid var(--line);border-radius:999px;padding:6px 14px 6px 6px;color:var(--mist);font-size:14px;margin-top:16px}
+  .me-chip img{width:28px;height:28px;border-radius:50%;object-fit:cover;background:var(--ink-2)}
+  .me-chip b{color:var(--star)}
+  .panel{background:var(--glass);border:1px solid var(--line);border-radius:18px;padding:24px;margin-top:22px}
+  .panel h2{font:700 22px var(--display);margin:0 0 6px}
+  .panel p.lead{color:var(--mist);font-size:15px;margin:0 0 18px}
+  .row{display:flex;gap:10px;flex-wrap:wrap}
+  .input{flex:1;min-width:220px;background:var(--ink-2);border:1px solid var(--line-2);border-radius:12px;color:var(--star);font:500 15px var(--body);padding:13px 15px;outline:none}
+  .input:focus{border-color:var(--violet)}
+  .btn{display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:none;border-radius:12px;font:700 15px var(--display);padding:13px 20px;color:#fff;background:linear-gradient(135deg,#9a7dff,#7657f0);box-shadow:0 10px 26px -14px #8b6dffcc;transition:.15s}
+  .btn:hover{transform:translateY(-1px)}
+  .btn:disabled{opacity:.5;cursor:default;transform:none}
+  .btn.ghost{background:var(--glass-2);border:1px solid var(--line-2);color:var(--star);box-shadow:none;padding:10px 15px;font-size:14px}
+  .btn.ghost:hover{border-color:var(--violet)}
+  .btn.danger{background:var(--glass-2);border:1px solid var(--line-2);color:var(--red);box-shadow:none;padding:10px 15px;font-size:14px}
+  .btn.danger:hover{border-color:var(--red);background:#ff5d6c22}
+  .btn.sm{padding:9px 13px;font-size:13px}
+  .bots{display:flex;flex-direction:column;gap:12px}
+  .bot{display:flex;align-items:center;gap:14px;background:var(--ink-2);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .bot .av{width:46px;height:46px;border-radius:50%;object-fit:cover;background:linear-gradient(135deg,#9a7dff,#7657f0);display:flex;align-items:center;justify-content:center;color:#fff;font:800 18px var(--display);flex-shrink:0}
+  .bot .info{flex:1;min-width:0}
+  .bot .info b{display:flex;align-items:center;gap:8px;font:700 17px var(--display)}
+  .bot-tag{display:inline-block;padding:1px 6px;border-radius:5px;background:linear-gradient(135deg,#9a7dff,#7657f0);color:#fff;font:700 10px var(--body);letter-spacing:.4px}
+  .bot .id{color:var(--dim);font:500 12px ui-monospace,Menlo,Consolas,monospace;margin-top:3px;word-break:break-all}
+  .bot .meta{color:var(--mist);font-size:13px;margin-top:2px}
+  .bot .acts{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+  .empty{color:var(--dim);text-align:center;padding:26px;font-size:15px}
+  .gate{text-align:center;padding:60px 20px}
+  .gate h2{font:700 24px var(--display);margin:0 0 8px}
+  .gate p{color:var(--mist);margin:0 0 22px}
+  code.inline{background:var(--ink-2);border:1px solid var(--line);border-radius:6px;padding:2px 7px;font:500 13px ui-monospace,Menlo,Consolas,monospace;color:var(--violet-hi)}
+  pre.code{background:var(--ink);border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;margin:10px 0 0;font:500 13px/1.6 ui-monospace,Menlo,Consolas,monospace;color:var(--star)}
+  pre.code .k{color:var(--cyan)}
+  .docs h3{font:700 17px var(--display);margin:20px 0 6px}
+  .docs p,.docs li{color:var(--mist);font-size:14.5px;line-height:1.7}
+  table.ep{width:100%;border-collapse:collapse;margin-top:10px;font-size:14px}
+  table.ep td{border-top:1px solid var(--line);padding:9px 8px;vertical-align:top;color:var(--mist)}
+  table.ep td:first-child{white-space:nowrap;color:var(--star);font:500 13px ui-monospace,Menlo,Consolas,monospace}
+  /* modal */
+  .ov{position:fixed;inset:0;background:#05030ccc;backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+  .dlg{background:var(--ink-2);border:1px solid var(--line-2);border-radius:18px;max-width:520px;width:100%;padding:26px}
+  .dlg h3{font:700 21px var(--display);margin:0 0 8px}
+  .dlg p{color:var(--mist);font-size:14.5px;margin:0 0 14px}
+  .tokbox{display:flex;gap:8px;align-items:center;background:var(--ink);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+  .tokbox code{flex:1;font:500 13px ui-monospace,Menlo,Consolas,monospace;color:var(--star);word-break:break-all}
+  .warn{color:var(--signal);font-size:13px;margin-top:10px}
+  .dlg .row{justify-content:flex-end;margin-top:18px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--ink-2);border:1px solid var(--line-2);color:var(--star);padding:12px 20px;border-radius:12px;z-index:60;box-shadow:0 20px 40px -20px #000;font-size:14px;opacity:0;transition:.2s}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+</style>
+</head>
+<body>
+<div class="bg"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/home"><img src="/logo.png" alt="">Orbit</a>
+    <nav class="nav-links">
+      <a href="/home">Home</a>
+      <a href="/team">Team</a>
+      <a href="/download">Download</a>
+      <a href="/developers" class="active">Developers</a>
+      <a href="/" class="cta-nav">Open Orbit</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap" id="app">
+  <div class="dev-hero">
+    <h1>Developer Portal</h1>
+    <p class="sub">Build bots for Orbit. Create a bot account, grab its token, and connect it to the realtime gateway and REST API — then add it to any server you manage.</p>
+    <div id="who"></div>
+  </div>
+  <div id="content"></div>
+</main>
+
+<footer>
+  <span class="fbrand"><img src="/logo.png" alt="">Orbit</span>
+  <span class="flinks"><a href="/home">Home</a><a href="/team">Team</a><a href="/download">Download</a><a href="/developers">Developers</a><a href="/">Open Orbit</a></span>
+</footer>
+
+<script>
+const TOKEN = (() => { try { return localStorage.getItem('orbit-token'); } catch { return null; } })();
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const initial = (n) => (String(n || '?').trim()[0] || '?').toUpperCase();
+let TOASTER;
+function toast(msg) { clearTimeout(TOASTER); let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); } t.textContent = msg; requestAnimationFrame(() => t.classList.add('show')); TOASTER = setTimeout(() => t.classList.remove('show'), 2200); }
+function copy(text, label) { navigator.clipboard?.writeText(text).then(() => toast((label || 'Copied') + ' ✓')); }
+
+async function api(method, path, body) {
+  const res = await fetch(path, { method, headers: { authorization: 'Bearer ' + TOKEN, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const text = await res.text(); let data; try { data = text ? JSON.parse(text) : {}; } catch { data = {}; }
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+const avatarHtml = (b) => b.avatar ? `<span class="av" style="padding:0"><img src="${esc(b.avatar)}" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover"></span>` : `<span class="av">${esc(initial(b.display_name))}</span>`;
+
+function docsHtml() {
+  return `<div class="panel docs">
+    <h2>Connecting a bot</h2>
+    <p class="lead">A bot authenticates with <code class="inline">Authorization: Bot &lt;token&gt;</code> instead of logging in. It has a realtime gateway and a REST API.</p>
+    <h3>Gateway (Socket.IO)</h3>
+    <pre class="code"><span class="k">const</span> { io } = require('socket.io-client');
+<span class="k">const</span> socket = io('${location.origin}', {
+  transports: ['websocket'],
+  auth: { token: process.env.ORBIT_TOKEN, bot: <span class="k">true</span> },
+});
+socket.on('message:new', (msg) => { <span class="k">/* react */</span> });</pre>
+    <h3>REST</h3>
+    <pre class="code"><span class="k">await</span> fetch('${location.origin}/api/channels/' + channelId + '/messages', {
+  method: 'POST',
+  headers: { authorization: 'Bot ' + token, 'content-type': 'application/json' },
+  body: JSON.stringify({ content: 'Hello from my bot!' }),
+});</pre>
+    <h3>Common endpoints</h3>
+    <table class="ep">
+      <tr><td>POST /api/channels/:id/messages</td><td>Send a message (content, reply_to, gif…)</td></tr>
+      <tr><td>GET /api/channels/:id/messages</td><td>Read recent messages</td></tr>
+      <tr><td>GET /api/servers/:id</td><td>Server + channels the bot can see</td></tr>
+      <tr><td>PATCH /api/messages/:id</td><td>Edit one of the bot's messages</td></tr>
+      <tr><td>DELETE /api/messages/:id</td><td>Delete a message (needs Manage Messages)</td></tr>
+    </table>
+    <h3>Add your bot to a server</h3>
+    <p>In a server you manage: <b>Server Settings → Bots</b>, paste the bot's <b>ID</b>. It joins with the <code class="inline">@everyone</code> role's permissions — assign roles to give it more.</p>
+    <h3>Run the ready-made example</h3>
+    <p>Grab <code class="inline">bot/orbit-bot.js</code> from the repo and run:</p>
+    <pre class="code">ORBIT_TOKEN="&lt;your bot token&gt;" node bot/orbit-bot.js</pre>
+    <p>Then try <code class="inline">!ping</code>, <code class="inline">!roll 20</code>, or <code class="inline">!help</code> in a channel it can see. Limits: 10 bots per account, 20 per server.</p>
+  </div>`;
+}
+
+function render(bots) {
+  $('#content').innerHTML = `
+    <div class="panel">
+      <h2>Your bots</h2>
+      <p class="lead">Create a bot and you'll get a token (shown once) and a Bot ID. Keep the token secret — anyone with it can control your bot.</p>
+      <div class="row"><input class="input" id="newname" placeholder="New bot name (e.g. HelperBot)" maxlength="32"><button class="btn" id="create">＋ Create bot</button></div>
+      <div class="bots" id="list" style="margin-top:18px"></div>
+    </div>
+    ${docsHtml()}`;
+  const list = $('#list');
+  if (!bots.length) list.innerHTML = `<div class="empty">No bots yet. Create your first one above.</div>`;
+  else list.innerHTML = bots.map(b => `<div class="bot" data-id="${esc(b.id)}">
+    ${avatarHtml(b)}
+    <div class="info">
+      <b>${esc(b.display_name)}<span class="bot-tag">BOT</span></b>
+      <div class="id">ID: ${esc(b.id)}</div>
+      <div class="meta">@${esc(b.username)} · in ${b.servers} server${b.servers === 1 ? '' : 's'}</div>
+    </div>
+    <div class="acts">
+      <button class="btn ghost sm" data-act="copyid">Copy ID</button>
+      <button class="btn ghost sm" data-act="regen">Regenerate</button>
+      <button class="btn ghost sm" data-act="rename">Rename</button>
+      <button class="btn danger sm" data-act="delete">Delete</button>
+    </div></div>`).join('');
+
+  $('#create').onclick = async () => {
+    const name = $('#newname').value.trim();
+    if (name.length < 2) return toast('Give your bot a name (2+ characters)');
+    $('#create').disabled = true;
+    try { const r = await api('POST', '/api/bots', { name }); showToken(r.token, 'Bot created 🤖'); refresh(); $('#newname').value = ''; }
+    catch (e) { toast(e.message); } finally { $('#create').disabled = false; }
+  };
+  list.onclick = async (e) => {
+    const card = e.target.closest('[data-id]'); const act = e.target.closest('[data-act]'); if (!card || !act) return;
+    const id = card.dataset.id, a = act.dataset.act;
+    if (a === 'copyid') copy(id, 'Bot ID copied');
+    if (a === 'regen') confirmDlg('Regenerate token', 'This invalidates the current token immediately — any running bot using it will stop until you update it.', 'Regenerate', async () => { const r = await api('POST', `/api/bots/${id}/regenerate`); showToken(r.token, 'New bot token'); });
+    if (a === 'rename') { const name = prompt('New bot name', card.querySelector('.info b').childNodes[0].textContent.trim()); if (name && name.trim().length >= 2) { try { await api('PATCH', `/api/bots/${id}`, { display_name: name.trim() }); refresh(); } catch (x) { toast(x.message); } } }
+    if (a === 'delete') confirmDlg('Delete bot', 'This permanently deletes the bot and removes it from every server. This cannot be undone.', 'Delete', async () => { await api('DELETE', `/api/bots/${id}`); refresh(); });
+  };
+}
+
+function dialog(inner) {
+  const ov = document.createElement('div'); ov.className = 'ov';
+  ov.innerHTML = `<div class="dlg">${inner}</div>`;
+  ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+  document.body.appendChild(ov); return ov;
+}
+function showToken(token, title) {
+  const ov = dialog(`<h3>${esc(title)}</h3><p>Copy this now — for security you won't be able to see it again. If you lose it, regenerate it.</p>
+    <div class="tokbox"><code>${esc(token)}</code><button class="btn ghost sm" data-copy>Copy</button></div>
+    <p class="warn">⚠️ Treat this like a password. Anyone with it can control your bot.</p>
+    <div class="row"><button class="btn" data-done>Done</button></div>`);
+  ov.querySelector('[data-copy]').onclick = () => copy(token, 'Token copied');
+  ov.querySelector('[data-done]').onclick = () => ov.remove();
+}
+function confirmDlg(title, msg, okText, fn) {
+  const ov = dialog(`<h3>${esc(title)}</h3><p>${esc(msg)}</p><div class="row"><button class="btn ghost" data-cancel>Cancel</button><button class="btn danger" data-ok>${esc(okText)}</button></div>`);
+  ov.querySelector('[data-cancel]').onclick = () => ov.remove();
+  ov.querySelector('[data-ok]').onclick = async () => { try { await fn(); ov.remove(); } catch (e) { toast(e.message); } };
+}
+
+async function refresh() { try { render(await api('GET', '/api/bots')); } catch (e) { $('#content').innerHTML = `<div class="panel"><p class="lead">${esc(e.message)}</p></div>`; } }
+
+async function start() {
+  if (!TOKEN) {
+    $('#content').innerHTML = `<div class="panel"><div class="gate"><h2>Log in to Orbit first</h2><p>Open Orbit and sign in, then come back here to create and manage your bots.</p><a class="cta" href="/">Open Orbit</a></div></div>`;
+    return;
+  }
+  try {
+    const me = await api('GET', '/api/me');
+    const u = me.me || {};
+    $('#who').innerHTML = `<div class="me-chip">${u.avatar ? `<img src="${esc(u.avatar)}" alt="">` : `<span class="av" style="width:28px;height:28px;font-size:13px">${esc(initial(u.display_name))}</span>`}Signed in as <b>${esc(u.display_name || u.username)}</b></div>`;
+  } catch (e) {
+    $('#content').innerHTML = `<div class="panel"><div class="gate"><h2>Session expired</h2><p>Please open Orbit and sign in again.</p><a class="cta" href="/">Open Orbit</a></div></div>`;
+    return;
+  }
+  refresh();
+}
+start();
+</script>
+</body>
+</html>
