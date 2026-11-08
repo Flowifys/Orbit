@@ -1157,7 +1157,7 @@ function renderTyping() {
   const ids = Object.keys(t).filter(u => t[u] > now && u !== S.me.id);
   const sid = findChannel(cid)?.server_id;
   const names = ids.map(u => `<b>${esc(nameIn(sid, u))}</b>`);
-  el.innerHTML = !ids.length ? '' : `<span class="dots"><i></i><i></i><i></i></span>${ids.length > 3 ? 'Several people are typing…' : names.join(ids.length === 2 ? ' and ' : ', ') + (ids.length === 1 ? ' is typing…' : ' are typing…')}`;
+  el.innerHTML = !ids.length ? '' : `<span class="dots"><i></i><i></i><i></i></span>${ids.length > 3 ? 'Several people are typing…' : `<span>${names.join(ids.length === 2 ? ' and ' : ', ')}${ids.length === 1 ? ' is typing…' : ' are typing…'}</span>`}`;
 }
 
 /* ================= THREADS ================= */

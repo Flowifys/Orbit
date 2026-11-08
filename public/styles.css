@@ -1840,3 +1840,14 @@ body.pad .msg .toolbar{display:none!important}
 .bk-codes{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
 .bk-codes code{padding:10px;border-radius:8px;background:var(--bg-0);border:1px solid var(--line);font:600 15px ui-monospace,monospace;text-align:center;letter-spacing:1px}
 @media (max-width:600px){.tf-pick{grid-template-columns:1fr}}
+
+/* ===== 1.25.1: typing indicator sits in its own strip under the message box (no overlap) ===== */
+.chat>.composer{padding-bottom:28px!important}
+.chat>.composer .typing{left:24px;bottom:5px;height:20px;gap:0;font-size:12.5px;line-height:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;right:24px}
+.chat>.composer .typing:empty{display:none}
+.chat>.composer .typing b{color:var(--text);font-weight:700}
+.chat>.composer .typing .dots{margin-right:8px}
+.typing .dots{align-items:center;height:20px}
+.typing .dots i{width:6px;height:6px}
+@media (max-width:760px){.chat>.composer{padding-bottom:max(26px,calc(env(safe-area-inset-bottom) + 20px))!important}.chat>.composer .typing{left:16px;bottom:max(4px,env(safe-area-inset-bottom))}}
+body.pad .chat>.composer .typing{bottom:4px}
