@@ -379,7 +379,7 @@ function openServerSettings(sid, first) {
 }
 function srvOverview(body, sid) {
   const sd = S.serverData[sid];
-  const orig = { name: sd.name, description: sd.description || '' }; const d = { ...orig }; const files = {};
+  const orig = { name: sd.name, description: sd.description || '', afk_channel_id: sd.afk_channel_id || '', afk_timeout: sd.afk_timeout || 300 }; const d = { ...orig }; const files = {};
   const dirty = () => { if (JSON.stringify(d) !== JSON.stringify(orig) || Object.keys(files).length) saveBar(body, save, () => srvOverview(body, sid)); else $('.save-bar', body)?.remove(); };
   const save = async () => {
     for (const k of ['icon', 'banner']) {
@@ -399,8 +399,14 @@ function srvOverview(body, sid) {
     <h3>Description</h3><textarea class="input" name="description" maxlength="300" rows="3" placeholder="Shown on invites">${esc(d.description)}</textarea>
     <h3>Server Banner</h3><p style="color:var(--muted);font-size:13px;margin-bottom:8px">Shows at the top of the channel list and on invites. Animated GIFs are supported.</p>
     <div data-bprev style="height:140px;border-radius:10px;background:var(--bg-1) center/cover;margin-bottom:10px;${bannerUrl() ? `background-image:url('${esc(bannerUrl())}')` : ''}"></div>
-    <div class="media-row"><label class="btn primary sm">Upload Banner<input type="file" accept="image/*" hidden data-f="banner"></label><button class="btn ghost sm" data-rm="banner">Remove Banner</button></div>`;
+    <div class="media-row"><label class="btn primary sm">Upload Banner<input type="file" accept="image/*" hidden data-f="banner"></label><button class="btn ghost sm" data-rm="banner">Remove Banner</button></div>
+    <h3>Inactive (AFK) channel</h3><p style="color:var(--muted);font-size:13px;margin-bottom:8px">Members who are idle in voice this long get moved here automatically.</p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <select class="input" name="afk_channel_id" style="max-width:240px"><option value="">No AFK channel</option>${sd.channels.filter(c => c.type === 'voice').map(c => `<option value="${c.id}" ${d.afk_channel_id === c.id ? 'selected' : ''}>🔊 ${esc(c.name)}</option>`).join('')}</select>
+      <select class="input" name="afk_timeout" style="max-width:160px">${[[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [1800, '30 minutes'], [3600, '1 hour']].map(([v, l]) => `<option value="${v}" ${d.afk_timeout === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    </div>`;
   $$('input[name], textarea[name]', body).forEach(i => i.oninput = () => { d[i.name] = i.value; dirty(); });
+  $$('select[name]', body).forEach(s => s.onchange = () => { d[s.name] = s.name === 'afk_timeout' ? Number(s.value) : s.value; dirty(); });
   const refresh = () => { const ic = $('[data-ic]', body), fi = $('[data-f=icon]', body); ic.innerHTML = iconUrl() ? `<img src="${esc(iconUrl())}">` : 'Upload<br>Icon'; ic.appendChild(fi); $('[data-bprev]', body).style.backgroundImage = bannerUrl() ? `url('${bannerUrl()}')` : 'none'; };
   $$('[data-f]', body).forEach(i => i.onchange = () => { if (i.files[0]) { files[i.dataset.f] = i.files[0]; refresh(); dirty(); } });
   $$('[data-rm]', body).forEach(b => b.onclick = () => { files[b.dataset.rm] = null; refresh(); dirty(); });

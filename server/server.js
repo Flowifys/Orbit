@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.34.0';
+const VERSION = '1.35.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -162,6 +162,11 @@ function start(opts = {}) {
   if (addedCategories) db.exec('ALTER TABLE channels ADD COLUMN parent_id TEXT');
   if (!msgCols.includes('sticker')) db.exec('ALTER TABLE messages ADD COLUMN sticker TEXT');
   if (!msgCols.includes('title')) db.exec('ALTER TABLE messages ADD COLUMN title TEXT');   // forum post titles
+  // 1.35: announcement channels (read-only), NSFW/age-gated channels, voice user limits, AFK channel
+  ['announce', 'nsfw', 'user_limit'].forEach(c => { if (!chanCols.includes(c)) db.exec(`ALTER TABLE channels ADD COLUMN ${c} INTEGER DEFAULT 0`); });
+  const srvCols = all0(db, 'PRAGMA table_info(servers)').map(c => c.name);
+  if (!srvCols.includes('afk_channel_id')) db.exec('ALTER TABLE servers ADD COLUMN afk_channel_id TEXT');
+  if (!srvCols.includes('afk_timeout')) db.exec('ALTER TABLE servers ADD COLUMN afk_timeout INTEGER DEFAULT 300');
   // 1.15: sessions (one per logged-in device) so you can see and log out devices
   db.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, created INTEGER, last_seen INTEGER, ua TEXT, client TEXT, ip TEXT);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
@@ -294,7 +299,7 @@ function start(opts = {}) {
     return ch.private ? ids.filter(i => canView(ch, i)) : ids;
   }
   const chanRow = (id) => one('SELECT * FROM channels WHERE id=?', id);
-  function fmtChannel(c) { return { ...c, private: !!c.private, allowed_roles: JSON.parse(c.allowed_roles || '[]') }; }
+  function fmtChannel(c) { return { ...c, private: !!c.private, announce: !!c.announce, nsfw: !!c.nsfw, user_limit: c.user_limit || 0, allowed_roles: JSON.parse(c.allowed_roles || '[]') }; }
   function fmtMessages(rows) {
     if (!rows.length) return [];
     const ids = rows.map(r => r.id);
@@ -332,6 +337,7 @@ function start(opts = {}) {
     const emojis = all('SELECT id, name, url FROM emojis WHERE server_id=? ORDER BY created', sid);
     const stickers = all('SELECT id, name, url FROM stickers WHERE server_id=? ORDER BY created', sid);
     return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, owner_id: s.owner_id,
+      afk_channel_id: s.afk_channel_id || null, afk_timeout: s.afk_timeout || 300,
       channels, roles, members, emojis, stickers, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
@@ -1021,6 +1027,11 @@ function start(opts = {}) {
     run('UPDATE servers SET name=?, description=? WHERE id=?', String(b.name ?? s.name).trim().slice(0, 50) || s.name, String(b.description ?? s.description).slice(0, 300), sid);
     if (b.icon === null) run('UPDATE servers SET icon=NULL WHERE id=?', sid);
     if (b.banner === null) run('UPDATE servers SET banner=NULL WHERE id=?', sid);
+    if (b.afk_channel_id !== undefined) {
+      const afk = b.afk_channel_id ? one(`SELECT id FROM channels WHERE id=? AND server_id=? AND type='voice'`, String(b.afk_channel_id), sid) : null;
+      run('UPDATE servers SET afk_channel_id=? WHERE id=?', afk?.id || null, sid);
+    }
+    if (b.afk_timeout !== undefined) run('UPDATE servers SET afk_timeout=? WHERE id=?', [60, 300, 900, 1800, 3600].includes(Number(b.afk_timeout)) ? Number(b.afk_timeout) : 300, sid);
     refreshServer(sid);
     res.json({ ok: true });
   }));
@@ -1125,6 +1136,10 @@ function start(opts = {}) {
     const name = cleanChanName(req.body?.name, type);
     if (!name) throw err(400, 'Give the channel a name');
     const id = createChannel(sid, type, name, { topic: String(req.body?.topic || '').slice(0, 300), private: !!req.body?.private, allowed_roles: Array.isArray(req.body?.allowed_roles) ? req.body.allowed_roles : [], parent_id: parent?.id });
+    const announce = type === 'text' && req.body?.announce ? 1 : 0;
+    const nsfw = req.body?.nsfw ? 1 : 0;
+    const user_limit = type === 'voice' ? Math.max(0, Math.min(99, Number(req.body?.user_limit) || 0)) : 0;
+    if (announce || nsfw || user_limit) run('UPDATE channels SET announce=?, nsfw=?, user_limit=? WHERE id=?', announce, nsfw, user_limit, id);
     refreshServer(sid);
     res.json(fmtChannel(chanRow(id)));
   }));
@@ -1138,6 +1153,9 @@ function start(opts = {}) {
       run('UPDATE channels SET parent_id=? WHERE id=?', parent?.id || null, ch.id);
     }
     if (b.slowmode !== undefined) run('UPDATE channels SET slowmode=? WHERE id=?', Math.max(0, Math.min(21600, Math.floor(Number(b.slowmode) || 0))), ch.id);
+    if (b.announce !== undefined && ch.type === 'text') run('UPDATE channels SET announce=? WHERE id=?', b.announce ? 1 : 0, ch.id);
+    if (b.nsfw !== undefined) run('UPDATE channels SET nsfw=? WHERE id=?', b.nsfw ? 1 : 0, ch.id);
+    if (b.user_limit !== undefined && ch.type === 'voice') run('UPDATE channels SET user_limit=? WHERE id=?', Math.max(0, Math.min(99, Number(b.user_limit) || 0)), ch.id);
     run('UPDATE channels SET name=?, topic=?, private=?, allowed_roles=?, position=? WHERE id=?',
       b.name !== undefined ? (cleanChanName(b.name, ch.type) || ch.name) : ch.name, b.topic !== undefined ? String(b.topic).slice(0, 300) : ch.topic,
       b.private !== undefined ? (b.private ? 1 : 0) : ch.private, b.allowed_roles !== undefined ? JSON.stringify(b.allowed_roles) : ch.allowed_roles,
@@ -1913,6 +1931,8 @@ function start(opts = {}) {
     if (!canView(ch, req.user.id) || !['text', 'dm', 'forum', 'voice'].includes(ch.type)) { cleanup(); throw err(403, 'No access'); }
     if (hit('send:' + req.user.id, 25, 10e3)) { cleanup(); throw err(429, 'You’re sending messages too fast. Slow down a little.'); }
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
+    // announcement channels: only mods can post (everyone can still read & react)
+    if (ch.announce && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.MANAGE_MESSAGES) && !has(ch.server_id, req.user.id, P.MANAGE_CHANNELS)) { cleanup(); throw err(403, 'Only moderators can post in an announcement channel.'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
     if (ch.type !== 'dm') {
       const until = timedOutUntil(ch.server_id, req.user.id);
@@ -2383,6 +2403,11 @@ function start(opts = {}) {
       const ok = ch && (pass || (canView(ch, me) && (ch.type === 'dm' || (ch.type === 'voice' && has(ch.server_id, me, P.CONNECT)))));
       if (!ok) return ack && ack({ error: 'You can’t join this voice channel' });
       if (ch.type === 'voice' && timedOutUntil(ch.server_id, me)) return ack && ack({ error: 'You’re timed out in this server' });
+      // voice channel user limit (mods and pass holders bypass)
+      if (ch.type === 'voice' && ch.user_limit > 0 && !pass && !has(ch.server_id, me, P.MANAGE_CHANNELS)) {
+        const room0 = voice.get(ch.id);
+        if (room0 && !room0.has(me) && room0.size >= ch.user_limit) return ack && ack({ error: 'This voice channel is full' });
+      }
       leaveVoice(me);
       if (!voice.has(ch.id)) voice.set(ch.id, new Map());
       const room = voice.get(ch.id);

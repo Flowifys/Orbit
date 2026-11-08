@@ -649,3 +649,23 @@ window.addEventListener('load', () => {
 
 // browsers only let audio start after a click or key press: wake the talking detector on the next one
 ['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (Voice._speakCtx?.state === 'suspended') Voice._speakCtx.resume().catch(() => {}); }, true));
+
+// AFK auto-move: idle too long in a voice channel → get moved to the server's AFK channel
+(() => {
+  let lastActive = Date.now();
+  const bump = () => { lastActive = Date.now(); };
+  ['mousemove', 'keydown', 'mousedown', 'touchstart'].forEach(ev => addEventListener(ev, bump, { passive: true }));
+  setInterval(() => {
+    const cid = Voice.channel; if (!cid) return;
+    if (Voice.speaking && Voice.speaking.has(S.me.id)) { lastActive = Date.now(); return; } // talking counts as active
+    const ch = typeof findChannel === 'function' ? findChannel(cid) : null;
+    if (!ch || !ch.server_id) return;
+    const sd = S.serverData[ch.server_id];
+    if (!sd || !sd.afk_channel_id || sd.afk_channel_id === cid) return;
+    if (Date.now() - lastActive >= (sd.afk_timeout || 300) * 1000) {
+      lastActive = Date.now();
+      Voice.join(sd.afk_channel_id);
+      try { toast('Moved to the AFK channel — you were idle.'); } catch {}
+    }
+  }, 5000);
+})();

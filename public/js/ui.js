@@ -338,7 +338,7 @@ function renderSidebar() {
       const people = c.type === 'voice' ? (S.voice[c.id] || []) : [];
       const muted = isMuted(c.id) || isMuted(sd.id);
       return `<div role="button" tabindex="0" class="ch ${S.view.channel === c.id ? 'active' : ''} ${un && !muted && S.view.channel !== c.id ? 'unread' : ''} ${muted ? 'muted' : ''}" data-ch="${c.id}" ${can(PERM.MANAGE_CHANNELS) ? 'draggable="true"' : ''}>
-        <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
+        <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>${c.announce ? '<span class="ch-tag" title="Announcement channel">📣</span>' : ''}${c.nsfw ? '<span class="ch-tag" title="Age-restricted">🔞</span>' : ''}
         ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
         <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
       </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user ${isSpeaking(p.user_id) ? 'speaking' : ''}" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (isSpeaking(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live" aria-label="Streaming live">LIVE</span>' : ''}${p.video ? srIcon(I.video, 'Camera on') : ''}${p.deaf ? srIcon(I.deaf, 'Deafened') : p.muted ? srIcon(I.micOff, 'Muted') : ''}</span></div>`).join('')}</div>` : ''}`;
@@ -734,7 +734,19 @@ function banMember(sid, uidv) {
 async function openChannel(cid) {
   const key = cid;
   renderTyping();
-  if (findChannel(cid)?.type === 'forum') { if (!S.messages[key]) await loadForumPosts(cid); markRead(cid); return; }
+  const chN = findChannel(cid);
+  // age gate for NSFW / age-restricted channels (confirmed once per session)
+  S.nsfwOk = S.nsfwOk || new Set();
+  if (chN && chN.nsfw && chN.type !== 'dm' && !S.nsfwOk.has(cid)) {
+    const box = containersFor(cid)[0];
+    if (box) {
+      box.innerHTML = `<div class="nsfw-gate"><div class="big">🔞</div><h2>Age-restricted channel</h2><p>#${esc(chN.name)} is marked age-restricted. You need to be at least 18 to view it.</p><div class="row"><button class="btn ghost" data-nsfw-no>Go back</button><button class="btn primary" data-nsfw-ok>I’m over 18</button></div></div>`;
+      box.querySelector('[data-nsfw-ok]').onclick = () => { S.nsfwOk.add(cid); openChannel(cid); };
+      box.querySelector('[data-nsfw-no]').onclick = () => { S.view.channel = null; saveView(); renderSidebar(); renderMain(); showMainMobile?.(); };
+    }
+    return;
+  }
+  if (chN?.type === 'forum') { if (!S.messages[key]) await loadForumPosts(cid); markRead(cid); return; }
   if (!S.messages[key]) await loadMessages(key);
   else refreshMessages(key, true);
   markRead(cid);
@@ -1571,12 +1583,19 @@ function channelSettingsModal(cid) {
     <div class="mb"><div class="field"><label>Channel name</label><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
     ${c.type === 'text' || c.type === 'forum' ? `<div class="field"><label>${c.type === 'forum' ? 'Post guidelines' : 'Channel topic'}</label><textarea class="input" name="topic" maxlength="300" placeholder="Let everyone know how to use this channel!">${esc(c.topic || '')}</textarea></div>` : ''}
     <label class="row-toggle"><span class="rt"><b>${I.lock} Private channel</b><small>Only selected roles (and admins) can view it.</small></span><span class="toggle"><input type="checkbox" name="priv" ${c.private ? 'checked' : ''}><span></span></span></label>
+    ${c.type === 'text' ? `<label class="row-toggle"><span class="rt"><b>📣 Announcement channel</b><small>Only moderators can post. Everyone else can read and react.</small></span><span class="toggle"><input type="checkbox" name="announce" ${c.announce ? 'checked' : ''}><span></span></span></label>` : ''}
+    ${c.type !== 'category' ? `<label class="row-toggle"><span class="rt"><b>🔞 Age-restricted (NSFW)</b><small>Members confirm they’re 18+ before viewing this channel.</small></span><span class="toggle"><input type="checkbox" name="nsfw" ${c.nsfw ? 'checked' : ''}><span></span></span></label>` : ''}
+    ${c.type === 'voice' ? `<div class="field"><label>User limit</label><input class="input" type="number" name="ulimit" min="0" max="99" value="${c.user_limit || 0}" style="max-width:120px"><p class="hint" style="margin:6px 0 0">Max people in the call. 0 = unlimited. Moderators can always join.</p></div>` : ''}
     <div class="field roles-pick ${c.private ? '' : 'hidden'}"><label>Roles with access</label><div class="chip-select">${sd.roles.filter(r => !r.is_default).map(r => `<button data-r="${r.id}" class="${roles.includes(r.id) ? 'on' : ''}"><i style="background:${esc(r.color || '#99aab5')}"></i>${esc(r.name)}</button>`).join('') || '<span style="color:var(--muted);font-size:13px">No roles yet.</span>'}</div></div>${c.type === 'text' || c.type === 'forum' ? `<div class="field" style="margin-top:14px"><label>Slowmode</label><select class="input" name="slow">${SLOW_OPTS.map(([v, l]) => `<option value="${v}" ${v === (c.slowmode || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select><p class="hint" style="margin:6px 0 0">Members can send one message per this interval. People who can manage messages or channels aren’t limited.</p></div>` : ''}</div>
     <div class="mf"><button class="btn danger" data-del>Delete Channel</button><span class="sp"></span><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
     $('[name=priv]', m).onchange = (e) => $('.roles-pick', m).classList.toggle('hidden', !e.target.checked);
     $$('[data-r]', m).forEach(b => b.onclick = () => { b.classList.toggle('on'); roles = $$('[data-r].on', m).map(x => x.dataset.r); });
     $('[data-ok]', m).onclick = async () => {
-      try { await api('PATCH', '/api/channels/' + cid, { name: $('[name=name]', m).value, topic: $('[name=topic]', m)?.value, private: $('[name=priv]', m).checked, allowed_roles: roles, ...($('[name=slow]', m) ? { slowmode: Number($('[name=slow]', m).value) } : {}) }); close(); }
+      try { await api('PATCH', '/api/channels/' + cid, { name: $('[name=name]', m).value, topic: $('[name=topic]', m)?.value, private: $('[name=priv]', m).checked, allowed_roles: roles,
+        ...($('[name=slow]', m) ? { slowmode: Number($('[name=slow]', m).value) } : {}),
+        ...($('[name=announce]', m) ? { announce: $('[name=announce]', m).checked } : {}),
+        ...($('[name=nsfw]', m) ? { nsfw: $('[name=nsfw]', m).checked } : {}),
+        ...($('[name=ulimit]', m) ? { user_limit: Number($('[name=ulimit]', m).value) } : {}) }); close(); }
       catch (e) { toast(e.message, true); }
     };
     $('[data-del]', m).onclick = () => { close(); deleteChannel(c); };

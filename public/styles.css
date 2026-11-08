@@ -193,6 +193,11 @@ select.input{appearance:auto}
 .chat{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
 .messages{flex:1;overflow-y:auto;overflow-x:hidden;padding-bottom:14px;min-height:0}
 .loader{padding:16px;text-align:center;color:var(--muted);font-size:13px}
+.nsfw-gate{display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;height:100%;min-height:300px;padding:40px 24px;gap:6px}
+.nsfw-gate .big{font-size:56px;margin-bottom:8px}
+.nsfw-gate h2{font-size:22px}
+.nsfw-gate p{color:var(--muted);max-width:40ch;margin:4px 0 18px}
+.nsfw-gate .row{display:flex;gap:12px}
 .ch-welcome{padding:32px 20px 14px;margin:0 0 6px}
 .ch-welcome .big{width:72px;height:72px;border-radius:50%;background:var(--bg-3);display:grid;place-items:center;margin-bottom:14px;color:var(--accent-2);box-shadow:0 0 0 1px var(--line-2),0 0 0 10px color-mix(in oklab,var(--accent) 7%,transparent)}
 .ch-welcome .big svg{width:36px;height:36px}
@@ -1912,3 +1917,5 @@ body.pad .chat>.composer .typing{bottom:4px}
   .settings .snav .in{padding-right:56px}
   .settings .sbody{padding-bottom:calc(40px + env(safe-area-inset-bottom))}
 }
+
+.ch .ch-tag{font-size:11px;opacity:.75;margin-left:3px;flex:none}
