@@ -250,16 +250,18 @@ ic('star', '<path d="M12 2l3 7 7 .5-5.5 4.5 2 7-6.5-4-6.5 4 2-7L2 9.5 9 9z" fill
 const BADGE_SVG = {
   og: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M7.2 2.2h9.6l5 9.8-5 9.8H7.2l-5-9.8z" fill="#f2b84b"/><path d="M7.2 2.2h9.6l2.6 5.1H4.6z" fill="#fff" opacity=".28"/><path d="M7.2 2.2h9.6l5 9.8-5 9.8H7.2l-5-9.8z" fill="none" stroke="#b9791a" stroke-width="1.1"/><text x="12" y="15.6" text-anchor="middle" font-family="Arial Black,Arial,Helvetica,sans-serif" font-weight="900" font-size="9.6" fill="#3b2400" letter-spacing="-.3">OG</text></svg>',
   trusted: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.00 1.00L14.43 2.92L17.50 2.47L18.65 5.35L21.53 6.50L21.08 9.57L23.00 12.00L21.08 14.43L21.53 17.50L18.65 18.65L17.50 21.53L14.43 21.08L12.00 23.00L9.57 21.08L6.50 21.53L5.35 18.65L2.47 17.50L2.92 14.43L1.00 12.00L2.92 9.57L2.47 6.50L5.35 5.35L6.50 2.47L9.57 2.92z" fill="#23a55a"/><circle cx="12" cy="12" r="7.6" fill="#fff" opacity=".14"/><path d="m8 12.3 2.7 2.7L16.2 9.4" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  // Developer: a green rounded tile with a </> mark
+  dev: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="2" y="2" width="20" height="20" rx="6" fill="#23a873"/><path d="M2 8a6 6 0 0 1 6-6h8a6 6 0 0 1 6 6z" fill="#fff" opacity=".16"/><path d="M8.6 8.2 5 12l3.6 3.8M15.4 8.2 19 12l-3.6 3.8M13.3 6.8l-2.6 10.4" fill="none" stroke="#fff" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   staff: '<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 1.6 3.6 4.8v6.1c0 5.3 3.6 9.9 8.4 11.5 4.8-1.6 8.4-6.2 8.4-11.5V4.8z" fill="#7b5cf5"/><path d="M12 1.6 3.6 4.8v6.1c0 .9.1 1.8.3 2.6L20.4 6.9V4.8z" fill="#fff" opacity=".16"/></svg>',
 };
 // badge = shape + (for staff) the real Orbit logo on top, drawn white
 function badgeIcon(id) { return `<span class="bdg-art">${BADGE_SVG[id]}${id === 'staff' ? '<img class="bdg-logo" src="/logo.png" alt="" draggable="false">' : ''}</span>`; }
 // every badge a user has, in display order (add new badges here)
-const BADGE_INFO = { staff: 'Orbit Staff', trusted: 'Trusted User', og: 'OG: one of the first people on Orbit' };
+const BADGE_INFO = { staff: 'Orbit Staff', dev: 'Orbit Developer', trusted: 'Trusted User', og: 'OG: one of the first people on Orbit' };
 function badgesOf(u) {
   if (!u) return [];
   const have = new Set(u.badges || []); if (u.staff) have.add('staff');
-  return ['staff', 'trusted', 'og'].filter(b => have.has(b)).map(id => ({ id, label: BADGE_INFO[id] }));
+  return ['staff', 'dev', 'trusted', 'og'].filter(b => have.has(b)).map(id => ({ id, label: BADGE_INFO[id] }));
 }
 // the row of badges next to the username on profile cards
 function badgeRowHtml(u) { const b = badgesOf(u); return b.length ? `<span class="badges" role="list" aria-label="Badges">${b.map(x => `<span class="bdg bdg-${x.id}" role="listitem" aria-label="${esc(x.label)}" data-tip="${esc(x.label)}" title="${esc(x.label)}">${badgeIcon(x.id)}</span>`).join('')}</span>` : ''; }

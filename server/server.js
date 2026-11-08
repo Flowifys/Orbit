@@ -30,12 +30,12 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.20.0';
+const VERSION = '1.20.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
 const OG_CUTOFF = Date.parse(process.env.OG_CUTOFF || '2026-12-01T00:00:00-07:00') || Date.parse('2026-12-01T07:00:00Z');
-const GRANTABLE_BADGES = ['og', 'trusted'];
+const GRANTABLE_BADGES = ['og', 'trusted', 'dev'];
 const uid = () => crypto.randomBytes(9).toString('base64url');
 const all0 = (db, sql) => db.prepare(sql).all();
 const now = () => Date.now();
@@ -585,7 +585,7 @@ function start(opts = {}) {
     res.setHeader('Content-Disposition', `attachment; filename="orbit-backup-${new Date().toISOString().slice(0, 10)}.db"`);
     res.sendFile(file);
   }));
-  // staff give / take away badges. Body: { badge: 'og' | 'trusted', on: true | false }
+  // staff give / take away badges. Body: { badge: 'og' | 'trusted' | 'dev', on: true | false }
   app.put('/api/users/:id/badges', auth, wrap((req, res) => {
     if (!STAFF.has((req.user.username || '').toLowerCase())) throw err(403, 'Only Orbit staff can give badges');
     const target = one('SELECT * FROM users WHERE id=?', req.params.id); if (!target) throw err(404, 'User not found');
