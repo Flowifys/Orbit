@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.24.1';
+const VERSION = '1.25.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -77,13 +77,19 @@ function start(opts = {}) {
     const nodemailer = require('nodemailer');
     mailer = nodemailer.createTransport({ host: smtp.host, port: smtp.port, secure: smtp.port === 465, auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined });
   }
+  // testing without real email/SMS: ORBIT_DEV_CODES=1 writes codes to <data>/dev-codes.txt and lets 2FA be turned on
+  const DEV_CODES = !!process.env.ORBIT_DEV_CODES;
+  const devCode = (to, code) => { if (DEV_CODES) try { fs.appendFileSync(path.join(dataDir, 'dev-codes.txt'), `${to} ${code}\n`); } catch {} };
   async function sendCode(email, code, purpose) {
-    const subject = purpose === 'reset' ? 'Your Orbit password reset code' : 'Your Orbit verification code';
-    if (!mailer) { log(`${subject} for ${email}: ${code}`); return; }
+    const subject = purpose === 'reset' ? 'Your Orbit password reset code' : purpose === 'login' ? 'Your Orbit sign-in code' : purpose === 'setup' ? 'Confirm two-step sign-in for Orbit' : 'Your Orbit verification code';
+    if (!mailer) { log(`${subject} for ${email}: ${code}`); devCode(email, code); return; }
+    const mins = purpose === 'login' || purpose === 'setup' ? 10 : 15;
+    const warn = purpose === 'login' ? '<p style="color:#666">If you didn’t just try to sign in, someone has your password — change it now.</p>' : '';
     await mailer.sendMail({ from: smtp.from || smtp.user, to: email, subject,
-      text: `Your code is ${code}. It expires in 15 minutes.`,
-      html: `<div style="font-family:sans-serif"><h2>Orbit</h2><p>Your code is</p><p style="font-size:28px;letter-spacing:6px;font-weight:bold">${code}</p><p>It expires in 15 minutes.</p></div>` });
+      text: `Your code is ${code}. It expires in ${mins} minutes.`,
+      html: `<div style="font-family:sans-serif"><h2>Orbit</h2><p>Your code is</p><p style="font-size:28px;letter-spacing:6px;font-weight:bold">${code}</p><p>It expires in ${mins} minutes.</p>${warn}</div>` });
   }
+
 
   const activities = new Map(); // userId -> current activity (e.g. Spotify)
   // ---------- database ----------
@@ -122,6 +128,7 @@ function start(opts = {}) {
     CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
     CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
     CREATE TABLE IF NOT EXISTS game_art(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
+    CREATE TABLE IF NOT EXISTS twofa_tickets(ticket TEXT PRIMARY KEY, user_id TEXT, purpose TEXT, method TEXT, target TEXT, code_hash TEXT, expires INTEGER, tries INTEGER DEFAULT 0, sent INTEGER);
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
   const chanCols = all0(db, "PRAGMA table_info(channels)").map(c => c.name);
@@ -130,7 +137,8 @@ function start(opts = {}) {
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
    ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"],
-   ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"],
+   ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -470,6 +478,7 @@ function start(opts = {}) {
     if (!u || !bcrypt.compareSync(password || '', u.pass)) { hit(acctKey, 8, 15 * 60e3); hit(ipKey, 30, 15 * 60e3); throw err(401, 'Wrong email or password'); }
     buckets.delete(acctKey);
     if (!u.verified && emailEnabled) { await sendCode(u.email, newCode(u.email, 'verify'), 'verify'); return res.json({ needs_verification: true, email: u.email }); }
+    if (u.twofa) return res.json(await twofaChallenge(u));
     res.json({ token: token(u, req) });
   }));
   app.post('/api/auth/forgot', wrap(async (req, res) => {
@@ -478,7 +487,7 @@ function start(opts = {}) {
     if (u) await sendCode(u.email, newCode(u.email, 'reset'), 'reset');
     res.json({ ok: true, email_enabled: emailEnabled });
   }));
-  app.post('/api/auth/reset', wrap((req, res) => {
+  app.post('/api/auth/reset', wrap(async (req, res) => {
     const { email, code, password } = req.body || {};
     limit('code:' + String(email || '').toLowerCase(), 10, 15 * 60e3, 'Too many code attempts.');
     if (!password || password.length < 6) throw err(400, 'Password must be at least 6 characters');
@@ -488,15 +497,116 @@ function start(opts = {}) {
     run('UPDATE users SET pass=?, verified=1 WHERE id=?', bcrypt.hashSync(password, 10), u.id);
     all('SELECT id FROM sessions WHERE user_id=?', u.id).forEach(x => endSession(x.id));   // reset = log out everywhere else
     revokeLegacy(u.id);
+    if (u.twofa) return res.json(await twofaChallenge(u));   // resetting the password doesn't skip two-step sign-in
     res.json({ token: token(u, req) });
   }));
+
+  // ----- two-step sign-in: a code by email or text message after the password, plus one-time backup codes -----
+  const TWILIO = { sid: process.env.TWILIO_ACCOUNT_SID || '', key: process.env.TWILIO_AUTH_TOKEN || '', from: process.env.TWILIO_FROM || '' };
+  const smsEnabled = !!(TWILIO.sid && TWILIO.key && TWILIO.from);
+  async function sendSms(to, text) {
+    if (!smsEnabled) { log(`SMS to ${to}: ${text}`); devCode(to, text.slice(0, 6)); return; }
+    const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(TWILIO.sid)}/Messages.json`, {
+      method: 'POST', signal: AbortSignal.timeout(10000),
+      headers: { Authorization: 'Basic ' + Buffer.from(TWILIO.sid + ':' + TWILIO.key).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ To: to, From: TWILIO.from, Body: text }) });
+    if (!r.ok) { log('SMS failed', r.status, await r.text().catch(() => '')); throw err(502, 'Couldn’t send the text message. Check the number and try again.'); }
+  }
+  const codeHash = (c) => crypto.createHash('sha256').update(SECRET + ':2fa:' + String(c).replace(/[\s-]/g, '').toLowerCase()).digest('hex');
+  const maskEmail = (e) => { const [a, d] = String(e).split('@'); return (a.length <= 2 ? a[0] + '•' : a[0] + '•••' + a.slice(-1)) + '@' + d; };
+  const maskPhone = (p) => '•••• ' + String(p).slice(-4);
+  const phoneRe = /^\+[1-9]\d{7,14}$/;
+  // make a ticket, send its code. purpose 'login' (signing in) or 'setup' (turning it on)
+  async function sendTwofa(u, purpose, method, target, ticket) {
+    const code = String(crypto.randomInt(100000, 1000000));
+    ticket = ticket || crypto.randomBytes(18).toString('base64url');
+    run('INSERT OR REPLACE INTO twofa_tickets(ticket,user_id,purpose,method,target,code_hash,expires,tries,sent) VALUES(?,?,?,?,?,?,?,0,?)', ticket, u.id, purpose, method, target, codeHash(code), now() + 10 * 60e3, now());
+    if (method === 'sms') await sendSms(target, `${code} is your Orbit ${purpose === 'login' ? 'sign-in' : 'confirmation'} code. Don't share it with anyone.`);
+    else await sendCode(target, code, purpose);
+    return ticket;
+  }
+  async function twofaChallenge(u) {
+    const target = u.twofa === 'sms' ? u.phone : u.email;
+    const ticket = await sendTwofa(u, 'login', u.twofa, target);
+    return { twofa: true, ticket, method: u.twofa, to: u.twofa === 'sms' ? maskPhone(target) : maskEmail(target) };
+  }
+  function useTicket(ticket, purpose, code, uidv) {
+    const t = one('SELECT * FROM twofa_tickets WHERE ticket=? AND purpose=?', String(ticket || ''), purpose);
+    if (!t || t.expires < now() || (uidv && t.user_id !== uidv)) throw err(400, 'That code expired. Start again.');
+    if (t.tries >= 5) { run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); throw err(429, 'Too many wrong codes. Start again.'); }
+    const clean = String(code || '').replace(/[\s-]/g, '');
+    if (codeHash(clean) === t.code_hash) { run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); return t; }
+    // when signing in, a backup code works instead (each one only once)
+    if (purpose === 'login' && clean.length >= 8) {
+      const u = one('SELECT backup_codes FROM users WHERE id=?', t.user_id); const list = pj(u?.backup_codes, []);
+      const i = list.indexOf(codeHash(clean));
+      if (i >= 0) { list.splice(i, 1); run('UPDATE users SET backup_codes=? WHERE id=?', JSON.stringify(list), t.user_id); run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); return { ...t, backup: true, left: list.length }; }
+    }
+    run('UPDATE twofa_tickets SET tries=tries+1 WHERE ticket=?', t.ticket);
+    throw err(400, 'That code is wrong');
+  }
+  function newBackupCodes(uidv) {
+    const codes = Array.from({ length: 10 }, () => { const x = crypto.randomBytes(5).toString('hex'); return x.slice(0, 5) + '-' + x.slice(5); });
+    run('UPDATE users SET backup_codes=? WHERE id=?', JSON.stringify(codes.map(codeHash)), uidv);
+    return codes;
+  }
+  setInterval(() => run('DELETE FROM twofa_tickets WHERE expires < ?', now() - 3600e3), 10 * 60e3).unref?.();
+  app.post('/api/auth/2fa', wrap((req, res) => {
+    limit('2fa:' + clientIp(req), 30, 15 * 60e3, 'Too many code attempts.');
+    const t = useTicket(req.body?.ticket, 'login', req.body?.code);
+    const u = one('SELECT * FROM users WHERE id=?', t.user_id); if (!u) throw err(404, 'Account not found');
+    res.json({ token: token(u, req), backup_used: !!t.backup, backup_left: t.left });
+  }));
+  app.post('/api/auth/2fa/resend', wrap(async (req, res) => {
+    const t = one('SELECT * FROM twofa_tickets WHERE ticket=? AND purpose=?', String(req.body?.ticket || ''), 'login');
+    if (!t || t.expires < now()) throw err(400, 'That sign-in expired. Log in again.');
+    if (now() - t.sent < 30e3) throw err(429, 'Wait a few seconds before asking for another code.');
+    limit('2fasend:' + t.user_id, 5, 15 * 60e3, 'Too many codes sent.');
+    const u = one('SELECT * FROM users WHERE id=?', t.user_id);
+    await sendTwofa(u, 'login', t.method, t.target, t.ticket);
+    res.json({ ok: true });
+  }));
+  // settings: turn it on (password, then the code we send), off, or get fresh backup codes
+  const needPassword = (req) => { if (!bcrypt.compareSync(String(req.body?.password || ''), req.user.pass)) { hit('fail:' + req.user.email.toLowerCase(), 8, 15 * 60e3); throw err(401, 'Wrong password'); } };
+  app.post('/api/me/2fa/start', auth, wrap(async (req, res) => {
+    limit('2fasend:' + req.user.id, 5, 15 * 60e3, 'Too many codes sent.');
+    needPassword(req);
+    const method = req.body?.method;
+    if (method === 'email') { if (!emailEnabled && !DEV_CODES) throw err(400, 'Email isn’t set up on this Orbit server yet, so email codes can’t be sent.'); }
+    else if (method === 'sms') { if (!smsEnabled && !DEV_CODES) throw err(400, 'Text messages aren’t set up on this Orbit server yet.'); }
+    else throw err(400, 'Pick email or text message');
+    const target = method === 'sms' ? String(req.body?.phone || '').replace(/[\s()-]/g, '') : req.user.email;
+    if (method === 'sms' && !phoneRe.test(target)) throw err(400, 'Enter your number with the country code, like +1 602 555 0123');
+    const ticket = await sendTwofa(req.user, 'setup', method, target);
+    res.json({ ticket, to: method === 'sms' ? maskPhone(target) : maskEmail(target) });
+  }));
+  app.post('/api/me/2fa/confirm', auth, wrap((req, res) => {
+    limit('2fa:' + req.user.id, 15, 15 * 60e3, 'Too many code attempts.');
+    const t = useTicket(req.body?.ticket, 'setup', req.body?.code, req.user.id);
+    run('UPDATE users SET twofa=?, phone=? WHERE id=?', t.method, t.method === 'sms' ? t.target : req.user.phone, req.user.id);
+    res.json({ twofa: twofaInfo(one('SELECT * FROM users WHERE id=?', req.user.id)), backup_codes: newBackupCodes(req.user.id) });
+  }));
+  app.post('/api/me/2fa/disable', auth, wrap((req, res) => {
+    needPassword(req);
+    run("UPDATE users SET twofa='', backup_codes='[]' WHERE id=?", req.user.id);
+    res.json({ twofa: twofaInfo(one('SELECT * FROM users WHERE id=?', req.user.id)) });
+  }));
+  app.post('/api/me/2fa/backup', auth, wrap((req, res) => {
+    needPassword(req);
+    if (!req.user.twofa) throw err(400, 'Turn on two-step sign-in first');
+    res.json({ backup_codes: newBackupCodes(req.user.id) });
+  }));
+  function twofaInfo(u) {
+    return { method: u.twofa || '', to: u.twofa === 'sms' ? maskPhone(u.phone || '') : u.twofa === 'email' ? maskEmail(u.email) : '',
+      backup_left: pj(u.backup_codes, []).length, email_ok: emailEnabled, sms_ok: smsEnabled };
+  }
 
   // ----- me / users -----
   app.get('/api/me', auth, wrap((req, res) => {
     const me = { ...publicUser(req.user), email: req.user.email,
       read_receipts: req.user.read_receipts == null ? 1 : req.user.read_receipts, block_mode: req.user.block_mode || 'standard',
       invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id),
-      spotify_conn: spotifyConn(req.user) };
+      spotify_conn: spotifyConn(req.user), twofa: twofaInfo(req.user) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
     res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries([...activities].filter(([k]) => k === req.user.id || statusFor(k, req.user.id) !== 'offline')), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });

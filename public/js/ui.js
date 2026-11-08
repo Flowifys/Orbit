@@ -13,6 +13,7 @@ function renderAuth(mode = 'login', ctx = {}) {
     verify: ['Check your email', `We sent a 6-digit code to ${esc(ctx.email || '')}.`],
     forgot: ['Reset your password', 'Enter your email and we’ll send you a code.'],
     reset: ['Choose a new password', `Enter the code sent to ${esc(ctx.email || '')}.`],
+    twofa: ['Enter your code', ctx.method === 'sms' ? `We texted a 6-digit code to your phone ending ${esc(String(ctx.to || '').slice(-4))}.` : `We emailed a 6-digit code to ${esc(ctx.to || '')}.`],
   };
   const [t, sub] = titles[mode];
   let fields = '';
@@ -42,6 +43,10 @@ function renderAuth(mode = 'login', ctx = {}) {
     <div class="field"><label>New password</label><input class="input" name="password" type="password" minlength="6" autocomplete="new-password" required></div>
     <button class="btn primary block">Reset password</button>
     <div class="switch"><button type="button" data-go="login">Back to login</button></div>`;
+  if (mode === 'twofa') fields = `
+    <div class="field"><label data-twl>Sign-in code</label><input class="input code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></div>
+    <button class="btn primary block">Log In</button>
+    <div class="switch"><button type="button" data-tw-resend>Send a new code</button> · <button type="button" data-tw-backup>Use a backup code</button> · <button type="button" data-go="login">Back</button></div>`;
   root.innerHTML = `<div class="auth"><form class="auth-card" novalidate>
     <div class="auth-logo"><img src="${LOGO}" alt=""><span>Orbit</span></div>
     <h1>${t}</h1><p class="sub">${sub}</p>
@@ -54,6 +59,10 @@ function renderAuth(mode = 'login', ctx = {}) {
   form.querySelectorAll('[data-go]').forEach(b => b.onclick = () => renderAuth(b.dataset.go, { email: ctx.email }));
   const rs = $('[data-resend]', form);
   if (rs) rs.onclick = async () => { await api('POST', '/api/auth/resend', { email: ctx.email }).catch(() => {}); toast('A new code is on its way.'); };
+  if (mode === 'twofa') {
+    $('[data-tw-resend]', form).onclick = async () => { try { await api('POST', '/api/auth/2fa/resend', { ticket: ctx.ticket }, { noLogout: true }); toast('A new code is on its way.'); } catch (x) { showErr(x.message); } };
+    $('[data-tw-backup]', form).onclick = () => { const i = $('[name=code]', form); i.classList.remove('code-input'); i.removeAttribute('maxlength'); i.inputMode = 'text'; i.placeholder = 'xxxxx-xxxxx'; i.value = ''; $('[data-twl]', form).textContent = 'Backup code'; i.focus(); };
+  }
   setTimeout(() => $('input', form)?.focus(), 30);
   form.onsubmit = async (e) => {
     e.preventDefault();
@@ -66,6 +75,8 @@ function renderAuth(mode = 'login', ctx = {}) {
       if (mode === 'verify') r = await api('POST', '/api/auth/verify', { email: ctx.email, code: d.code });
       if (mode === 'forgot') { const x = await api('POST', '/api/auth/forgot', d); return renderAuth('reset', { email: d.email, note: x.email_enabled ? '' : 'Email isn’t set up on this server, so the code was written to the server’s log. Ask whoever runs the server for it.' }); }
       if (mode === 'reset') r = await api('POST', '/api/auth/reset', { email: ctx.email, code: d.code, password: d.password });
+      if (mode === 'twofa') { r = await api('POST', '/api/auth/2fa', { ticket: ctx.ticket, code: d.code }, { noLogout: true }); if (r.backup_used) setTimeout(() => toast(`Backup code used. ${r.backup_left} left — make new ones in Settings → My Account if you’re running low.`), 1500); }
+      if (r?.twofa) return renderAuth('twofa', { ticket: r.ticket, method: r.method, to: r.to });
       if (r?.needs_verification) return renderAuth('verify', { email: r.email });
       if (r?.token) { S.token = r.token; try { localStorage.setItem('orbit-token', r.token); } catch {} loadApp(); }
     } catch (ex) { showErr(ex.message); btn.disabled = false; }

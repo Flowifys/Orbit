@@ -464,3 +464,79 @@ async function srvBans(body, sid) {
 
 /* start */
 boot();
+
+/* ---------- Settings → My Account → Two-step sign-in (email or text message codes) ---------- */
+{
+  const _acct = userAccount;
+  userAccount = function (body) {
+    _acct(body);
+    const box = h(`<section class="tf-sec"></section>`); body.appendChild(box);
+    drawTwofa(box);
+  };
+}
+async function drawTwofa(box) {
+  try { const r = await api('GET', '/api/me'); S.me.twofa = r.me.twofa; } catch {}
+  const t = S.me.twofa || { method: '' };
+  const on = !!t.method;
+  box.innerHTML = `<h3>Two-step sign-in</h3>
+    <p class="hint">After your password, Orbit asks for a 6-digit code we send you. Someone who steals your password still can’t get in.</p>
+    ${on ? `<div class="tf-on">${I.lock}<div class="grow"><b>On — codes go to ${t.method === 'sms' ? 'your phone' : 'your email'}</b><small>${esc(t.to)} · ${t.backup_left} backup code${t.backup_left === 1 ? '' : 's'} left</small></div></div>
+      <div class="tf-actions"><button class="btn secondary sm" data-tf="switch">${t.method === 'sms' ? 'Use email instead' : 'Use my phone instead'}</button><button class="btn secondary sm" data-tf="backup">New backup codes</button><button class="btn ghost sm danger" data-tf="off">Turn off</button></div>`
+      : `<div class="tf-pick">
+        <button class="tf-opt" data-tf="email" ${t.email_ok ? '' : 'disabled'}>${I.message || I.inbox}<b>Email</b><small>${t.email_ok ? 'Codes go to ' + esc(S.me.email || 'your email') : 'Not available yet — the server owner needs to set up email'}</small></button>
+        <button class="tf-opt" data-tf="sms" ${t.sms_ok ? '' : 'disabled'}>${I.phone}<b>Text message</b><small>${t.sms_ok ? 'Codes go to your phone' : 'Not available yet — the server owner needs to set up texting'}</small></button></div>`}`;
+  box.onclick = (e) => {
+    const b = e.target.closest('[data-tf]'); if (!b) return;
+    const k = b.dataset.tf;
+    if (k === 'email' || k === 'sms') return twofaSetupModal(k, () => drawTwofa(box));
+    if (k === 'switch') return twofaSetupModal(t.method === 'sms' ? 'email' : 'sms', () => drawTwofa(box));
+    if (k === 'backup') return passwordPrompt('New backup codes', 'Your old backup codes will stop working.', 'Make new codes', async (password) => { const r = await api('POST', '/api/me/2fa/backup', { password }); showBackupCodes(r.backup_codes); drawTwofa(box); });
+    if (k === 'off') return passwordPrompt('Turn off two-step sign-in', 'Your account will only be protected by your password.', 'Turn off', async (password) => { await api('POST', '/api/me/2fa/disable', { password }); toast('Two-step sign-in is off'); drawTwofa(box); }, true);
+  };
+}
+function passwordPrompt(title, text, okLabel, fn, danger) {
+  modal(`<div class="mh"><h2>${esc(title)}</h2><p>${esc(text)}</p></div><div class="mb"><div class="field"><label>Your password</label><input class="input" type="password" name="p" autocomplete="current-password"></div><div class="err hidden"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${esc(okLabel)}</button></div>`, (m, close) => {
+    const go = async () => { try { await fn($('[name=p]', m).value); close(); } catch (x) { const e = $('.err', m); e.textContent = x.message; e.classList.remove('hidden'); } };
+    $('[data-ok]', m).onclick = go; $('[name=p]', m).onkeydown = (e) => e.key === 'Enter' && go();
+    setTimeout(() => $('[name=p]', m).focus(), 30);
+  });
+}
+function twofaSetupModal(method, done) {
+  let ticket = null;
+  const step1 = `<div class="field"><label>Your password</label><input class="input" type="password" name="p" autocomplete="current-password"></div>
+    ${method === 'sms' ? `<div class="field"><label>Phone number</label><input class="input" name="phone" type="tel" autocomplete="tel" placeholder="+1 602 555 0123"><small class="hint">Include the country code (+1 for the US). Message and data rates may apply.</small></div>` : `<p class="hint">We’ll send a code to <b>${esc(S.me.email || '')}</b>.</p>`}`;
+  modal(`<div class="mh"><h2>${method === 'sms' ? 'Use your phone' : 'Use your email'}</h2><p>First, confirm it’s you.</p></div><div class="mb tf-step">${step1}</div><div class="err hidden" style="margin:0 24px"></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Send code</button></div>`, (m, close) => {
+    const err = (x) => { const e = $('.err', m); e.textContent = x; e.classList.remove('hidden'); };
+    const go = async () => {
+      $('.err', m).classList.add('hidden');
+      try {
+        if (!ticket) {
+          const r = await api('POST', '/api/me/2fa/start', { method, password: $('[name=p]', m).value, phone: $('[name=phone]', m)?.value });
+          ticket = r.ticket;
+          $('.mh p', m).textContent = `Enter the 6-digit code we sent to ${r.to}.`;
+          $('.tf-step', m).innerHTML = `<div class="field"><label>Code</label><input class="input code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`;
+          $('[data-ok]', m).textContent = 'Turn on';
+          $('[name=code]', m).onkeydown = (e) => e.key === 'Enter' && go();
+          setTimeout(() => $('[name=code]', m).focus(), 30);
+        } else {
+          const r = await api('POST', '/api/me/2fa/confirm', { ticket, code: $('[name=code]', m).value });
+          S.me.twofa = r.twofa; close(); toast('Two-step sign-in is on'); showBackupCodes(r.backup_codes); done?.();
+        }
+      } catch (x) { err(x.message); }
+    };
+    $('[data-ok]', m).onclick = go;
+    $$('input', m).forEach(i => i.onkeydown = (e) => e.key === 'Enter' && go());
+    setTimeout(() => $('input', m)?.focus(), 30);
+  });
+}
+function showBackupCodes(codes) {
+  const text = codes.join('\n');
+  modal(`<div class="mh"><h2>Save your backup codes</h2><p>If you lose your phone or can’t get to your email, each of these lets you sign in once. Keep them somewhere safe — you won’t see them again.</p></div>
+    <div class="mb"><div class="bk-codes">${codes.map(c => `<code>${esc(c)}</code>`).join('')}</div></div>
+    <div class="mf"><button class="btn secondary" data-copy>Copy</button><button class="btn secondary" data-dl>Download</button><button class="btn primary" data-close>I saved them</button></div>`, (m) => {
+    $('[data-copy]', m).onclick = () => copy(text);
+    $('[data-dl]', m).onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([`Orbit backup codes for @${S.me.username}\n\n${text}\n`], { type: 'text/plain' })); a.download = 'orbit-backup-codes.txt'; a.click(); };
+  });
+}
