@@ -77,7 +77,7 @@ select.input{appearance:auto}
 .code-input{letter-spacing:12px;text-align:center;font:600 26px var(--display)}
 
 /* ---------- layout ---------- */
-.app{display:grid;grid-template-columns:var(--rail) var(--side) 1fr;height:100vh;height:100dvh;background:var(--bg-0)}
+.app{display:grid;grid-template-columns:var(--rail) var(--side) 1fr;height:100vh;height:100dvh;height:var(--app-h,100dvh);background:var(--bg-0)}
 .rail{display:flex;flex-direction:column;align-items:center;gap:10px;padding:14px 0;overflow-y:auto;scrollbar-width:none}
 .rail::-webkit-scrollbar{display:none}
 .rail-item{position:relative;width:48px;height:48px;flex:none}
@@ -513,7 +513,7 @@ select.input{appearance:auto}
 .settings h2{font:600 22px var(--display);margin-bottom:22px}
 .settings h3{font-size:14px;font-weight:600;color:var(--text);margin:26px 0 6px}
 .settings .hint{color:var(--muted);font-size:13px;margin-bottom:10px}
-.settings .close{position:fixed;top:56px;right:40px;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600;z-index:2}
+.settings .close{position:fixed;top:calc(56px + env(safe-area-inset-top));right:40px;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:600;z-index:2}
 .settings .close .c{width:38px;height:38px;border-radius:50%;border:2px solid var(--line-2);display:grid;place-items:center}
 .settings .close:hover{color:var(--text)}
 .settings .close:hover .c{border-color:var(--text)}
@@ -601,7 +601,7 @@ select.input{appearance:auto}
   .settings .snav h6,.settings .snav hr{display:none}
   .settings .snav button{white-space:nowrap;width:auto}
   .settings .sbody{padding:20px 16px 100px}
-  .settings .close{top:auto;bottom:16px;right:16px;background:var(--bg-1);padding:8px;border-radius:14px}
+  .settings .close{top:auto;bottom:max(16px,env(safe-area-inset-bottom));right:16px;background:var(--bg-1);padding:8px;border-radius:14px}
   .profile-editor,.roles-layout{grid-template-columns:1fr}
   .pe-side{position:static}
   .thread-panel{width:100%}
@@ -1550,3 +1550,22 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .invis-chip .ic-x{color:var(--red)}
 /* call menu second volume row */
 .call-menu .vol-row span:first-child{min-width:78px}
+
+/* ===== 1.18.1: phones — no zoom-on-focus, no page drift, notch-safe tops ===== */
+@media (hover:none) and (pointer:coarse){
+  /* iOS zooms into any field under 16px and leaves the page zoomed/cropped */
+  input,textarea,select,[contenteditable]{font-size:16px!important}
+  /* the page itself never scrolls: only the panes inside it do */
+  html,body{position:fixed;inset:0;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
+}
+/* keep tappable things out from under the notch / status bar (0 in a normal browser tab) */
+.sidebar,.main,.settings,.auth,.lightbox{padding-top:env(safe-area-inset-top)}
+.rail{padding-top:max(14px,env(safe-area-inset-top))}
+.members.force,.thread-panel{padding-top:env(safe-area-inset-top)}
+.app{padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+.user-panel{margin-bottom:max(8px,env(safe-area-inset-bottom))}
+@media (max-width:760px){
+  .app .main{padding-bottom:0;height:var(--app-h,100dvh);bottom:auto}
+  .composer{padding-bottom:max(12px,env(safe-area-inset-bottom))}
+  .members.force{width:min(320px,88vw)}
+}

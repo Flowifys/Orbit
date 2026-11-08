@@ -371,3 +371,20 @@ function applyAppearance() {
   r.classList.toggle('reduce-motion', !!p.reduceMotion);
 }
 applyAppearance();
+
+/* phones: size the app to the part of the screen you can actually see (shrinks when the keyboard
+   opens), and snap the page back if iOS scrolled it while typing — otherwise the top gets cut off
+   and the buttons up there stop responding. */
+(function fitViewport() {
+  const vv = window.visualViewport; if (!vv) return;
+  const root = document.documentElement;
+  const fit = () => {
+    if (vv.scale > 1.01) return;   // someone pinch-zoomed on purpose: leave it alone
+    root.style.setProperty('--app-h', Math.round(vv.height) + 'px');
+    if (window.scrollY || window.scrollX) window.scrollTo(0, 0);
+  };
+  vv.addEventListener('resize', fit); vv.addEventListener('scroll', fit);
+  window.addEventListener('orientationchange', () => setTimeout(fit, 300));
+  document.addEventListener('focusout', () => setTimeout(fit, 60));
+  fit();
+})();
