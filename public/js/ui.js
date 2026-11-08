@@ -106,6 +106,7 @@ async function loadApp() {
   try { data = await api('GET', '/api/me'); } catch (e) { if (!S.token) return; $('#root').innerHTML = `<div class="auth"><div class="auth-card"><h1>Can’t connect</h1><p class="sub">${esc(e.message)}</p><button class="btn primary block" onclick="location.reload()">Retry</button></div></div>`; return; }
   if (data.session_token) { S.token = data.session_token; try { localStorage.setItem('orbit-token', S.token); } catch {} }   // device now shows in Settings → Devices
   S.me = data.me; S.users[S.me.id] = S.me;
+  S.platforms = data.platforms || {};
   S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice; S.activities = data.activities || {}; S.friends = data.friends || S.friends;
   S.bookmarkFolders = data.bookmarkFolders || [];
   loadBookmarkIndex();
@@ -139,7 +140,7 @@ const pickUser = (m) => { const { nick, joined, roles, ...u } = m; if (u.activit
 
 /* ================= SOCKET ================= */
 function connectSocket() {
-  socket = io({ auth: { token: S.token, status: S.prefs.status } });
+  socket = io({ auth: { token: S.token, status: S.prefs.status, platform: clientPlatform() } });
   let wasDown = false;
   socket.on('connect', () => { $('.offline-banner')?.remove(); if (wasDown) { wasDown = false; resync(); } Act.sent = undefined; Act.push(); });
   socket.on('disconnect', () => { wasDown = true; if (!$('.offline-banner')) $('.main')?.prepend(h('<div class="offline-banner">Reconnecting…</div>')); });
@@ -162,7 +163,7 @@ function connectSocket() {
     renderTyping();
   });
   socket.on('activity', ({ user_id, activity }) => { if (activity) S.activities[user_id] = activity; else delete S.activities[user_id]; renderMembers(); const card = $(`.profile-card[data-card="${user_id}"] .activity-slot`); if (card) card.innerHTML = activityHtml(user_id); if (S.view.server === '@me' && !S.view.channel) renderMain(); if (user_id === S.me.id) renderUserPanel(); });
-  socket.on('presence', ({ user_id, status }) => { S.presence[user_id] = status; if (user_id === S.me.id) renderUserPanel(); softRefresh(); });
+  socket.on('presence', ({ user_id, status, platform }) => { S.presence[user_id] = status; if (platform) S.platforms[user_id] = platform; else delete S.platforms[user_id]; if (user_id === S.me.id) renderUserPanel(); softRefresh(); });
   socket.on('user:update', (u) => { S.users[u.id] = { ...S.users[u.id], ...u }; Object.values(S.serverData).forEach(sd => { const m = sd.members.find(x => x.id === u.id); if (m) Object.assign(m, u); });
     S.dms.forEach(d => { if (d.user && d.user.id === u.id) d.user = u; if (d.members) d.members = d.members.map(m => m.id === u.id ? u : m); }); if (u.id === S.me.id) S.me = { ...S.me, ...u }; softRefresh(true); });
   socket.on('server:refresh', async ({ server_id }) => { await fetchServer(server_id).catch(() => {}); if (S.view.server === server_id) { const c = curChannel(); if (!c) selectServer(server_id); } softRefresh(true); });
@@ -183,7 +184,7 @@ function connectSocket() {
     S.dms.sort((a, b) => b.last_at - a.last_at);
     if (S.view.server === '@me') renderSidebar();
     renderRail();
-    if (S.view.channel === entry.id) renderTopbar();
+    if (S.view.channel === entry.id) { renderTopbar(); renderMembers(); }
   });
   socket.on('dm:receipt', ({ channel_id, user_id, last_read, at }) => {
     S.receipts = S.receipts || {};
@@ -214,7 +215,7 @@ function connectSocket() {
 async function resync() {
   try {
     const data = await api('GET', '/api/me');
-    S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice;
+    S.platforms = data.platforms || {}; S.servers = data.servers; S.dms = data.dms; S.unread = data.unread; S.presence = data.presence; S.voice = data.voice;
     await Promise.all(S.servers.map(s => fetchServer(s.id)));
     Object.keys(S.messages).forEach(k => delete S.messages[k]);
     renderShell(); selectChannel(S.view.channel, true);
@@ -467,7 +468,20 @@ function renderMain() {
     content.innerHTML = `<div class="empty" style="margin:auto"><img src="${LOGO}" alt=""><b>No text channels</b><span>${can(PERM.MANAGE_CHANNELS) ? 'Create one with the + next to Text Channels.' : 'There’s nothing you can see here yet.'}</span></div>`;
     return;
   }
-  if (ch.type === 'voice') { content.innerHTML = `<div class="voice-view"></div>`; renderVoiceArea(); return; }
+  if (ch.type === 'voice') {
+    // voice channels have their own text chat, shown beside the call (like Discord's text-in-voice)
+    const chat = !!S.voiceChat;
+    content.innerHTML = `<div class="voice-split ${chat ? 'with-chat' : ''}"><div class="voice-view"></div>${chat ? `<aside class="vc-chat"><div class="vc-chat-head">${I.message}<b>${esc(ch.name)}</b><button class="icon-btn" data-vchat-close title="Close chat">${I.x}</button></div><div class="chat"><div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div></aside>` : ''}</div>`;
+    renderVoiceArea();
+    if (chat) {
+      bindComposer($('.vc-chat .composer', content), ch.id, null);
+      bindMessageList($('.vc-chat .messages', content));
+      $('[data-vchat-close]', content).onclick = () => { S.voiceChat = false; renderMain(); renderTopbar(); };
+      if (S.messages[ch.id]) refreshMessages(ch.id, true); else loadMessages(ch.id);
+      markRead(ch.id);
+    }
+    return;
+  }
   if (ch.type === 'forum') { content.innerHTML = `<div class="forum-view" data-forum="${ch.id}"></div>`; renderForum(ch.id); if (!S.messages[ch.id]) loadForumPosts(ch.id); markRead(ch.id); return; }
   content.innerHTML = `<div class="chat">${isDM(ch) ? '<div class="call-slot"></div>' : ''}<div class="messages scroll" data-key="${ch.id}"></div>${composerHtml(ch)}</div>${S.membersOpen ? `<aside class="members ${ch.type === 'dm' ? 'dm-panel' : ''}"></aside>` : ''}`;
   renderMembers();
@@ -494,7 +508,8 @@ function renderTopbar() {
       <button class="icon-btn" data-members title="Member list" style="${S.membersOpen ? 'color:var(--text)' : ''}">${I.users}</button><button class="icon-btn" data-gmenu title="Group settings">${I.gear}</button>
       <input class="search" placeholder="Search" data-search>`;
   } else if (ch.type === 'voice') {
-    bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span>`;
+    const un = S.unread?.[ch.id]?.count && !S.voiceChat;
+    bar.innerHTML = `${back}<span class="ico">${I.speaker}</span><span class="title">${esc(ch.name)}</span><span class="spacer"></span><button class="icon-btn vchat-btn ${S.voiceChat ? 'on' : ''} ${un ? 'has-new' : ''}" data-vchat title="${S.voiceChat ? 'Hide chat' : 'Show chat'}">${I.message}</button>`;
   } else {
     bar.innerHTML = `${back}<span class="ico">${ch.private ? I.lock : ch.type === 'forum' ? I.forum : I.hash}</span><span class="title">${esc(ch.name)}</span>
       <span class="topic" data-topic title="${esc(ch.topic || '')}">${esc(ch.topic || (can(PERM.MANAGE_CHANNELS) ? 'Add a channel topic' : ''))}</span>
@@ -508,6 +523,7 @@ function renderTopbar() {
     if (e.target.closest('[data-members]')) { toggleMembersPanel(); return; }
     if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
     if (e.target.closest('[data-pins]')) return pinsPopout(ch.id, e.target.closest('[data-pins]'));
+    if (e.target.closest('[data-vchat]')) { S.voiceChat = !S.voiceChat; renderMain(); renderTopbar(); return; }
     if (e.target.closest('[data-call]')) return Voice.join(ch.id);
     if (e.target.closest('[data-vcall]')) return Voice.join(ch.id, { video: true });
     if (e.target.closest('[data-gadd]')) return addToGroupModal(ch.id);

@@ -137,9 +137,33 @@ const STATUS_NAME = { online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', off
 function stDot(s) { const k = s === 'invisible' ? 'offline' : (STATUS_NAME[s] ? s : 'offline'); return `<i class="st ${k}" role="img" aria-label="${STATUS_NAME[s] || 'Offline'}" title="${STATUS_NAME[s] || 'Offline'}"></i>`; }
 // small inline icon with a spoken label (muted, deafened, live…)
 function srIcon(svg, label) { return `<span class="sr-ico" role="img" aria-label="${label}" title="${label}">${svg}</span>`; }
+/* which device someone is on: shown as a tiny PC / phone / VR headset / controller in place of the status dot */
+function clientPlatform() {
+  const ua = navigator.userAgent;
+  if (window.orbitDesktop?.isDesktop) return 'desktop';
+  if (/OculusBrowser|Quest|Pico/i.test(ua)) return 'vr';
+  if (/Xbox|PlayStation|Nintendo/i.test(ua)) return 'console';
+  if (/iPhone|iPod|Android.+Mobile|Mobile.+Firefox/i.test(ua) || (matchMedia('(pointer:coarse)').matches && Math.min(screen.width, screen.height) < 700)) return 'mobile';
+  return 'web';
+}
+const DEVICE_SVG = {
+  desktop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M3 4h18a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-7v2h3v2H7v-2h3v-2H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>',
+  mobile: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 1h10a2 2 0 0 1 2 2v18a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2zm5 18.5a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6z"/></svg>',
+  vr: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 6h16a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-3.6a2 2 0 0 1-1.7-1l-1-1.7a2 2 0 0 0-3.4 0l-1 1.7a2 2 0 0 1-1.7 1H4a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3z"/></svg>',
+  console: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 6h10a5 5 0 0 1 5 5.3l-.4 4.6A3.4 3.4 0 0 1 15.8 18l-1.5-2H9.7l-1.5 2a3.4 3.4 0 0 1-5.8-2.1L2 11.3A5 5 0 0 1 7 6zm0 3v1.5H5.5V12H7v1.5h1.5V12H10v-1.5H8.5V9H7zm9.2.6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-1.9 1.9a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/></svg>',
+};
+const DEVICE_NAME = { desktop: 'on PC', mobile: 'on phone', vr: 'in VR', console: 'on console' };
+S.platforms = S.platforms || {};
+const platformOf = (uid) => (uid === S.me?.id ? clientPlatform() : S.platforms[uid]) || null;
+function statusMark(uid) {
+  const s = statusOf(uid), p = platformOf(uid);
+  if (!p || p === 'web' || !DEVICE_SVG[p] || s === 'offline' || s === 'invisible') return stDot(s);
+  const label = `${STATUS_NAME[s] || 'Online'} ${DEVICE_NAME[p]}`;
+  return `<i class="st dev ${s}" role="img" aria-label="${label}" title="${label}">${DEVICE_SVG[p]}</i>`;
+}
 function avatar(u, cls = '', withStatus = false) {
   u = typeof u === 'string' ? user(u) : u;
-  const st = withStatus ? stDot(statusOf(u.id)) : '';
+  const st = withStatus ? statusMark(u.id) : '';
   const a = u.accent || '#8b6dff';
   // people with a picture get a neutral placeholder (no colored flash while it loads); no lazy-loading for avatars
   const known = u.avatar && AV_LOADED.has(u.avatar);

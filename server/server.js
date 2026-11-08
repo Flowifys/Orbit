@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.12';
+const VERSION = '1.26.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -652,7 +652,7 @@ function start(opts = {}) {
       spotify_conn: spotifyConn(req.user), twofa: twofaInfo(req.user) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
-    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries([...activities].filter(([k]) => k === req.user.id || statusFor(k, req.user.id) !== 'offline')), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
+    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), platforms: platformSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries([...activities].filter(([k]) => k === req.user.id || statusFor(k, req.user.id) !== 'offline')), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
   }));
   // ICE servers for voice/video. Add a TURN relay in Render -> Environment so calls work on strict networks:
   //   TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL   (any TURN provider)
@@ -1217,6 +1217,17 @@ function start(opts = {}) {
   }));
 
   // ----- DMs -----
+  // the 1-on-1 DM between two people, made if it doesn't exist yet
+  function dmBetween(x, y) {
+    let ch = one(`SELECT c.* FROM channels c WHERE c.type='dm' AND c.is_group=0 AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?) AND c.id IN (SELECT channel_id FROM dm_members WHERE user_id=?)
+      AND (SELECT COUNT(*) FROM dm_members WHERE channel_id=c.id)=2`, x, y);
+    if (ch) return ch;
+    const id = uid();
+    tx(() => { run(`INSERT INTO channels(id,server_id,type,name,created) VALUES(?,NULL,'dm','',?)`, id, now()); run('INSERT INTO dm_members VALUES(?,?)', id, x); run('INSERT INTO dm_members VALUES(?,?)', id, y); });
+    return chanRow(id);
+  }
+  // new friends land in each other's DM list right away
+  function friendDm(x, y) { try { pushDm(dmBetween(x, y).id); } catch {} }
   app.post('/api/dms', auth, wrap((req, res) => {
     const other = req.body?.user_id;
     if (!other || !getUser(other)) throw err(404, 'User not found');
@@ -1363,6 +1374,7 @@ function start(opts = {}) {
       [req.user.id, target.id].forEach(pushFriends);
       broadcastUser(req.user.id); broadcastUser(target.id);
       broadcastPresence(req.user.id); broadcastPresence(target.id);
+      friendDm(req.user.id, target.id);
       return res.json({ status: 'friend' });
     }
     run('INSERT INTO friends(a,b,status,requester,created) VALUES(?,?,?,?,?)', a, b, 'pending', req.user.id, now());
@@ -1379,6 +1391,7 @@ function start(opts = {}) {
     broadcastUser(req.user.id); broadcastUser(req.params.uid);
     broadcastPresence(req.user.id); broadcastPresence(req.params.uid);
     io.to('u:' + req.params.uid).emit('friends:accepted', { user: getUser(req.user.id) });
+    friendDm(req.user.id, req.params.uid);
     res.json({ ok: true });
   }));
   app.delete('/api/friends/:uid', auth, wrap((req, res) => {
@@ -1797,7 +1810,7 @@ function start(opts = {}) {
   app.post('/api/channels/:id/messages', auth, upload.array('files', 10), wrap((req, res) => {
     const ch = chanRow(req.params.id);
     const cleanup = () => (req.files || []).forEach(f => fs.unlink(f.path, () => {}));
-    if (!canView(ch, req.user.id) || !['text', 'dm', 'forum'].includes(ch.type)) { cleanup(); throw err(403, 'No access'); }
+    if (!canView(ch, req.user.id) || !['text', 'dm', 'forum', 'voice'].includes(ch.type)) { cleanup(); throw err(403, 'No access'); }
     if (hit('send:' + req.user.id, 25, 10e3)) { cleanup(); throw err(429, 'You’re sending messages too fast. Slow down a little.'); }
     if (ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.SEND)) { cleanup(); throw err(403, 'You can’t send messages here'); }
     if (req.files?.length && ch.type !== 'dm' && !has(ch.server_id, req.user.id, P.ATTACH)) { cleanup(); throw err(403, 'You can’t attach files here'); }
@@ -2145,6 +2158,18 @@ function start(opts = {}) {
     }
     return o;
   }
+  // which device each person is on: desktop app, phone, VR headset, console, or a browser
+  const PLATFORMS = ['desktop', 'web', 'console', 'vr', 'mobile'];   // most to least "present"
+  function platformOf(uidv) {
+    const e = online.get(uidv); if (!e?.platforms) return null;
+    const have = new Set(e.platforms.values());
+    return PLATFORMS.find(p => have.has(p)) || null;
+  }
+  function platformSnapshot(viewer) {
+    const o = {};
+    for (const [k] of online) { const p = platformOf(k); if (p && (k === viewer || statusFor(k, viewer) !== 'offline')) o[k] = p; }
+    return o;
+  }
   function voiceSnapshot(uidv) {
     const o = {};
     for (const [cid, room] of voice) {
@@ -2169,7 +2194,7 @@ function start(opts = {}) {
     return [...set];
   }
   function broadcastUser(uidv) { const u = getUser(uidv); audienceOf(uidv).forEach(a => io.to('u:' + a).emit('user:update', u)); }
-  function broadcastPresence(uidv) { audienceOf(uidv).forEach(a => io.to('u:' + a).emit('presence', { user_id: uidv, status: a === uidv ? (online.get(uidv)?.status === 'invisible' ? 'offline' : (online.get(uidv)?.status || 'offline')) : statusFor(uidv, a) })); }
+  function broadcastPresence(uidv) { audienceOf(uidv).forEach(a => { const st = a === uidv ? (online.get(uidv)?.status === 'invisible' ? 'offline' : (online.get(uidv)?.status || 'offline')) : statusFor(uidv, a); io.to('u:' + a).emit('presence', { user_id: uidv, status: st, platform: st === 'offline' && a !== uidv ? null : platformOf(uidv) }); }); }
   function stopTyping(cid, uidv) { const m = typing.get(cid); if (m && m.has(uidv)) { clearTimeout(m.get(uidv)); m.delete(uidv); } }
   function voiceBroadcast(cid) {
     const ch = chanRow(cid);
@@ -2201,8 +2226,12 @@ function start(opts = {}) {
     const wanted = ['online', 'idle', 'dnd', 'invisible'].includes(socket.handshake.auth?.status) ? socket.handshake.auth.status : 'online';
     const entry = online.get(me) || { status: wanted, sockets: new Set() };
     entry.sockets.add(socket.id);
+    const plat = PLATFORMS.includes(socket.handshake.auth?.platform) ? socket.handshake.auth.platform : 'web';
+    const platBefore = platformOf(me);
+    (entry.platforms = entry.platforms || new Map()).set(socket.id, plat);
     online.set(me, entry);
     if (entry.sockets.size === 1) { entry.status = wanted; broadcastPresence(me); }
+    else if (platformOf(me) !== platBefore) broadcastPresence(me);
 
     socket.on('presence', (st) => { if (!['online', 'idle', 'dnd', 'invisible'].includes(st)) return; entry.status = st; broadcastPresence(me); });
     socket.on('typing', ({ channel_id } = {}) => {
@@ -2253,6 +2282,8 @@ function start(opts = {}) {
     socket.on('disconnect', () => {
       for (const [, room] of voice) for (const [u, s] of room) if (u === me && s.socket === socket.id) leaveVoice(me);
       entry.sockets.delete(socket.id);
+      const pb = platformOf(me); entry.platforms?.delete(socket.id);
+      if (entry.sockets.size && platformOf(me) !== pb) broadcastPresence(me);
       if (!entry.sockets.size) { online.delete(me); broadcastPresence(me); if (activities.has(me) || actParts.has(me)) setActivity(me, null, 'all'); }
     });
   });
