@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orbit — updating…</title>
+<meta name="theme-color" content="#0b0817">
+<link rel="icon" href="/logo.png">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&family=Onest:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--violet:#8b6dff;--violet-hi:#b9a8ff;--star:#f4f1ff;--mist:#a79fc6;
+    --display:"Bricolage Grotesque",system-ui,sans-serif;--body:"Onest",system-ui,sans-serif}
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{background:#0b0817;color:var(--star);font-family:var(--body);display:grid;place-items:center;min-height:100vh;overflow:hidden;text-align:center}
+  .bg{position:fixed;inset:0;z-index:-1;background:
+    radial-gradient(1000px 700px at 70% -10%,#2a1f52 0%,transparent 60%),
+    radial-gradient(900px 700px at 15% 110%,#1d1740 0%,transparent 55%),#0b0817}
+  .bg::before{content:"";position:absolute;inset:0;opacity:.55;background-image:
+    radial-gradient(1.5px 1.5px at 12% 20%,#fff 50%,transparent),radial-gradient(1.5px 1.5px at 80% 30%,#fffa 50%,transparent),
+    radial-gradient(1.5px 1.5px at 60% 75%,#fff9 50%,transparent),radial-gradient(1.5px 1.5px at 30% 60%,#fffb 50%,transparent),
+    radial-gradient(2px 2px at 88% 80%,#fff 50%,transparent),radial-gradient(1.5px 1.5px at 45% 15%,#fffa 50%,transparent)}
+  .wrap{position:relative;padding:0 24px;max-width:460px}
+  .badge{position:relative;width:132px;height:132px;margin:0 auto 34px}
+  .planet{position:absolute;inset:16px;border-radius:50%;display:grid;place-items:center;
+    background:radial-gradient(circle at 36% 30%,#3a2d63,#130f22 72%);
+    box-shadow:0 0 0 1px rgba(255,255,255,.14),0 0 70px -6px #8b6dff,inset 0 2px 20px #ffffff22;
+    animation:glow 2.4s ease-in-out infinite}
+  .planet img{width:60%;filter:drop-shadow(0 6px 18px #000a)}
+  @keyframes glow{0%,100%{box-shadow:0 0 0 1px rgba(255,255,255,.14),0 0 60px -8px #8b6dff,inset 0 2px 20px #ffffff22}
+    50%{box-shadow:0 0 0 1px rgba(255,255,255,.2),0 0 110px -4px #8b6dff,inset 0 2px 20px #ffffff33}}
+  .spinner{position:absolute;inset:0;border-radius:50%;border:2px solid transparent;border-top-color:var(--violet-hi);border-right-color:#5ad1ff;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h1{font:800 38px/1.1 var(--display);letter-spacing:-.02em;margin-bottom:12px}
+  p{color:var(--mist);font-size:17px;line-height:1.55}
+  .bar{margin:28px auto 0;width:220px;height:5px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
+  .bar i{display:block;height:100%;width:40%;border-radius:999px;background:linear-gradient(90deg,#9a7dff,#5ad1ff);animation:slide 1.4s ease-in-out infinite}
+  @keyframes slide{0%{transform:translateX(-120%)}100%{transform:translateX(320%)}}
+  .dots::after{content:"";animation:dots 1.5s steps(4,end) infinite}
+  @keyframes dots{0%{content:""}25%{content:"."}50%{content:".."}75%{content:"..."}}
+  .status{margin-top:18px;font-size:14px;color:var(--violet-hi);opacity:.9}
+  @media (prefers-reduced-motion:reduce){.planet,.spinner,.bar i{animation:none}}
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="wrap">
+  <div class="badge">
+    <div class="spinner"></div>
+    <div class="planet"><img src="/logo.png" alt="Orbit"></div>
+  </div>
+  <h1>Orbit is updating<span class="dots"></span></h1>
+  <p>We're rolling out a new version. This only takes a few seconds — the page will refresh on its own the moment it's ready.</p>
+  <div class="bar"><i></i></div>
+  <div class="status" id="status">Reconnecting…</div>
+</div>
+<script>
+  // Poll a tiny endpoint; as soon as the server answers, reload into the fresh app.
+  let tries = 0;
+  const status = document.getElementById('status');
+  async function check() {
+    tries++;
+    try {
+      const r = await fetch('/api/info', { cache: 'no-store' });
+      if (r.ok) { status.textContent = 'Back online — refreshing…'; location.reload(); return; }
+    } catch (e) {}
+    status.textContent = tries < 4 ? 'Reconnecting…' : 'Still updating — hang tight…';
+    setTimeout(check, 2500);
+  }
+  setTimeout(check, 2000);
+</script>
+</body>
+</html>
