@@ -156,6 +156,12 @@ h2{font:700 clamp(28px,4vw,44px)/1.08 var(--display);letter-spacing:-.025em}
 .m-mrow b{color:var(--star);font-weight:600}
 .m-mrow .live{margin-left:auto;font-size:9px;font-weight:700;color:#06120a;background:var(--green);padding:1px 6px;border-radius:999px}
 
+/* video */
+.vid-frame{max-width:960px;margin:38px auto 0;border-radius:20px;overflow:hidden;position:relative;line-height:0;
+  border:1px solid var(--line-2);box-shadow:0 50px 120px -30px #000,0 0 100px -30px #8b6dff88}
+.vid-frame video{width:100%;height:auto;display:block;background:#0b0817}
+.vid-frame::after{content:"";position:absolute;inset:0;border-radius:20px;pointer-events:none;box-shadow:inset 0 0 0 1px #ffffff12}
+
 /* stat tiles */
 .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:38px}
 .stat{background:var(--glass);border:1px solid var(--line);border-radius:18px;padding:30px 22px;text-align:center;transition:.2s}
