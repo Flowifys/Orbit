@@ -96,6 +96,7 @@ function logout() {
 async function boot() {
   const m = location.pathname.match(/^\/invite\/([\w-]+)/);
   if (m) { S.pendingInvite = m[1]; history.replaceState(null, '', '/'); }
+  if (/^\/developers?(\/|$)/.test(location.pathname)) { S.pendingDeveloper = true; history.replaceState(null, '', '/'); }
   try { S.token = localStorage.getItem('orbit-token'); } catch {}
   S.info = await api('GET', '/api/info').catch(() => ({}));
   if (S.token) loadApp(); else renderAuth(S.pendingInvite ? 'register' : 'login');
@@ -118,6 +119,7 @@ async function loadApp() {
   checkInbox();
   connectSocket();
   if (S.pendingInvite) { const c = S.pendingInvite; S.pendingInvite = null; showInvite(c); }
+  if (S.pendingDeveloper) { S.pendingDeveloper = false; openUserSettings('developer'); }
   else {
     let last = null; try { last = JSON.parse(localStorage.getItem('orbit-view') || 'null'); } catch {}
     if (last && last.server !== '@me' && S.serverData[last.server]) selectServer(last.server, last.channel);
