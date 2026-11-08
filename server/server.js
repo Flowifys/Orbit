@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.33.3';
+const VERSION = '1.34.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -137,6 +137,9 @@ function start(opts = {}) {
     CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id, created);
     CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
     CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
+    CREATE TABLE IF NOT EXISTS automod(server_id TEXT PRIMARY KEY, enabled INTEGER DEFAULT 0, keywords TEXT DEFAULT '[]', block_invites INTEGER DEFAULT 0, mention_limit INTEGER DEFAULT 0, action TEXT DEFAULT 'block', updated INTEGER);
+    CREATE TABLE IF NOT EXISTS audit_log(id TEXT PRIMARY KEY, server_id TEXT, actor_id TEXT, action TEXT, target_id TEXT, target_name TEXT, detail TEXT, created INTEGER);
+    CREATE INDEX IF NOT EXISTS idx_audit ON audit_log(server_id, created);
     CREATE TABLE IF NOT EXISTS game_art2(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
     DROP TABLE IF EXISTS game_art;
     CREATE TABLE IF NOT EXISTS twofa_tickets(ticket TEXT PRIMARY KEY, user_id TEXT, purpose TEXT, method TEXT, target TEXT, code_hash TEXT, expires INTEGER, tries INTEGER DEFAULT 0, sent INTEGER);
@@ -1050,6 +1053,7 @@ function start(opts = {}) {
     if (!s || s.owner_id !== req.user.id) throw err(403, 'Only the owner can do that');
     if (!isMember(s.id, req.body?.user_id)) throw err(400, 'That user is not a member');
     run('UPDATE servers SET owner_id=? WHERE id=?', req.body.user_id, s.id);
+    audit(s.id, req.user.id, 'ownership_transfer', { targetId: req.body.user_id, targetName: nameOf(req.body.user_id) });
     refreshServer(s.id);
     res.json({ ok: true });
   }));
@@ -1174,6 +1178,7 @@ function start(opts = {}) {
     const pos = (one('SELECT MAX(position) p FROM roles WHERE server_id=?', sid)?.p ?? 0) + 1;
     const id = uid();
     run('INSERT INTO roles(id,server_id,name,color,perms,position,hoist) VALUES(?,?,?,?,?,?,1)', id, sid, String(req.body?.name || 'new role').slice(0, 32), req.body?.color || '#99aab5', DEFAULT_PERMS, pos);
+    audit(sid, req.user.id, 'role_create', { targetId: id, targetName: String(req.body?.name || 'new role').slice(0, 32) });
     refreshServer(sid);
     res.json(one('SELECT * FROM roles WHERE id=?', id));
   }));
@@ -1185,6 +1190,7 @@ function start(opts = {}) {
     if ((perms & P.ADMIN) && !has(r.server_id, req.user.id, P.ADMIN)) throw err(403, 'Only admins can grant Administrator');
     run('UPDATE roles SET name=?, color=?, perms=?, hoist=?, position=? WHERE id=?', r.is_default ? '@everyone' : String(b.name ?? r.name).slice(0, 32),
       /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : r.color, perms, b.hoist !== undefined ? (b.hoist ? 1 : 0) : r.hoist, b.position ?? r.position, r.id);
+    if (b.perms !== undefined || b.name !== undefined || b.hoist !== undefined) audit(r.server_id, req.user.id, 'role_update', { targetId: r.id, targetName: r.is_default ? '@everyone' : String(b.name ?? r.name).slice(0, 32) });
     refreshServer(r.server_id);
     res.json({ ok: true });
   }));
@@ -1192,6 +1198,7 @@ function start(opts = {}) {
     const r = one('SELECT * FROM roles WHERE id=?', req.params.id);
     if (!r || r.is_default || !has(r.server_id, req.user.id, P.MANAGE_ROLES)) throw err(403, 'Missing permission');
     run('DELETE FROM roles WHERE id=?', r.id);
+    audit(r.server_id, req.user.id, 'role_delete', { targetId: r.id, targetName: r.name });
     refreshServer(r.server_id);
     res.json({ ok: true });
   }));
@@ -1223,7 +1230,9 @@ function start(opts = {}) {
   app.post('/api/servers/:id/kick/:uid', auth, wrap((req, res) => {
     const sid = req.params.id, t = req.params.uid;
     if (!has(sid, req.user.id, P.KICK) || !outranks(sid, req.user.id, t)) throw err(403, 'You can’t kick this member');
+    const kn = nameOf(t);
     removeMember(sid, t, 'kicked');
+    audit(sid, req.user.id, 'kick', { targetId: t, targetName: kn });
     res.json({ ok: true });
   }));
   app.post('/api/servers/:id/ban/:uid', auth, wrap((req, res) => {
@@ -1235,6 +1244,7 @@ function start(opts = {}) {
       chans.forEach(c => { all('SELECT id FROM messages WHERE channel_id=? AND author_id=? AND created>?', c, t, now() - 86400e3).forEach(m => deleteMessage(m.id)); });
     }
     if (isMember(sid, t)) removeMember(sid, t, 'banned');
+    audit(sid, req.user.id, 'ban', { targetId: t, targetName: nameOf(t), detail: String(req.body?.reason || '') });
     res.json({ ok: true });
   }));
   app.get('/api/servers/:id/bans', auth, wrap((req, res) => {
@@ -1244,7 +1254,37 @@ function start(opts = {}) {
   app.delete('/api/servers/:id/bans/:uid', auth, wrap((req, res) => {
     if (!has(req.params.id, req.user.id, P.BAN)) throw err(403, 'Missing permission');
     run('DELETE FROM bans WHERE server_id=? AND user_id=?', req.params.id, req.params.uid);
+    audit(req.params.id, req.user.id, 'unban', { targetId: req.params.uid, targetName: nameOf(req.params.uid) });
     res.json({ ok: true });
+  }));
+
+  // ----- AutoMod config -----
+  app.get('/api/servers/:id/automod', auth, wrap((req, res) => {
+    if (!has(req.params.id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    res.json(automodConfig(req.params.id));
+  }));
+  app.patch('/api/servers/:id/automod', auth, wrap((req, res) => {
+    const sid = req.params.id;
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    const cur = automodConfig(sid);
+    const b = req.body || {};
+    const keywords = Array.isArray(b.keywords) ? [...new Set(b.keywords.map(w => String(w || '').trim().toLowerCase()).filter(Boolean))].slice(0, 200) : cur.keywords;
+    const enabled = b.enabled !== undefined ? (b.enabled ? 1 : 0) : (cur.enabled ? 1 : 0);
+    const block_invites = b.block_invites !== undefined ? (b.block_invites ? 1 : 0) : (cur.block_invites ? 1 : 0);
+    const mention_limit = b.mention_limit !== undefined ? Math.max(0, Math.min(50, Number(b.mention_limit) || 0)) : cur.mention_limit;
+    const action = ['block', 'timeout'].includes(b.action) ? b.action : cur.action;
+    run('INSERT OR REPLACE INTO automod(server_id,enabled,keywords,block_invites,mention_limit,action,updated) VALUES(?,?,?,?,?,?,?)',
+      sid, enabled, JSON.stringify(keywords), block_invites, mention_limit, action, now());
+    audit(sid, req.user.id, 'automod_update', { detail: enabled ? 'enabled' : 'disabled' });
+    res.json(automodConfig(sid));
+  }));
+
+  // ----- Audit log -----
+  app.get('/api/servers/:id/audit', auth, wrap((req, res) => {
+    if (!has(req.params.id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    const rows = all('SELECT * FROM audit_log WHERE server_id=? ORDER BY created DESC LIMIT 150', req.params.id);
+    res.json(rows.map(r => ({ id: r.id, action: r.action, actor: r.actor_id ? getUser(r.actor_id) : null,
+      target_id: r.target_id, target_name: r.target_name, detail: r.detail, created: r.created })));
   }));
 
   // ----- DMs -----
@@ -1564,6 +1604,34 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
   const hasVoicePass = (cid, uidv) => !!one('SELECT 1 FROM voice_passes WHERE channel_id=? AND user_id=? AND expires>?', cid, uidv, now());
+
+  // ----- audit log: record moderation / management actions -----
+  function audit(sid, actorId, action, opts = {}) {
+    if (!sid) return;
+    run('INSERT INTO audit_log(id,server_id,actor_id,action,target_id,target_name,detail,created) VALUES(?,?,?,?,?,?,?,?)',
+      uid(), sid, actorId || null, action, opts.targetId || null, (opts.targetName || '').slice(0, 120), (opts.detail || '').slice(0, 300), now());
+    // keep the log bounded (newest 500 per server)
+    run('DELETE FROM audit_log WHERE server_id=? AND id NOT IN (SELECT id FROM audit_log WHERE server_id=? ORDER BY created DESC LIMIT 500)', sid, sid);
+  }
+  // ----- AutoMod: inspect an outgoing message against the server's rules -----
+  const INVITE_RE = /(discord\.gg|discord(app)?\.com\/invite|\/invite\/|\bjoin\s+my\s+server\b)/i;
+  function automodConfig(sid) {
+    const r = one('SELECT * FROM automod WHERE server_id=?', sid);
+    return { enabled: r ? !!r.enabled : false, keywords: r ? (pj(r.keywords, []) || []) : [], block_invites: r ? !!r.block_invites : false,
+      mention_limit: r ? (r.mention_limit || 0) : 0, action: r?.action || 'block' };
+  }
+  // returns null if allowed, otherwise { reason }
+  function automodCheck(sid, uidv, content, mentionCount) {
+    const cfg = automodConfig(sid);
+    if (!cfg.enabled) return null;
+    if (has(sid, uidv, P.MANAGE_MESSAGES)) return null;          // moderators are exempt
+    const text = String(content || '').toLowerCase();
+    const hitWord = cfg.keywords.find(w => w && text.includes(String(w).toLowerCase()));
+    if (hitWord) return { reason: 'blocked word', word: hitWord };
+    if (cfg.block_invites && INVITE_RE.test(content || '')) return { reason: 'invite links aren’t allowed here' };
+    if (cfg.mention_limit > 0 && mentionCount > cfg.mention_limit) return { reason: `too many mentions (limit ${cfg.mention_limit})` };
+    return null;
+  }
 
   // ----- link previews (embeds) -----
   // Fetches the page the link points to and reads its title/description/image. Refuses private,
@@ -1892,6 +1960,22 @@ function start(opts = {}) {
     const m = mentionsIn(content, ch, req.user.id);
     const replyAuthor = reply ? one('SELECT author_id FROM messages WHERE id=?', reply.id)?.author_id : null;
     if (replyAuthor && replyAuthor !== req.user.id && req.body?.mention_reply !== 'false' && !m.ids.includes(replyAuthor)) m.ids.push(replyAuthor);
+    // AutoMod: block the message (and optionally timeout) if it breaks the server's rules
+    if (ch.type !== 'dm') {
+      const flag = automodCheck(ch.server_id, req.user.id, content, m.ids.length + (m.everyone ? 1 : 0));
+      if (flag) {
+        cleanup();
+        const cfg = automodConfig(ch.server_id);
+        audit(ch.server_id, null, 'automod_block', { targetId: req.user.id, targetName: nameOf(req.user.id), detail: flag.reason });
+        if (cfg.action === 'timeout') {
+          const until = now() + 5 * 60e3;
+          run('UPDATE members SET timeout_until=? WHERE server_id=? AND user_id=?', until, ch.server_id, req.user.id);
+          io.to('u:' + req.user.id).emit('timeout', { server_id: ch.server_id, until, reason: 'AutoMod: ' + flag.reason });
+          refreshServer(ch.server_id);
+        }
+        throw err(403, 'Your message was blocked by AutoMod (' + flag.reason + ').');
+      }
+    }
     if (ch.type === 'forum' && req.body?.thread_id && !thread) { cleanup(); throw err(404, 'That post was deleted'); }
     const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll,sticker,title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
       ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null, sticker ? JSON.stringify(sticker) : null, title);
@@ -2128,6 +2212,7 @@ function start(opts = {}) {
     run('UPDATE members SET timeout_until=? WHERE server_id=? AND user_id=?', until, sid, t);
     if (until) for (const [cid, room] of voice) { const c = chanRow(cid); if (c && c.server_id === sid && room.has(t)) leaveVoice(t); }
     if (until) io.to('u:' + t).emit('timeout', { server_id: sid, until, reason: String(req.body?.reason || '').slice(0, 200) });
+    audit(sid, req.user.id, until ? 'timeout' : 'timeout_remove', { targetId: t, targetName: nameOf(t), detail: until ? minutes + ' min' : '' });
     refreshServer(sid);
     res.json({ ok: true, until });
   }));

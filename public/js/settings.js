@@ -368,11 +368,12 @@ function openServerSettings(sid, first) {
   const sd = S.serverData[sid];
   const owner = sd.owner_id === S.me.id;
   const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], can(PERM.MANAGE_SERVER, sid) && ['stickers', 'Stickers'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
-    can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans']].filter(Boolean);
+    can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans'],
+    can(PERM.MANAGE_SERVER, sid) && ['automod', 'AutoMod'], can(PERM.MANAGE_SERVER, sid) && ['audit', 'Audit Log']].filter(Boolean);
   const ui = settingsShell(`<h6>${esc(sd.name)}</h6>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}${owner ? '<hr><button class="danger" data-action="delete">Delete Server</button>' : ''}`, (tab, body, close) => {
     const cur = S.serverData[sid]; if (!cur) return close();
     if (tab === '@delete') return confirmModal(`Delete ‘${cur.name}’`, `Are you sure you want to delete <b>${esc(cur.name)}</b>? This action cannot be undone.`, 'Delete Server', async () => { await api('DELETE', '/api/servers/' + sid); close(); });
-    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans })[tab](body, sid, close);
+    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans, automod: srvAutomod, audit: srvAudit })[tab](body, sid, close);
   }, first || tabs[0]?.[0]);
   return ui;
 }
@@ -492,6 +493,53 @@ async function srvBans(body, sid) {
     $('.bl', body).innerHTML = list.length ? list.map(b => `<div class="list-row">${avatar(b.user || {}, 's32')}<div class="grow"><b>${esc(b.user?.display_name || 'Unknown')}</b><small>@${esc(b.user?.username || '')}${b.reason ? ' · ' + esc(b.reason) : ''}</small></div><button class="btn secondary sm" data-unban="${b.user_id}">Revoke Ban</button></div>`).join('') : '<p style="color:var(--muted)">No one has been banned.</p>';
     $('.bl', body).onclick = async (e) => { const u = e.target.closest('[data-unban]'); if (u) { await api('DELETE', `/api/servers/${sid}/bans/${u.dataset.unban}`).catch(x => toast(x.message, true)); srvBans(body, sid); } };
   } catch (e) { $('.bl', body).textContent = e.message; }
+}
+
+async function srvAutomod(body, sid) {
+  body.innerHTML = `<h2>AutoMod</h2><div class="loader">Loading…</div>`;
+  let cfg;
+  try { cfg = await api('GET', `/api/servers/${sid}/automod`); } catch (e) { body.innerHTML = `<h2>AutoMod</h2><p>${esc(e.message)}</p>`; return; }
+  const d = { enabled: !!cfg.enabled, keywords: cfg.keywords.slice(), block_invites: !!cfg.block_invites, mention_limit: cfg.mention_limit || 0, action: cfg.action || 'block' };
+  const orig = JSON.stringify(d);
+  const draw = () => {
+    body.innerHTML = `<h2>AutoMod</h2><p style="color:var(--muted);margin:-12px 0 18px;font-size:14px">Automatically block messages that break your rules. Members with “Manage Messages” are never affected.</p>
+      <label class="row-toggle"><span class="rt">Enable AutoMod<small>Turn automatic moderation on for this server.</small></span><span class="toggle"><input type="checkbox" data-am="enabled" ${d.enabled ? 'checked' : ''}><span></span></span></label>
+      <h3>Blocked words</h3><p style="color:var(--muted);font-size:13px;margin-bottom:8px">One word or phrase per line. Messages containing any of these are blocked.</p>
+      <textarea class="input" data-kw rows="5" placeholder="e.g. slur&#10;scam link&#10;spoiler">${esc(d.keywords.join('\n'))}</textarea>
+      <label class="row-toggle"><span class="rt">Block invite links<small>Stops members pasting links to other servers.</small></span><span class="toggle"><input type="checkbox" data-am="block_invites" ${d.block_invites ? 'checked' : ''}><span></span></span></label>
+      <h3>Mention limit</h3><p style="color:var(--muted);font-size:13px;margin-bottom:8px">Block messages with more than this many mentions (0 = no limit). Stops mention-spam.</p>
+      <input class="input" type="number" min="0" max="50" data-ml value="${d.mention_limit}" style="max-width:120px">
+      <h3>When a message is blocked</h3>
+      <div class="field"><select class="input" data-ac style="max-width:260px"><option value="block" ${d.action === 'block' ? 'selected' : ''}>Just block the message</option><option value="timeout" ${d.action === 'timeout' ? 'selected' : ''}>Block it and time the member out (5 min)</option></select></div>`;
+    const sync = () => {
+      d.enabled = $('[data-am="enabled"]', body).checked;
+      d.block_invites = $('[data-am="block_invites"]', body).checked;
+      d.keywords = $('[data-kw]', body).value.split('\n').map(x => x.trim()).filter(Boolean);
+      d.mention_limit = Math.max(0, Math.min(50, Number($('[data-ml]', body).value) || 0));
+      d.action = $('[data-ac]', body).value;
+      if (JSON.stringify(d) !== orig) saveBar(body, async () => { await api('PATCH', `/api/servers/${sid}/automod`, d); srvAutomod(body, sid); }, draw);
+      else $('.save-bar', body)?.remove();
+    };
+    $$('[data-am],[data-kw],[data-ml],[data-ac]', body).forEach(el => { el.addEventListener('change', sync); el.addEventListener('input', sync); });
+  };
+  draw();
+}
+
+async function srvAudit(body, sid) {
+  body.innerHTML = `<h2>Audit Log</h2><div class="al"><div class="loader">Loading…</div></div>`;
+  const verb = {
+    kick: 'kicked', ban: 'banned', unban: 'unbanned', timeout: 'timed out', timeout_remove: 'removed timeout from',
+    role_create: 'created role', role_update: 'updated role', role_delete: 'deleted role',
+    ownership_transfer: 'transferred ownership to', automod_block: 'AutoMod blocked', automod_update: 'updated AutoMod' };
+  try {
+    const list = await api('GET', `/api/servers/${sid}/audit`);
+    $('.al', body).innerHTML = list.length ? list.map(e => {
+      const who = e.actor ? esc(e.actor.display_name) : (e.action.startsWith('automod') ? 'AutoMod' : 'System');
+      const tgt = e.target_name ? ` <b>${esc(e.target_name)}</b>` : '';
+      const det = e.detail ? ` <span style="color:var(--muted)">(${esc(e.detail)})</span>` : '';
+      return `<div class="list-row"><div class="grow"><b>${who}</b> ${esc(verb[e.action] || e.action)}${tgt}${det}<small>${new Date(e.created).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}</small></div></div>`;
+    }).join('') : '<p style="color:var(--muted)">Nothing here yet. Moderation actions will show up here.</p>';
+  } catch (e) { $('.al', body).textContent = e.message; }
 }
 
 /* start */
