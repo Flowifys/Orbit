@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.19.0';
+const VERSION = '1.19.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -183,7 +183,7 @@ function start(opts = {}) {
   const publicUser = (u) => u && ({ id: u.id, username: u.username, display_name: u.display_name || u.username, avatar: u.avatar,
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
     theme_primary: u.theme_primary || null, theme_accent: u.theme_accent || null, name_color: u.name_color || null, name_color2: u.name_color2 || null,
-    avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []),
+    avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []).filter(c => !c.hidden).map(({ hidden, show_activity, ...c }) => c),
     effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u) });
   function badgeList(u) {
     const raw = pj(u.badges, []);
@@ -479,7 +479,8 @@ function start(opts = {}) {
   app.get('/api/me', auth, wrap((req, res) => {
     const me = { ...publicUser(req.user), email: req.user.email,
       read_receipts: req.user.read_receipts == null ? 1 : req.user.read_receipts, block_mode: req.user.block_mode || 'standard',
-      invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id) };
+      invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id),
+      spotify_conn: spotifyConn(req.user) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
     res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries([...activities].filter(([k]) => k === req.user.id || statusFor(k, req.user.id) !== 'offline')), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
@@ -637,6 +638,19 @@ function start(opts = {}) {
     pollSpotify(st.uid).catch(() => {});
     donePage(res, true, 'You can close this window and go back to Orbit. What you’re listening to now shows on your profile.');
   }));
+  // your own view of the Spotify connection, with its two switches
+  function spotifyConn(u) { const c = pj(u.connections, []).find(x => x.type === 'spotify'); return c ? { ...c, hidden: !!c.hidden, show_activity: c.show_activity !== false } : null; }
+  // show / hide Spotify on your profile's Connections, and whether your song shows as "Listening to Spotify"
+  app.patch('/api/connections/spotify', auth, wrap((req, res) => {
+    const conns = pj(req.user.connections, []); const c = conns.find(x => x.type === 'spotify');
+    if (!c) throw err(404, 'Spotify isn’t connected');
+    if (req.body?.show_on_profile !== undefined) c.hidden = !req.body.show_on_profile;
+    if (req.body?.show_activity !== undefined) c.show_activity = !!req.body.show_activity;
+    run('UPDATE users SET connections=? WHERE id=?', JSON.stringify(conns), req.user.id);
+    if (c.show_activity === false) setActivity(req.user.id, null); else pollSpotify(req.user.id).catch(() => {});
+    broadcastUser(req.user.id);
+    res.json(spotifyConn(one('SELECT connections FROM users WHERE id=?', req.user.id)));
+  }));
   app.delete('/api/connections/spotify', auth, wrap((req, res) => {
     const conns = pj(req.user.connections, []).filter(c => c.type !== 'spotify');
     run('UPDATE users SET spotify=NULL, connections=? WHERE id=?', JSON.stringify(conns), req.user.id);
@@ -648,8 +662,9 @@ function start(opts = {}) {
     return r.json().catch(() => ({}));
   }
   async function pollSpotify(uidv) {
-    const row = one('SELECT spotify FROM users WHERE id=?', uidv);
+    const row = one('SELECT spotify, connections FROM users WHERE id=?', uidv);
     let t = pj(row?.spotify, null); if (!t) return setActivity(uidv, null);
+    if (pj(row.connections, []).find(c => c.type === 'spotify')?.show_activity === false) return setActivity(uidv, null);
     if (t.expires < now() + 30e3) {
       const n = await spotifyToken({ grant_type: 'refresh_token', refresh_token: t.refresh, client_id: SPOTIFY_ID });
       if (!n.access_token) { if (n.error === 'invalid_grant') run('UPDATE users SET spotify=NULL WHERE id=?', uidv); return setActivity(uidv, null); }

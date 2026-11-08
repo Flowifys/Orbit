@@ -958,11 +958,21 @@ function gameTile(name) {
   const ini = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
   return `<span class="game-tile" style="--gh:${h % 360}">${esc(ini)}</span>`;
 }
+const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
 function gameActivityHtml(a) {
-  return `<div class="activity act-game"><h5>${ACT_HEAD[a.type] || 'Activity'}</h5><div class="act-row">${a.type === 'playing' ? gameTile(a.name) : `<span class="art-ph">${I[ACT_ICON[a.type]] || I.gamepad}</span>`}
-    <div class="act-meta"><b class="act-title">${esc(a.name)}</b>${a.details ? `<span>${esc(a.details)}</span>` : ''}<span class="act-since" data-since="${a.start || 0}">${a.start ? sinceText(a.start) : ''}</span></div></div></div>`;
+  const head = a.type === 'playing' ? (a.source === 'detected' ? 'Playing on PC' : 'Playing') : (ACT_HEAD[a.type] || 'Activity');
+  return `<div class="activity act-game"><h5>${head}</h5><div class="act-row">${a.type === 'playing' ? gameTile(a.name) : `<span class="art-ph">${I[ACT_ICON[a.type]] || I.gamepad}</span>`}
+    <div class="act-meta"><b class="act-title">${esc(a.name)}</b>${a.details ? `<span>${esc(a.details)}</span>` : ''}${a.start ? `<span class="act-elapsed">${(I[ACT_ICON[a.type]] || I.gamepad).replace('width="20" height="20"', 'width="15" height="15"')}<span class="act-since" data-since="${a.start}">${clock(Date.now() - a.start)}</span></span>` : ''}</div></div></div>`;
 }
-setInterval(() => $$('.act-since[data-since]').forEach(el => { const t = Number(el.dataset.since); if (t) el.textContent = sinceText(t); }), 30e3);
+// one ticker keeps every open profile live: game timers and Spotify progress move every second
+setInterval(() => {
+  $$('.act-since[data-since]').forEach(el => { el.textContent = clock(Date.now() - Number(el.dataset.since)); });
+  $$('.act-live[data-song-start]').forEach(el => {
+    const st = Number(el.dataset.songStart), dur = Math.max(1, Number(el.dataset.songEnd) - st), pos = Math.min(dur, Date.now() - st);
+    const bar = el.querySelector('.act-bar i'); if (bar) bar.style.width = (pos / dur * 100).toFixed(2) + '%';
+    const p = el.querySelector('.act-pos'); if (p) p.textContent = clock(pos);
+  });
+}, 1000);
 
 const Act = {
   detected: null, sent: undefined,

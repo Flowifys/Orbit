@@ -1274,7 +1274,7 @@ function activityHtml(uidv) {
   const t = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   return `<div class="activity"><h5>Listening to ${esc(a.name)}</h5><div class="act-row">${a.art ? `<img src="${esc(a.art)}" alt="">` : `<span class="art-ph">${I.music}</span>`}
     <div class="act-meta"><a ${a.url ? `href="${esc(a.url)}" target="_blank" rel="noopener"` : ''} class="act-title">${esc(a.title)}</a><span>by ${esc(a.artist || '')}</span><span>on ${esc(a.album || '')}</span></div></div>
-    <div class="act-bar"><i style="width:${(pos / dur * 100).toFixed(1)}%"></i></div><div class="act-times"><span>${t(pos)}</span><span>${t(dur)}</span></div></div>`;
+    <div class="act-live" data-song-start="${a.start}" data-song-end="${a.end}"><div class="act-bar"><i style="width:${(pos / dur * 100).toFixed(1)}%"></i></div><div class="act-times"><span class="act-pos">${t(pos)}</span><span>${t(dur)}</span></div></div></div>`;
 }
 function friendActionRow(uid) {
   const st = friendState(uid);

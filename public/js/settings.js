@@ -168,24 +168,31 @@ function cropModal(src, kind, crop, onDone) {
 
 function userConnections(body) {
   const conns = (S.me.connections || []);
-  const spotify = conns.find(c => c.type === 'spotify' && c.verified);
+  const spotify = S.me.spotify_conn || conns.find(c => c.type === 'spotify' && c.verified);
   const manual = conns.filter(c => !c.verified).map(c => ({ ...c }));
   body.innerHTML = `<h2>Connections</h2>
     <div class="conn-hero"><span class="cg big" style="background:#1db954">♫</span><div class="grow"><b>Spotify</b><small>${spotify ? `Connected as ${esc(spotify.name)}. What you’re playing shows on your profile and in member lists.` : 'Show what you’re listening to on your profile.'}</small></div>
       ${spotify ? `<button class="btn secondary sm" data-unspot>Disconnect</button>` : `<button class="btn primary sm" data-spot>Connect</button>`}</div>
+    ${spotify ? (() => { const sc = S.me.spotify_conn || { hidden: false, show_activity: true }; return `<div class="spot-opts">
+      <label class="row-toggle"><span class="rt">Show Spotify on my profile<small>Your Spotify account appears under Connections on your profile.</small></span><span class="toggle"><input type="checkbox" data-sopt="show_on_profile" ${sc.hidden ? '' : 'checked'}><span></span></span></label>
+      <label class="row-toggle"><span class="rt">Show what I’m listening to<small>Your current song shows on your profile and in member lists.</small></span><span class="toggle"><input type="checkbox" data-sopt="show_activity" ${sc.show_activity === false ? '' : 'checked'}><span></span></span></label></div>`; })() : ''}
     ${!S.info.spotify ? `<p class="hint" style="margin-top:8px">Spotify needs to be set up once on the Orbit server by its owner (a free Spotify developer app). The README explains how.</p>` : ''}
     <h3>Other accounts</h3><p class="hint">Add usernames to show on your profile. People can click through to them.</p>
     <div class="conn-list"></div>
     <div class="link-row"><select class="input" data-ntype>${Object.entries(CONN).filter(([k]) => k !== 'spotify').map(([k, [n]]) => `<option value="${k}">${n}</option>`).join('')}</select><input class="input" data-nname placeholder="Username"><button class="btn primary sm" data-nadd>Add</button></div>`;
   const draw = () => { $('.conn-list', body).innerHTML = manual.map((c, i) => { const [n, col, g] = CONN[c.type]; return `<div class="list-row"><span class="cg" style="background:${col}">${g}</span><div class="grow"><b>${esc(c.name)}</b><small>${n}</small></div><button class="icon-btn danger" data-rmc="${i}">${I.trash}</button></div>`; }).join('') || '<p class="hint">Nothing added yet.</p>'; };
   draw();
+  $$('[data-sopt]', body).forEach(el => el.onchange = async () => {
+    try { S.me.spotify_conn = await api('PATCH', '/api/connections/spotify', { [el.dataset.sopt]: el.checked }); toast(el.checked ? 'Shown on your profile' : 'Hidden from your profile'); }
+    catch (x) { el.checked = !el.checked; toast(x.message, true); }
+  });
   const saveManual = async () => { try { const u = await api('PATCH', '/api/me', { connections: manual }); S.me = { ...S.me, ...u }; } catch (e) { toast(e.message, true); } };
   body.onclick = async (e) => {
     if (e.target.closest('[data-spot]')) {
       try { const r = await api('GET', '/api/connections/spotify/start'); window.open(r.url, '_blank'); toast('Finish connecting in the window that opened.'); }
       catch (er) { toast(er.message, true); }
     }
-    if (e.target.closest('[data-unspot]')) { await api('DELETE', '/api/connections/spotify').catch(x => toast(x.message, true)); S.me.connections = (S.me.connections || []).filter(c => c.type !== 'spotify'); userConnections(body); }
+    if (e.target.closest('[data-unspot]')) { await api('DELETE', '/api/connections/spotify').catch(x => toast(x.message, true)); S.me.connections = (S.me.connections || []).filter(c => c.type !== 'spotify'); S.me.spotify_conn = null; userConnections(body); }
     if (e.target.closest('[data-nadd]')) { const name = $('[data-nname]', body).value.trim(); if (!name) return; manual.push({ type: $('[data-ntype]', body).value, name }); $('[data-nname]', body).value = ''; draw(); saveManual(); }
     const rm = e.target.closest('[data-rmc]'); if (rm) { manual.splice(Number(rm.dataset.rmc), 1); draw(); saveManual(); }
   };
