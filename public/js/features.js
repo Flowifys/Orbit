@@ -545,6 +545,7 @@ function voiceMsgAction(el, e) {
   if (!a) { a = voicePlayers[url] = new Audio(url); a.preload = 'auto'; a.ontimeupdate = paint; a.onplay = paint; a.onpause = paint; a.onended = () => { a.currentTime = 0; paint(); }; if (S.prefs.speaker && a.setSinkId) a.setSinkId(S.prefs.speaker).catch(() => {}); }
   const wave = e.target.closest('.vm-wave');
   if (wave) { const r = wave.getBoundingClientRect(); a.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * dur(); if (a.paused) a.play().catch(() => {}); paint(); return; }
+  if (!e.target.closest('.vm-play')) return;   // only the play/pause button plays or pauses
   Object.entries(voicePlayers).forEach(([u, p]) => { if (u !== url && !p.paused) p.pause(); });
   if (a.paused) a.play().catch(() => toast('Couldn’t play that voice message', true)); else a.pause();
 }

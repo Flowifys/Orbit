@@ -1365,6 +1365,7 @@ function audioEmbedAction(embed, e) {
   if (!a) { a = audioPlayers[url] = new Audio(url); ['timeupdate','loadedmetadata','ended','play','pause'].forEach(ev => a.addEventListener(ev, () => updateAudioEmbeds(url))); }
   const bar = e.target.closest('.ae-bar');
   if (bar) { const r = bar.getBoundingClientRect(); const pct = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)); if (a.duration) a.currentTime = pct * a.duration; return; }
+  if (!e.target.closest('.ae-play')) return;   // only the play/pause button plays or pauses
   if (a.paused) { Object.values(audioPlayers).forEach(x => x !== a && x.pause()); a.play().catch(() => {}); } else a.pause();
 }
 function updateAudioEmbeds(url) {
