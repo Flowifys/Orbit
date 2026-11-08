@@ -1,6 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('orbitDesktop', {
   isDesktop: true,
+  // the window has no system title bar: the page draws one (see public/js/titlebar.js)
+  frame: process.platform === 'darwin' ? 'mac' : 'overlay',
+  setTitleBarColors: (color, symbolColor) => ipcRenderer.invoke('orbit:titlebar', { color, symbolColor }),
   getScreenSources: () => ipcRenderer.invoke('orbit:get-sources'),
   // pick what the next getDisplayMedia() call shares (and whether to include the computer's sound)
   setShareSource: (id, audio) => ipcRenderer.invoke('orbit:set-share', { id, audio: !!audio }),

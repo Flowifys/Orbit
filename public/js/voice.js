@@ -461,8 +461,11 @@ function drawStage(wrap, cid, sid) {
     const stageP = people.find(p => p.user_id === stageId);
     const others = people.filter(p => p.user_id !== stageId);
     wrap.className = 'stage-wrap theater' + (Voice.stripHidden || !others.length ? ' no-strip' : '');
+    const sh = Math.max(70, Math.min(280, S.prefs.stripH || 116));
+    wrap.style.setProperty('--strip-h', sh + 'px');
     wrap.innerHTML = `<div class="stage">${tileInner(stageP, sid, 'stage')}</div>
-      ${Voice.stripHidden || !others.length ? '' : `<div class="strip">${others.map(p => tileInner(p, sid, 'strip')).join('')}</div>`}`;
+      ${Voice.stripHidden || !others.length ? '' : `<div class="strip-resize" title="Drag to resize · double-click to reset" role="separator" aria-orientation="horizontal"></div><div class="strip">${others.map(p => tileInner(p, sid, 'strip')).join('')}</div>`}`;
+    bindStripResize(wrap);
   } else {
     wrap.className = 'stage-wrap grid-mode';
     wrap.innerHTML = `<div class="voice-grid">${people.map(p => tileInner(p, sid, 'grid')).join('')}</div>`;
@@ -482,12 +485,30 @@ function drawStage(wrap, cid, sid) {
     if (e.target.closest('[data-strip]')) { Voice.stripHidden = !Voice.stripHidden; return renderVoiceArea(); }
     if (e.target.closest('[data-focus]')) return setFocus(onStage ? 'grid' : id);
     if (e.target.closest('button')) return;
-    if (onStage) return;                         // clicking the big tile does nothing (use the buttons)
-    if (hasVideoOf(id)) return setFocus(id);     // click a video tile to focus it
-    profilePopout(id, t);
+    // like Discord: click anyone to put them on the big stage, click the big tile to go back to the grid
+    if (onStage) return setFocus('grid');
+    return setFocus(id);
   };
   wrap.ondblclick = (e) => { const t = e.target.closest('[data-tile]'); if (t && hasVideoOf(t.dataset.tile)) toggleFullscreen(t); };
   wrap.oncontextmenu = (e) => { const t = e.target.closest('[data-tile]'); if (t) { e.preventDefault(); callUserMenu(e, t.dataset.tile); } };
+}
+// drag the bar between the big tile and the row of small ones to make the row bigger or smaller
+function bindStripResize(wrap) {
+  const bar = $('.strip-resize', wrap); if (!bar) return;
+  bar.onpointerdown = (e) => {
+    e.preventDefault(); bar.setPointerCapture(e.pointerId); document.body.classList.add('resizing-call');
+    const y0 = e.clientY, h0 = $('.strip', wrap)?.offsetHeight || 116;
+    const max = () => Math.min(280, wrap.clientHeight * 0.45);
+    bar.onpointermove = (ev) => { const nh = Math.round(Math.max(70, Math.min(max(), h0 - (ev.clientY - y0)))); wrap.style.setProperty('--strip-h', nh + 'px'); S.prefs.stripH = nh; };
+    bar.onpointerup = () => { bar.onpointermove = null; document.body.classList.remove('resizing-call'); savePrefs(); };
+  };
+  bar.ondblclick = () => { S.prefs.stripH = 116; savePrefs(); wrap.style.setProperty('--strip-h', '116px'); };
+}
+// fill the whole screen with the call (all tiles + controls), like the button at the bottom right in Discord
+function toggleCallFullscreen(btn) {
+  const area = btn.closest('.voice-view, .call-slot'); if (!area) return;
+  if (document.fullscreenElement) return document.exitFullscreen().catch(() => {});
+  (area.requestFullscreen ? area.requestFullscreen() : area.webkitRequestFullscreen?.())?.catch?.(() => {});
 }
 function toggleFullscreen(tile) {
   if (!tile) return;
@@ -515,7 +536,8 @@ function voiceControlsHtml(isDm) {
       <button class="vbtn ${Voice.screen ? 'on' : ''}" data-v="screen" title="${Voice.screen ? 'Stop sharing' : 'Share your screen'}">${I.screen}</button>
     </div>
     <button class="vbtn leave" data-v="leave" title="Disconnect">${I.hangup}</button>
-    ${isDm ? `<button class="vbtn ghost vc-expand" data-v="expand" title="${Voice.expanded ? 'Collapse call' : 'Expand call'}">${Voice.expanded ? I.shrink : I.expand}</button>` : ''}</div>`;
+    <div class="vc-right">${isDm ? `<button class="vbtn ghost" data-v="expand" title="${Voice.expanded ? 'Collapse call' : 'Make the call take up the chat'}">${Voice.expanded ? I.shrink : I.expand}</button>` : ''}
+      <button class="vbtn ghost" data-v="fullcall" title="${document.fullscreenElement ? 'Exit full screen' : 'Full screen'}">${document.fullscreenElement ? I.shrink : I.fullscreen || I.expand}</button></div></div>`;
 }
 function bindVoiceControls(root) {
   $('.voice-controls', root).onclick = (e) => {
@@ -523,6 +545,7 @@ function bindVoiceControls(root) {
     if (v === 'cam') Voice.toggleCamera(); if (v === 'screen') Voice.toggleScreen();
     if (v === 'mute') Voice.toggleMute(); if (v === 'deaf') Voice.toggleDeaf(); if (v === 'leave') Voice.leave();
     if (v === 'expand') { Voice.expanded = !Voice.expanded; renderVoiceArea(); }
+    if (v === 'fullcall') toggleCallFullscreen(e.target.closest('[data-v]'));
   };
 }
 

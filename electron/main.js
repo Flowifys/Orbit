@@ -51,6 +51,9 @@ function createWindow(url) {
   win = new BrowserWindow({
     width: 1320, height: 840, minWidth: 420, minHeight: 520, backgroundColor: '#111214', title: 'Orbit ' + app.getVersion(),
     icon: path.join(__dirname, process.platform === 'win32' ? 'icon.ico' : 'icon-tile.png'), autoHideMenuBar: true, show: false,
+    // Orbit draws its own title bar (back/forward + where you are); Windows/Linux keep their real min/max/close buttons on top of it
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 11 } }
+      : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#0e0c15', symbolColor: '#b9b3d6', height: 36 } }),
     webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
   });
   win.once('ready-to-show', () => win.show());
@@ -78,6 +81,11 @@ function createWindow(url) {
 const { watchGames } = require('./games');
 let gameWatch = null;
 ipcMain.handle('orbit:current-game', () => gameWatch?.current() || null);
+// match the min/max/close buttons to the app's theme
+ipcMain.handle('orbit:titlebar', (e, { color, symbolColor } = {}) => {
+  try { if (win && process.platform !== 'darwin' && /^#[0-9a-f]{6}$/i.test(color) && /^#[0-9a-f]{6}$/i.test(symbolColor)) win.setTitleBarOverlay({ color, symbolColor, height: 36 }); } catch {}
+  return true;
+});
 function startGameWatch() {
   if (gameWatch) return;
   gameWatch = watchGames((game) => { if (win && !win.isDestroyed()) win.webContents.send('orbit:game', game); });

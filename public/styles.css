@@ -1592,3 +1592,39 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .members .mem:hover .gm-kick,.gm-kick:focus{opacity:1}
 .gm-kick:hover{background:var(--red);color:#fff}
 @media (hover:none){.gm-kick{opacity:.85}}
+
+/* ===== 1.20: desktop title bar ===== */
+.titlebar{display:none}
+body.has-titlebar .titlebar{position:fixed;top:0;left:0;right:0;height:36px;z-index:200;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;
+  background:var(--bg-0);color:var(--text-2);-webkit-app-region:drag;user-select:none;padding-left:8px;
+  /* leave room for the window's own minimize / maximize / close (Windows) */
+  padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 6px)}
+body.tb-mac .titlebar{padding-left:84px}
+.titlebar button{-webkit-app-region:no-drag}
+.tb-nav{display:flex;gap:2px}
+.tb-btn{width:30px;height:28px;border-radius:7px;display:grid;place-items:center;color:var(--muted);position:relative}
+.tb-btn svg{width:17px;height:17px}
+.tb-btn:hover:not(:disabled){background:var(--bg-hover);color:var(--text)}
+.tb-btn:disabled{opacity:.35;cursor:default}
+.tb-nav .tb-btn:last-child svg{transform:scaleX(-1)}
+.tb-where{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--text);max-width:50vw;overflow:hidden;white-space:nowrap}
+.tb-where span:last-child{overflow:hidden;text-overflow:ellipsis}
+.tb-where img,.tb-ini{width:20px;height:20px;border-radius:6px;object-fit:cover;flex:none}
+.tb-ini{display:grid;place-items:center;background:var(--bg-3);font-size:8px;font-weight:800;color:var(--text-2)}
+.tb-ico svg{width:16px;height:16px;color:var(--muted)}
+.tb-tools{justify-self:end;display:flex;gap:4px;padding-right:6px}
+.tb-btn.has-dot::after{content:"";position:absolute;top:5px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red)}
+body.has-titlebar .app{height:calc(var(--app-h,100dvh) - 36px);margin-top:36px}
+body.has-titlebar .settings,body.has-titlebar .modal-wrap,body.has-titlebar .lightbox{top:36px}
+/* ===== 1.20: call sizing ===== */
+.stage-wrap.theater{gap:0}
+.stage-wrap.theater .strip{height:var(--strip-h,116px);margin-top:4px;justify-content:center}
+.stage-wrap.theater .strip .tile{width:calc(var(--strip-h,116px) * 16 / 9);cursor:pointer}
+.strip-resize{flex:none;height:12px;margin:2px auto 0;width:100%;cursor:ns-resize;position:relative;touch-action:none}
+.strip-resize::after{content:"";position:absolute;left:50%;top:50%;width:44px;height:4px;border-radius:2px;background:var(--line-2);transform:translate(-50%,-50%);transition:background .12s,width .12s}
+.strip-resize:hover::after{background:var(--accent);width:64px}
+.voice-grid .tile,.stage .tile{cursor:pointer}
+.vc-right{position:absolute;right:16px;top:50%;transform:translateY(-50%);display:flex;gap:6px}
+.voice-view:fullscreen,.call-slot:fullscreen{background:#000;display:flex;flex-direction:column;height:100vh!important;max-height:none}
+.voice-view:fullscreen .stage-wrap,.call-slot:fullscreen .stage-wrap{flex:1;min-height:0}
+@media (max-width:760px){.vc-right{position:static;transform:none}}
