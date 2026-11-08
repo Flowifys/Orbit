@@ -46,7 +46,11 @@ jobs:
           bubblewrap update --skipVersionUpgrade < /dev/null 2>&1 | tee build.log
           # mark the project as up to date with twa-manifest.json so build doesn't stop to ask about regenerating it
           sha1sum twa-manifest.json | cut -d' ' -f1 > manifest-checksum.txt
-          printf 'n\n' | bubblewrap build --skipPwaValidation 2>&1 | tee -a build.log
+          # downloads (Gradle etc.) sometimes time out, so try up to 3 times
+          for try in 1 2 3; do
+            printf 'n\n' | bubblewrap build --skipPwaValidation 2>&1 | tee -a build.log
+            [ -f app-release-signed.apk ] && break; echo "Build attempt $try failed, retrying…"; sleep 20
+          done
           test -f app-release-signed.apk
           cp app-release-signed.apk Orbit-Quest.apk
       - name: Attach Orbit-Quest.apk to the quest release
