@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.1';
+const VERSION = '1.25.2';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -502,13 +502,24 @@ function start(opts = {}) {
   }));
 
   // ----- two-step sign-in: a code by email or text message after the password, plus one-time backup codes -----
-  const TWILIO = { sid: process.env.TWILIO_ACCOUNT_SID || '', key: process.env.TWILIO_AUTH_TOKEN || '', from: process.env.TWILIO_FROM || '' };
-  const smsEnabled = !!(TWILIO.sid && TWILIO.key && TWILIO.from);
+  // Twilio Verify (TWILIO_VERIFY_SID) sends and checks the codes itself and needs no A2P phone-number registration;
+  // a plain Twilio number (TWILIO_FROM) works too once that number is registered for texting in the US.
+  const TWILIO = { sid: process.env.TWILIO_ACCOUNT_SID || '', key: process.env.TWILIO_AUTH_TOKEN || '', from: process.env.TWILIO_FROM || '', verify: process.env.TWILIO_VERIFY_SID || '' };
+  const smsEnabled = !!(TWILIO.sid && TWILIO.key && (TWILIO.verify || TWILIO.from));
+  const twilioAuth = () => 'Basic ' + Buffer.from(TWILIO.sid + ':' + TWILIO.key).toString('base64');
+  async function verifyApi(pathPart, form) {
+    const r = await fetch(`https://verify.twilio.com/v2/Services/${encodeURIComponent(TWILIO.verify)}/${pathPart}`, {
+      method: 'POST', signal: AbortSignal.timeout(10000),
+      headers: { Authorization: twilioAuth(), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok && r.status !== 404) { log('Twilio Verify failed', r.status, JSON.stringify(j).slice(0, 300)); throw err(r.status === 429 ? 429 : 502, r.status === 429 ? 'Too many codes sent to that number. Try again later.' : 'Couldn’t send the text message. Check the number and try again.'); }
+    return { ok: r.ok, ...j };
+  }
   async function sendSms(to, text) {
     if (!smsEnabled) { log(`SMS to ${to}: ${text}`); devCode(to, text.slice(0, 6)); return; }
     const r = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(TWILIO.sid)}/Messages.json`, {
       method: 'POST', signal: AbortSignal.timeout(10000),
-      headers: { Authorization: 'Basic ' + Buffer.from(TWILIO.sid + ':' + TWILIO.key).toString('base64'), 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: { Authorization: twilioAuth(), 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ To: to, From: TWILIO.from, Body: text }) });
     if (!r.ok) { log('SMS failed', r.status, await r.text().catch(() => '')); throw err(502, 'Couldn’t send the text message. Check the number and try again.'); }
   }
@@ -519,10 +530,12 @@ function start(opts = {}) {
   // make a ticket, send its code. purpose 'login' (signing in) or 'setup' (turning it on)
   async function sendTwofa(u, purpose, method, target, ticket) {
     const code = String(crypto.randomInt(100000, 1000000));
+    const viaVerify = method === 'sms' && smsEnabled && !!TWILIO.verify;   // Twilio makes and checks the code
     ticket = ticket || crypto.randomBytes(18).toString('base64url');
-    run('INSERT OR REPLACE INTO twofa_tickets(ticket,user_id,purpose,method,target,code_hash,expires,tries,sent) VALUES(?,?,?,?,?,?,?,0,?)', ticket, u.id, purpose, method, target, codeHash(code), now() + 10 * 60e3, now());
-    if (method === 'sms') await sendSms(target, `${code} is your Orbit ${purpose === 'login' ? 'sign-in' : 'confirmation'} code. Don't share it with anyone.`);
+    if (viaVerify) await verifyApi('Verifications', { To: target, Channel: 'sms' });
+    else if (method === 'sms') await sendSms(target, `${code} is your Orbit ${purpose === 'login' ? 'sign-in' : 'confirmation'} code. Don't share it with anyone.`);
     else await sendCode(target, code, purpose);
+    run('INSERT OR REPLACE INTO twofa_tickets(ticket,user_id,purpose,method,target,code_hash,expires,tries,sent) VALUES(?,?,?,?,?,?,?,0,?)', ticket, u.id, purpose, method, target, viaVerify ? 'verify' : codeHash(code), now() + 10 * 60e3, now());
     return ticket;
   }
   async function twofaChallenge(u) {
@@ -530,12 +543,15 @@ function start(opts = {}) {
     const ticket = await sendTwofa(u, 'login', u.twofa, target);
     return { twofa: true, ticket, method: u.twofa, to: u.twofa === 'sms' ? maskPhone(target) : maskEmail(target) };
   }
-  function useTicket(ticket, purpose, code, uidv) {
+  async function useTicket(ticket, purpose, code, uidv) {
     const t = one('SELECT * FROM twofa_tickets WHERE ticket=? AND purpose=?', String(ticket || ''), purpose);
     if (!t || t.expires < now() || (uidv && t.user_id !== uidv)) throw err(400, 'That code expired. Start again.');
     if (t.tries >= 5) { run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); throw err(429, 'Too many wrong codes. Start again.'); }
     const clean = String(code || '').replace(/[\s-]/g, '');
-    if (codeHash(clean) === t.code_hash) { run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); return t; }
+    const good = t.code_hash === 'verify'
+      ? /^\d{4,10}$/.test(clean) && (await verifyApi('VerificationCheck', { To: t.target, Code: clean })).status === 'approved'
+      : codeHash(clean) === t.code_hash;
+    if (good) { run('DELETE FROM twofa_tickets WHERE ticket=?', t.ticket); return t; }
     // when signing in, a backup code works instead (each one only once)
     if (purpose === 'login' && clean.length >= 8) {
       const u = one('SELECT backup_codes FROM users WHERE id=?', t.user_id); const list = pj(u?.backup_codes, []);
@@ -551,9 +567,9 @@ function start(opts = {}) {
     return codes;
   }
   setInterval(() => run('DELETE FROM twofa_tickets WHERE expires < ?', now() - 3600e3), 10 * 60e3).unref?.();
-  app.post('/api/auth/2fa', wrap((req, res) => {
+  app.post('/api/auth/2fa', wrap(async (req, res) => {
     limit('2fa:' + clientIp(req), 30, 15 * 60e3, 'Too many code attempts.');
-    const t = useTicket(req.body?.ticket, 'login', req.body?.code);
+    const t = await useTicket(req.body?.ticket, 'login', req.body?.code);
     const u = one('SELECT * FROM users WHERE id=?', t.user_id); if (!u) throw err(404, 'Account not found');
     res.json({ token: token(u, req), backup_used: !!t.backup, backup_left: t.left });
   }));
@@ -580,9 +596,9 @@ function start(opts = {}) {
     const ticket = await sendTwofa(req.user, 'setup', method, target);
     res.json({ ticket, to: method === 'sms' ? maskPhone(target) : maskEmail(target) });
   }));
-  app.post('/api/me/2fa/confirm', auth, wrap((req, res) => {
+  app.post('/api/me/2fa/confirm', auth, wrap(async (req, res) => {
     limit('2fa:' + req.user.id, 15, 15 * 60e3, 'Too many code attempts.');
-    const t = useTicket(req.body?.ticket, 'setup', req.body?.code, req.user.id);
+    const t = await useTicket(req.body?.ticket, 'setup', req.body?.code, req.user.id);
     run('UPDATE users SET twofa=?, phone=? WHERE id=?', t.method, t.method === 'sms' ? t.target : req.user.phone, req.user.id);
     res.json({ twofa: twofaInfo(one('SELECT * FROM users WHERE id=?', req.user.id)), backup_codes: newBackupCodes(req.user.id) });
   }));
