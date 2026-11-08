@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.35.0';
+const VERSION = '1.36.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -167,6 +167,11 @@ function start(opts = {}) {
   const srvCols = all0(db, 'PRAGMA table_info(servers)').map(c => c.name);
   if (!srvCols.includes('afk_channel_id')) db.exec('ALTER TABLE servers ADD COLUMN afk_channel_id TEXT');
   if (!srvCols.includes('afk_timeout')) db.exec('ALTER TABLE servers ADD COLUMN afk_timeout INTEGER DEFAULT 300');
+  if (!srvCols.includes('system_channel_id')) db.exec('ALTER TABLE servers ADD COLUMN system_channel_id TEXT');
+  if (!srvCols.includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome INTEGER DEFAULT 1');
+  db.exec(`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, server_id TEXT, channel_id TEXT, name TEXT, description TEXT DEFAULT '', start INTEGER, ends INTEGER, creator_id TEXT, created INTEGER, started INTEGER DEFAULT 0);
+    CREATE TABLE IF NOT EXISTS event_rsvps(event_id TEXT, user_id TEXT, created INTEGER, PRIMARY KEY(event_id,user_id));
+    CREATE INDEX IF NOT EXISTS idx_events ON events(server_id, start);`);
   // 1.15: sessions (one per logged-in device) so you can see and log out devices
   db.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, created INTEGER, last_seen INTEGER, ua TEXT, client TEXT, ip TEXT);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
@@ -338,6 +343,7 @@ function start(opts = {}) {
     const stickers = all('SELECT id, name, url FROM stickers WHERE server_id=? ORDER BY created', sid);
     return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, owner_id: s.owner_id,
       afk_channel_id: s.afk_channel_id || null, afk_timeout: s.afk_timeout || 300,
+      system_channel_id: s.system_channel_id || null, welcome: s.welcome !== 0,
       channels, roles, members, emojis, stickers, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
@@ -1032,6 +1038,11 @@ function start(opts = {}) {
       run('UPDATE servers SET afk_channel_id=? WHERE id=?', afk?.id || null, sid);
     }
     if (b.afk_timeout !== undefined) run('UPDATE servers SET afk_timeout=? WHERE id=?', [60, 300, 900, 1800, 3600].includes(Number(b.afk_timeout)) ? Number(b.afk_timeout) : 300, sid);
+    if (b.system_channel_id !== undefined) {
+      const sc = b.system_channel_id ? one(`SELECT id FROM channels WHERE id=? AND server_id=? AND type='text'`, String(b.system_channel_id), sid) : null;
+      run('UPDATE servers SET system_channel_id=? WHERE id=?', sc?.id || null, sid);
+    }
+    if (b.welcome !== undefined) run('UPDATE servers SET welcome=? WHERE id=?', b.welcome ? 1 : 0, sid);
     refreshServer(sid);
     res.json({ ok: true });
   }));
@@ -1079,7 +1090,9 @@ function start(opts = {}) {
     refreshServer(sid);
   }
   function systemMessage(sid, text) {
-    const ch = one(`SELECT * FROM channels WHERE server_id=? AND type='text' AND private=0 ORDER BY position LIMIT 1`, sid);
+    const s = one('SELECT system_channel_id FROM servers WHERE id=?', sid);
+    const ch = (s?.system_channel_id && one(`SELECT * FROM channels WHERE id=? AND server_id=? AND type='text'`, s.system_channel_id, sid))
+      || one(`SELECT * FROM channels WHERE server_id=? AND type='text' AND private=0 ORDER BY position LIMIT 1`, sid);
     if (!ch) return;
     const r = run('INSERT INTO messages(channel_id,author_id,content,created,system) VALUES(?,?,?,?,1)', ch.id, null, text, now());
     emitToChannel(ch, 'message:new', msgById(Number(r.lastInsertRowid)));
@@ -1121,7 +1134,8 @@ function start(opts = {}) {
       run('UPDATE invites SET uses=uses+1 WHERE code=?', i.code);
       joinRooms(req.user.id, i.server_id);
       broadcastPresence(req.user.id);
-      systemMessage(i.server_id, `${req.user.display_name || req.user.username} joined the server. Say hi! 👋`);
+      if (one('SELECT welcome FROM servers WHERE id=?', i.server_id)?.welcome !== 0)
+        systemMessage(i.server_id, `${req.user.display_name || req.user.username} joined the server. Say hi! 👋`);
       refreshServer(i.server_id);
     }
     res.json(serverPayload(i.server_id, req.user.id));
@@ -1304,6 +1318,63 @@ function start(opts = {}) {
     res.json(rows.map(r => ({ id: r.id, action: r.action, actor: r.actor_id ? getUser(r.actor_id) : null,
       target_id: r.target_id, target_name: r.target_name, detail: r.detail, created: r.created })));
   }));
+
+  // ----- Scheduled events -----
+  function eventPayload(e, uidv) {
+    const count = one('SELECT COUNT(*) n FROM event_rsvps WHERE event_id=?', e.id).n;
+    const mine = uidv ? !!one('SELECT 1 FROM event_rsvps WHERE event_id=? AND user_id=?', e.id, uidv) : false;
+    return { id: e.id, server_id: e.server_id, channel_id: e.channel_id, name: e.name, description: e.description,
+      start: e.start, ends: e.ends, creator: getUser(e.creator_id), rsvp_count: count, going: mine, started: !!e.started };
+  }
+  app.get('/api/servers/:id/events', auth, wrap((req, res) => {
+    if (!isMember(req.params.id, req.user.id)) throw err(403, 'You are not in this server');
+    const rows = all('SELECT * FROM events WHERE server_id=? AND (ends > ? OR start > ?) ORDER BY start', req.params.id, now() - 3600e3, now() - 3600e3);
+    res.json(rows.map(e => eventPayload(e, req.user.id)));
+  }));
+  app.post('/api/servers/:id/events', auth, wrap((req, res) => {
+    const sid = req.params.id;
+    if (!has(sid, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'You can’t create events here');
+    const b = req.body || {};
+    const name = String(b.name || '').trim().slice(0, 100);
+    const start = Number(b.start) || 0;
+    if (!name) throw err(400, 'Give the event a name');
+    if (!start || start < now() - 60e3) throw err(400, 'Pick a start time in the future');
+    if (one('SELECT COUNT(*) n FROM events WHERE server_id=? AND start > ?', sid, now()).n >= 50) throw err(400, 'Too many upcoming events');
+    const chan = b.channel_id ? one(`SELECT id FROM channels WHERE id=? AND server_id=?`, String(b.channel_id), sid) : null;
+    const id = uid();
+    run('INSERT INTO events(id,server_id,channel_id,name,description,start,ends,creator_id,created) VALUES(?,?,?,?,?,?,?,?,?)',
+      id, sid, chan?.id || null, name, String(b.description || '').slice(0, 1000), start, Number(b.ends) || null, req.user.id, now());
+    audit(sid, req.user.id, 'event_create', { targetName: name });
+    io.to('s:' + sid).emit('events:refresh', { server_id: sid });
+    res.json(eventPayload(one('SELECT * FROM events WHERE id=?', id), req.user.id));
+  }));
+  app.delete('/api/events/:id', auth, wrap((req, res) => {
+    const e = one('SELECT * FROM events WHERE id=?', req.params.id);
+    if (!e) throw err(404, 'Event not found');
+    if (e.creator_id !== req.user.id && !has(e.server_id, req.user.id, P.MANAGE_CHANNELS)) throw err(403, 'You can’t remove this event');
+    run('DELETE FROM events WHERE id=?', e.id); run('DELETE FROM event_rsvps WHERE event_id=?', e.id);
+    io.to('s:' + e.server_id).emit('events:refresh', { server_id: e.server_id });
+    res.json({ ok: true });
+  }));
+  app.post('/api/events/:id/rsvp', auth, wrap((req, res) => {
+    const e = one('SELECT * FROM events WHERE id=?', req.params.id);
+    if (!e || !isMember(e.server_id, req.user.id)) throw err(404, 'Event not found');
+    if (one('SELECT 1 FROM event_rsvps WHERE event_id=? AND user_id=?', e.id, req.user.id)) run('DELETE FROM event_rsvps WHERE event_id=? AND user_id=?', e.id, req.user.id);
+    else run('INSERT OR IGNORE INTO event_rsvps(event_id,user_id,created) VALUES(?,?,?)', e.id, req.user.id, now());
+    io.to('s:' + e.server_id).emit('events:refresh', { server_id: e.server_id });
+    res.json(eventPayload(one('SELECT * FROM events WHERE id=?', e.id), req.user.id));
+  }));
+  // announce events as they start
+  setInterval(() => {
+    try {
+      all('SELECT * FROM events WHERE started=0 AND start<=? AND start>?', now(), now() - 3600e3).forEach(e => {
+        run('UPDATE events SET started=1 WHERE id=?', e.id);
+        systemMessage(e.server_id, `📅 **${e.name}** is starting now!`);
+        all('SELECT user_id FROM event_rsvps WHERE event_id=?', e.id).forEach(r => io.to('u:' + r.user_id).emit('event:start', { event: eventPayload(e, r.user_id) }));
+        io.to('s:' + e.server_id).emit('events:refresh', { server_id: e.server_id });
+      });
+    } catch {}
+  }, 30000);
 
   // ----- DMs -----
   // the 1-on-1 DM between two people, made if it doesn't exist yet

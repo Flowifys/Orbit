@@ -191,6 +191,8 @@ function connectSocket() {
     S.receipts[channel_id] = { user_id, last_read, at };
     if (S.view.channel === channel_id) renderReceipt(channel_id);
   });
+  socket.on('events:refresh', ({ server_id }) => { if (S._eventsRefresh && S._eventsRefresh.sid === server_id && $('.events-hub')) S._eventsRefresh.fn(); });
+  socket.on('event:start', ({ event }) => { if (!event) return; toast(`📅 ${event.name} is starting now!`); try { playNotif({ type: 'mention', serverId: event.server_id }); } catch {} });
   socket.on('voicepass', ({ channel_id, server_id, name, expires, by }) => {
     S.voicePasses = S.voicePasses || {};
     S.voicePasses[channel_id] = { expires, server_id, name };
@@ -433,6 +435,7 @@ function serverRailMenu(e, sid) {
     can(PERM.CREATE_INVITE, sid) && [`Invite People ${I.invite}`, () => inviteModal(sid)],
     (can(PERM.MANAGE_SERVER, sid) || can(PERM.MANAGE_ROLES, sid) || can(PERM.KICK, sid) || can(PERM.BAN, sid)) && [`Server Settings ${I.gear}`, () => openServerSettings(sid)],
     can(PERM.MANAGE_CHANNELS, sid) && [`Create Channel ${I.plus}`, () => { selectServer(sid); createChannelModal('text'); }],
+    ['Events 📅', () => eventsModal(sid)],
     ['Edit Server Profile', () => nickModal(sid)],
     unread && [`Mark As Read ${I.check}`, () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
     [isMuted(sid) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sid, sd.name)],
@@ -459,6 +462,7 @@ function serverMenu(anchor) {
     (can(PERM.MANAGE_SERVER) || can(PERM.MANAGE_ROLES) || can(PERM.KICK) || can(PERM.BAN)) && [`Server Settings ${I.gear}`, () => openServerSettings(sd.id)],
     can(PERM.MANAGE_CHANNELS) && [`Create Channel ${I.plus}`, () => createChannelModal('text')],
     can(PERM.MANAGE_CHANNELS) && [`Create Category ${I.plus}`, () => createCategoryModal(sd.id)],
+    ['Events 📅', () => eventsModal(sd.id)],
     ['Edit Server Profile', () => nickModal(sd.id)],
     ['Mark all as read', () => sd.channels.forEach(c => S.unread[c.id] && markRead(c.id, true))],
     [isMuted(sd.id) ? 'Unmute Server' : 'Mute Server', () => toggleMuteId(sd.id, sd.name)],

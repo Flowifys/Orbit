@@ -1140,3 +1140,63 @@ document.addEventListener('click', (e) => {
   e.preventDefault(); e.stopPropagation();
   showInvite(code);
 }, true);
+
+/* ================= SCHEDULED EVENTS ================= */
+async function eventsModal(sid) {
+  const sd = S.serverData[sid]; if (!sd) return;
+  const canManage = can(PERM.MANAGE_CHANNELS, sid);
+  const { el } = modal(`<button class="x icon-btn" data-close>${I.x}</button>
+    <div class="mh" style="text-align:left"><h2>📅 Events</h2><p>What's coming up in ${esc(sd.name)}.</p></div>
+    <div class="events-hub"><div class="ev-list"><div class="loader">Loading…</div></div>
+    ${canManage ? '<button class="btn primary ev-new" style="margin-top:14px;width:100%">Create event</button>' : ''}</div>`, null, 'wide');
+  async function refresh() {
+    let list = [];
+    try { list = await api('GET', `/api/servers/${sid}/events`); } catch (e) { const l = $('.ev-list', el); if (l) l.textContent = e.message; return; }
+    const box = $('.ev-list', el); if (!box) return;
+    const nowT = Date.now();
+    box.innerHTML = list.length ? list.map(ev => {
+      const when = new Date(ev.start);
+      const live = ev.started || (ev.start <= nowT && (!ev.ends || ev.ends > nowT));
+      const chan = ev.channel_id ? (sd.channels.find(c => c.id === ev.channel_id)) : null;
+      return `<div class="ev-card" data-ev="${ev.id}">
+        <div class="ev-date ${live ? 'live' : ''}"><span class="mo">${esc(when.toLocaleString([], { month: 'short' }))}</span><span class="dy">${when.getDate()}</span></div>
+        <div class="ev-body"><b>${esc(ev.name)}${live ? ' <span class="ev-live">LIVE</span>' : ''}</b>
+          <small>${live ? 'Happening now' : esc(when.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }))} · ${ev.rsvp_count} interested${chan ? ` · ${chan.type === 'voice' ? '🔊' : '#'}${esc(chan.name)}` : ''}</small>
+          ${ev.description ? `<p>${esc(ev.description)}</p>` : ''}</div>
+        <div class="ev-actions"><button class="btn ${ev.going ? 'primary' : 'secondary'} sm" data-rsvp>${ev.going ? '✓ Going' : 'Interested'}</button>
+          ${(ev.creator?.id === S.me.id || canManage) ? `<button class="icon-btn sm" data-del title="Delete event">${I.x}</button>` : ''}</div>
+      </div>`;
+    }).join('') : '<p style="color:var(--muted);text-align:center;padding:34px">No upcoming events yet.</p>';
+    $$('.ev-card', el).forEach(c => {
+      const id = c.dataset.ev;
+      c.querySelector('[data-rsvp]').onclick = async () => { try { await api('POST', `/api/events/${id}/rsvp`); refresh(); } catch (e) { toast(e.message, true); } };
+      c.querySelector('[data-del]')?.addEventListener('click', async () => { await api('DELETE', `/api/events/${id}`).catch(e => toast(e.message, true)); refresh(); });
+    });
+  }
+  $('.ev-new', el)?.addEventListener('click', () => createEventModal(sid, refresh));
+  S._eventsRefresh = { sid, fn: refresh };
+  refresh();
+}
+function createEventModal(sid, onDone) {
+  const sd = S.serverData[sid];
+  const d = new Date(Date.now() + 3600e3); d.setSeconds(0, 0);
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  modal(`<button class="x icon-btn" data-close>${I.x}</button><div class="mh" style="text-align:left"><h2>Create event</h2></div>
+    <div class="mb"><div class="field"><label>Event name</label><input class="input" name="name" maxlength="100" placeholder="Game Night"></div>
+    <div class="field"><label>Starts</label><input class="input" type="datetime-local" name="start" value="${local}"></div>
+    <div class="field"><label>Channel (optional)</label><select class="input" name="channel"><option value="">None</option>${sd.channels.filter(c => c.type === 'voice' || c.type === 'text').map(c => `<option value="${c.id}">${c.type === 'voice' ? '🔊' : '#'} ${esc(c.name)}</option>`).join('')}</select></div>
+    <div class="field"><label>Description</label><textarea class="input" name="desc" maxlength="1000" rows="3" placeholder="What's happening?"></textarea></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Create event</button></div>`, (m, close) => {
+    let busy = false;
+    const go = async () => {
+      if (busy) return;
+      const name = $('[name=name]', m).value.trim(); if (!name) return toast('Name your event', true);
+      const start = new Date($('[name=start]', m).value).getTime();
+      if (!start || start < Date.now()) return toast('Pick a time in the future', true);
+      busy = true; const btn = $('[data-ok]', m); btn.disabled = true;
+      try { await api('POST', `/api/servers/${sid}/events`, { name, start, description: $('[name=desc]', m).value, channel_id: $('[name=channel]', m).value || null }); close(); onDone?.(); }
+      catch (e) { busy = false; btn.disabled = false; toast(e.message, true); }
+    };
+    $('[data-ok]', m).onclick = go;
+  });
+}

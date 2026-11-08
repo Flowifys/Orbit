@@ -379,7 +379,7 @@ function openServerSettings(sid, first) {
 }
 function srvOverview(body, sid) {
   const sd = S.serverData[sid];
-  const orig = { name: sd.name, description: sd.description || '', afk_channel_id: sd.afk_channel_id || '', afk_timeout: sd.afk_timeout || 300 }; const d = { ...orig }; const files = {};
+  const orig = { name: sd.name, description: sd.description || '', afk_channel_id: sd.afk_channel_id || '', afk_timeout: sd.afk_timeout || 300, system_channel_id: sd.system_channel_id || '', welcome: sd.welcome !== false }; const d = { ...orig }; const files = {};
   const dirty = () => { if (JSON.stringify(d) !== JSON.stringify(orig) || Object.keys(files).length) saveBar(body, save, () => srvOverview(body, sid)); else $('.save-bar', body)?.remove(); };
   const save = async () => {
     for (const k of ['icon', 'banner']) {
@@ -404,8 +404,12 @@ function srvOverview(body, sid) {
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <select class="input" name="afk_channel_id" style="max-width:240px"><option value="">No AFK channel</option>${sd.channels.filter(c => c.type === 'voice').map(c => `<option value="${c.id}" ${d.afk_channel_id === c.id ? 'selected' : ''}>🔊 ${esc(c.name)}</option>`).join('')}</select>
       <select class="input" name="afk_timeout" style="max-width:160px">${[[60, '1 minute'], [300, '5 minutes'], [900, '15 minutes'], [1800, '30 minutes'], [3600, '1 hour']].map(([v, l]) => `<option value="${v}" ${d.afk_timeout === v ? 'selected' : ''}>${l}</option>`).join('')}</select>
-    </div>`;
-  $$('input[name], textarea[name]', body).forEach(i => i.oninput = () => { d[i.name] = i.value; dirty(); });
+    </div>
+    <h3>System messages</h3>
+    <label class="row-toggle"><span class="rt">Welcome new members<small>Post a “joined the server” message when someone new arrives.</small></span><span class="toggle"><input type="checkbox" name="welcome" ${d.welcome ? 'checked' : ''}><span></span></span></label>
+    <div class="field"><label>System messages channel</label><select class="input" name="system_channel_id" style="max-width:240px"><option value="">First available channel</option>${sd.channels.filter(c => c.type === 'text').map(c => `<option value="${c.id}" ${d.system_channel_id === c.id ? 'selected' : ''}># ${esc(c.name)}</option>`).join('')}</select></div>`;
+  $$('input[name]:not([type=checkbox]), textarea[name]', body).forEach(i => i.oninput = () => { d[i.name] = i.value; dirty(); });
+  $('[name=welcome]', body)?.addEventListener('change', (e) => { d.welcome = e.target.checked; dirty(); });
   $$('select[name]', body).forEach(s => s.onchange = () => { d[s.name] = s.name === 'afk_timeout' ? Number(s.value) : s.value; dirty(); });
   const refresh = () => { const ic = $('[data-ic]', body), fi = $('[data-f=icon]', body); ic.innerHTML = iconUrl() ? `<img src="${esc(iconUrl())}">` : 'Upload<br>Icon'; ic.appendChild(fi); $('[data-bprev]', body).style.backgroundImage = bannerUrl() ? `url('${bannerUrl()}')` : 'none'; };
   $$('[data-f]', body).forEach(i => i.onchange = () => { if (i.files[0]) { files[i.dataset.f] = i.files[0]; refresh(); dirty(); } });

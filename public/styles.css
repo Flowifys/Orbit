@@ -1919,3 +1919,19 @@ body.pad .chat>.composer .typing{bottom:4px}
 }
 
 .ch .ch-tag{font-size:11px;opacity:.75;margin-left:3px;flex:none}
+
+/* scheduled events */
+.events-hub{display:flex;flex-direction:column}
+.ev-list{display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow-y:auto}
+.ev-card{display:flex;gap:14px;align-items:flex-start;background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:14px}
+.ev-date{flex:none;width:54px;height:60px;border-radius:10px;background:var(--bg-3);border:1px solid var(--line-2);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+.ev-date.live{background:var(--accent-soft);border-color:var(--accent)}
+.ev-date .mo{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.ev-date .dy{font-size:24px;font-weight:800;color:var(--text)}
+.ev-body{flex:1;min-width:0}
+.ev-body b{font-size:15px;display:flex;align-items:center;gap:8px}
+.ev-body small{display:block;color:var(--muted);font-size:13px;margin-top:3px}
+.ev-body p{font-size:14px;color:var(--text-2);margin-top:7px;white-space:pre-wrap;word-break:break-word}
+.ev-live{font-size:10px;font-weight:700;color:#06120a;background:var(--green,#3fd77f);padding:1px 7px;border-radius:999px}
+.ev-actions{flex:none;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.ev-actions .icon-btn.sm{width:28px;height:28px}
