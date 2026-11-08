@@ -1,7 +1,8 @@
-# Builds the Windows app (Orbit.exe) on GitHub and attaches it to a release, so
-# https://YOUR-ORBIT/download/windows always has a file to hand out.
+# Builds the desktop apps on GitHub and attaches them to a release, so
+# /download/windows (Orbit.exe) and /download/linux (Orbit.AppImage) always
+# have a file to hand out.
 # Runs when the desktop app's code changes on main, or by hand from the Actions tab.
-name: Build Windows app
+name: Build desktop apps
 on:
   push:
     branches: [main]
@@ -26,5 +27,23 @@ jobs:
         run: |
           VER=$(node -p "require('./package.json').version")
           TAG="v$VER"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Orbit $VER" --notes "Orbit for Windows. Download Orbit.exe and run it — no install needed." --latest
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Orbit $VER" --notes "Orbit desktop app." --latest || true
           gh release upload "$TAG" dist/Orbit.exe --clobber
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx electron-builder --linux --publish never
+      - name: Attach Linux builds to the release
+        shell: bash
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          TAG="v$VER"
+          # The release is created by whichever job gets there first.
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Orbit $VER" --notes "Orbit desktop app." --latest || true
+          gh release upload "$TAG" dist/Orbit.AppImage dist/Orbit.deb --clobber

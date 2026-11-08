@@ -2130,6 +2130,11 @@ function start(opts = {}) {
   const WIN_URL = process.env.WINDOWS_DOWNLOAD_URL || opts.windowsDownloadUrl || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.exe';
   app.get(['/download', '/get', '/install'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'download.html')); });
   app.get('/download/windows', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, WIN_URL); });
+  // Linux app (AppImage runs on any distro; .deb for Debian/Ubuntu) — built by .github/workflows/desktop.yml
+  const LINUX_URL = process.env.LINUX_DOWNLOAD_URL || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.AppImage';
+  const DEB_URL = process.env.DEB_DOWNLOAD_URL || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.deb';
+  app.get('/download/linux', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, LINUX_URL); });
+  app.get('/download/linux-deb', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, DEB_URL); });
   // Meta Quest app (built by .github/workflows/quest.yml) + the link that lets it open Orbit without a browser bar
   const QUEST_URL = process.env.QUEST_DOWNLOAD_URL || 'https://github.com/Flowifys/Orbit/releases/download/quest/Orbit-Quest.apk';
   app.get('/download/quest', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, QUEST_URL); });
