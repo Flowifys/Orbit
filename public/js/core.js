@@ -266,7 +266,8 @@ function badgesOf(u) {
 // the row of badges next to the username on profile cards
 function badgeRowHtml(u) { const b = badgesOf(u); return b.length ? `<span class="badges" role="list" aria-label="Badges">${b.map(x => `<span class="bdg bdg-${x.id}" role="listitem" aria-label="${esc(x.label)}" data-tip="${esc(x.label)}" title="${esc(x.label)}">${badgeIcon(x.id)}</span>`).join('')}</span>` : ''; }
 // tiny icon next to a name in chat / member lists
-function badgeHtml(u) { const b = badgesOf(u)[0]; return b ? `<span class="bdg-mini" role="img" aria-label="${esc(b.label)}" title="${esc(b.label)}">${badgeIcon(b.id)}</span>` : ''; }
+// badges live only in the profile's badge row; next to names (messages, member lists) that spot is kept for server tags
+function badgeHtml(u) { return ''; }
 function groupAvatar(g, cls = '') {
   if (g.icon) return `<div class="av ${cls}" style="background:var(--bg-3)"><span class="crop"><img src="${esc(g.icon)}" alt=""></span></div>`;
   const ms = (g.members || []).filter(m => m.id !== S.me.id).slice(0, 2);

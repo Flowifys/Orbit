@@ -1086,3 +1086,55 @@ document.addEventListener('error', (e) => {
   t.classList.remove('has-art'); img.remove();
   t.textContent = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
 }, true);
+
+/* ---------- invite cards: an Orbit invite link in a message turns into a server card with a Join button ---------- */
+const ORBIT_HOSTS = () => [location.host, 'orbital.sbs', 'www.orbital.sbs', 'orbit-5l9u.onrender.com'].map(h => h.toLowerCase());
+function inviteCodesIn(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/https?:\/\/([a-z0-9.-]+(?::\d+)?)\/invite\/([\w-]{2,32})/gi)) {
+    if (ORBIT_HOSTS().includes(m[1].toLowerCase()) && !out.includes(m[2])) out.push(m[2]);
+  }
+  return out.slice(0, 3);
+}
+const InviteCache = new Map();   // code -> { at, inv } (inv null = invalid)
+function inviteEmbedsHtml(text) {
+  const codes = inviteCodesIn(text); if (!codes.length) return '';
+  return `<div class="inv-embeds">${codes.map(c => `<div class="inv-card" data-inv="${esc(c)}">${inviteCardInner(c)}</div>`).join('')}</div>`;
+}
+function inviteCardInner(code) {
+  const hit = InviteCache.get(code);
+  if (!hit) { loadInvite(code); return `<div class="inv-banner"></div><div class="inv-body"><span class="inv-icon sk"></span><div class="inv-skel"><i></i><i></i></div></div>`; }
+  if (!hit.inv) return `<div class="inv-body inv-bad"><span class="inv-icon">${I.x}</span><div><b>Invite invalid</b><small>This invite may have expired, or the server was deleted.</small></div></div>`;
+  const s = hit.inv.server, member = !!S.serverData[s.id];
+  const ini = s.name.split(/\s+/).filter(Boolean).map(w => w[0]).join('').slice(0, 3).toUpperCase();
+  const since = s.created ? new Date(s.created).toLocaleDateString([], { month: 'short', year: 'numeric' }) : '';
+  return `<div class="inv-banner" ${s.banner ? `style="background-image:url('${esc(s.banner)}')"` : ''}></div>
+    <div class="inv-body"><span class="inv-icon">${s.icon ? `<img src="${esc(s.icon)}" alt="">` : esc(ini)}</span>
+      <b class="inv-name">${esc(s.name)}</b>
+      <div class="inv-stats"><span><i class="dot on"></i>${s.online} Online</span><span><i class="dot"></i>${s.members} Member${s.members === 1 ? '' : 's'}</span></div>
+      ${since ? `<div class="inv-since">Est. ${esc(since)}</div>` : ''}
+      <button class="btn inv-go ${member ? 'joined' : ''}" data-inv-go="${esc(code)}">${member ? 'Go to Server' : 'Join Server'}</button></div>`;
+}
+const InvitePending = new Set();
+async function loadInvite(code) {
+  if (InvitePending.has(code)) return; InvitePending.add(code);
+  let inv = null; try { inv = await api('GET', '/api/invites/' + encodeURIComponent(code)); } catch {}
+  InvitePending.delete(code); InviteCache.set(code, { at: Date.now(), inv });
+  $$(`.inv-card[data-inv="${CSS.escape(code)}"]`).forEach(c => (c.innerHTML = inviteCardInner(code)));
+}
+async function useInvite(code) {
+  const hit = InviteCache.get(code); const sid = hit?.inv?.server?.id;
+  if (sid && S.serverData[sid]) return selectServer(sid);
+  try { const sd = await api('POST', '/api/invites/' + encodeURIComponent(code)); await fetchServer(sd.id); selectServer(sd.id); toast(`Joined ${sd.name}`); }
+  catch (e) { toast(e.message, true); }
+  $$(`.inv-card[data-inv="${CSS.escape(code)}"]`).forEach(c => (c.innerHTML = inviteCardInner(code)));
+}
+// clicking the card's button, or the invite link itself, joins right here — never opens a browser tab
+document.addEventListener('click', (e) => {
+  const go = e.target.closest('[data-inv-go]');
+  if (go) { e.preventDefault(); e.stopPropagation(); return useInvite(go.dataset.invGo); }
+  const a = e.target.closest('a[href]'); if (!a || !S.me) return;
+  const code = inviteCodesIn(a.href)[0]; if (!code) return;
+  e.preventDefault(); e.stopPropagation();
+  showInvite(code);
+}, true);

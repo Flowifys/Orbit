@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.23.0';
+const VERSION = '1.24.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -893,7 +893,7 @@ function start(opts = {}) {
     if (!i) throw err(404, 'This invite is invalid or has expired');
     const s = one('SELECT * FROM servers WHERE id=?', i.server_id);
     const count = one('SELECT COUNT(*) c FROM members WHERE server_id=?', s.id).c;
-    res.json({ code: i.code, server: { ...serverSummary(s), banner: s.banner, description: s.description, members: count, online: [...online.keys()].filter(u => isMember(s.id, u)).length } });
+    res.json({ code: i.code, server: { ...serverSummary(s), banner: s.banner, description: s.description, created: s.created, members: count, online: [...online.keys()].filter(u => isMember(s.id, u)).length } });
   }));
   app.post('/api/invites/:code', auth, wrap((req, res) => {
     const i = one('SELECT * FROM invites WHERE code=?', parseCode(req.params.code));

@@ -831,7 +831,7 @@ function messageHtml(m, sid, prev, isParent) {
   return `<div class="msg ${grouped ? '' : 'head'} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
     <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
-      ${body}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
+      ${body}${inviteEmbedsHtml(m.content)}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
     </div>${tools}</div>`;
 }
 function findMsg(id) {
