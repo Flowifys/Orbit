@@ -622,10 +622,14 @@ const Overlay = {
 if (Overlay.ok) setInterval(() => Overlay.sync(), 1000);
 // Settings → Voice & Video → In-game overlay (desktop app only)
 window.addEventListener('load', () => {
-  if (!Overlay.ok || typeof userVoice !== 'function') return;
+  if (typeof userVoice !== 'function') return;
   const _uv = userVoice;
   userVoice = async function (body) {
     await _uv(body);
+    if (!Overlay.ok) {   // website, or a Windows app from before the overlay existed
+      body.insertAdjacentHTML('beforeend', `<h3>In-game overlay</h3><p class="hint">${window.orbitDesktop ? 'Your Orbit app is out of date. Download the newest version from the download page to get the overlay.' : 'The overlay is part of the Orbit app for Windows. It shows who’s in your call on top of your games.'}</p><a class="btn secondary sm" href="/download" target="_blank" rel="noopener" style="display:inline-flex;margin-top:8px">${I.download} Get the Windows app</a>`);
+      return;
+    }
     const P = S.prefs, pick = (k, opts, cur) => `<div class="chip-select">${opts.map(([v, l]) => `<button data-ov-${k}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
     body.insertAdjacentHTML('beforeend', `<h3>In-game overlay</h3>
       <label class="row-toggle"><span class="rt">Show the overlay in calls<small>A small list of who’s in your call floats over your games, and lights up green when someone talks. Works with games in windowed or borderless mode. Press <b>Shift + \`</b> to hide or show it.</small></span><span class="toggle"><input type="checkbox" data-ov-on ${P.overlay !== false ? 'checked' : ''}><span></span></span></label>
