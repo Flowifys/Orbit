@@ -1944,3 +1944,15 @@ body.pad .chat>.composer .typing{bottom:4px}
 .sb-item .nm{font-size:12px;color:var(--text-2);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sb-item [data-del]{position:absolute;top:3px;right:3px;width:22px;height:22px;opacity:.6}
 .sb-item:hover [data-del]{opacity:1}
+
+/* Bot accounts */
+.bot-tag{display:inline-block;vertical-align:middle;margin-left:5px;padding:0 5px;height:15px;line-height:15px;border-radius:4px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;letter-spacing:.3px;text-transform:uppercase;position:relative;top:-1px}
+.bot-list{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.bot-card{display:flex;align-items:center;gap:12px;background:var(--bg-2);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+.bot-card .bc-main{flex:1;min-width:0}
+.bot-card .bc-main b{display:flex;align-items:center;gap:6px}
+.bot-card .bc-id{color:var(--dim);font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:2px;word-break:break-all}
+.bot-card .bc-sub{color:var(--dim);font-size:12px;margin-top:2px}
+.token-box{display:flex;gap:8px;align-items:center;margin-top:8px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
+.token-box code{flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all;color:var(--text)}
+.token-warn{color:var(--yellow,#d4a72c);font-size:12px;margin-top:6px}

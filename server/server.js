@@ -31,7 +31,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.37.0';
+const VERSION = '1.38.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -153,7 +153,8 @@ function start(opts = {}) {
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
    ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"], ['card_public', 'INTEGER DEFAULT 0'],
    ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"],
-   ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"], ['live_games', "TEXT DEFAULT '{}'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"], ['live_games', "TEXT DEFAULT '{}'"],
+   ['bot', 'INTEGER DEFAULT 0'], ['owner_id', 'TEXT'], ['bot_secret', 'TEXT']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -222,7 +223,7 @@ function start(opts = {}) {
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
     theme_primary: u.theme_primary || null, theme_accent: u.theme_accent || null, name_color: u.name_color || null, name_color2: u.name_color2 || null,
     avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []).filter(c => !c.hidden).map(({ hidden, show_activity, ...c }) => c),
-    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u) });
+    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u), bot: !!u.bot });
   function badgeList(u) {
     const raw = pj(u.badges, []);
     const set = new Set(raw.filter(b => GRANTABLE_BADGES.includes(b)));
@@ -442,14 +443,40 @@ function start(opts = {}) {
     if (!p.sid && u.tokens_after) { const issued = (p.iat || 0) > 1e12 ? p.iat : (p.iat || 0) * 1000; if (issued < u.tokens_after) throw 0; }   // old-style login revoked
     return { u, sid: p.sid || null };
   }
+  // ----- bot tokens -----
+  // A bot token looks like  <botId>.<rawSecret>  (shown once at creation). We store only sha256(rawSecret).
+  const sha256 = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
+  function newBotToken(botId) {
+    const raw = crypto.randomBytes(24).toString('base64url');
+    run('UPDATE users SET bot_secret=? WHERE id=?', sha256(raw), botId);
+    return botId + '.' + raw;
+  }
+  function checkBotToken(t) {
+    const dot = String(t).indexOf('.');
+    if (dot < 1) throw 0;
+    const id = t.slice(0, dot), raw = t.slice(dot + 1);
+    const u = one('SELECT * FROM users WHERE id=? AND bot=1', id);
+    if (!u || !u.bot_secret || sha256(raw) !== u.bot_secret) throw 0;
+    return u;
+  }
+  // Accepts a human session token (JWT) or a bot token; returns { u, sid, bot }.
+  function checkAnyToken(raw, scheme) {
+    if (scheme === 'Bot') { const u = checkBotToken(raw); return { u, sid: null, bot: true }; }
+    try { const r = checkToken(raw); return { u: r.u, sid: r.sid, bot: false }; }
+    catch (e) { if (scheme !== 'Bearer') { const u = checkBotToken(raw); return { u, sid: null, bot: true }; } throw e; }
+  }
   const seenAt = new Map();
   function auth(req, res, next) {
-    const t = (req.headers.authorization || '').replace(/^Bearer /, '');
-    let r; try { r = checkToken(t); } catch { return res.status(401).json({ error: 'Not logged in' }); }
-    req.user = r.u; req.sid = r.sid;
+    const hdr = req.headers.authorization || '';
+    const m = hdr.match(/^(Bot|Bearer) (.+)$/);
+    const scheme = m ? m[1] : null, raw = m ? m[2] : hdr;
+    let r; try { r = checkAnyToken(raw, scheme); } catch { return res.status(401).json({ error: 'Not logged in' }); }
+    req.user = r.u; req.sid = r.sid; req.bot = r.bot;
     if (r.sid && (seenAt.get(r.sid) || 0) < now() - 60e3) { seenAt.set(r.sid, now()); run('UPDATE sessions SET last_seen=?, ip=? WHERE id=?', now(), clientIp(req), r.sid); }
     next();
   }
+  // Endpoints a bot must never call (account/security/billing-style actions) are gated with this.
+  function humanOnly(req) { if (req.bot) throw err(403, 'Bots can’t perform this action'); }
   const token = (u, req) => jwt.sign({ id: u.id, sid: newSession(u.id, req) }, SECRET, { expiresIn: '60d' });
   const fileUrl = (f) => '/uploads/' + f.filename;
 
@@ -1143,6 +1170,104 @@ function start(opts = {}) {
       refreshServer(i.server_id);
     }
     res.json(serverPayload(i.server_id, req.user.id));
+  }));
+
+  // ----- bots (developer integrations) -----
+  const MAX_BOTS = 10;
+  const botOwned = (id, ownerId) => one('SELECT * FROM users WHERE id=? AND bot=1 AND owner_id=?', id, ownerId);
+  function botSummary(u) {
+    return { ...publicUser(u), owner_id: u.owner_id,
+      servers: all('SELECT server_id FROM members WHERE user_id=?', u.id).map(r => r.server_id).length };
+  }
+  function uniqueBotUsername(name) {
+    let base = String(name).toLowerCase().replace(/[^a-z0-9_.]/g, '').slice(0, 24) || 'bot';
+    if (base.length < 2) base = 'bot' + base;
+    let u = base, n = 0;
+    while (one('SELECT 1 FROM users WHERE username=? COLLATE NOCASE', u)) { n++; u = (base.slice(0, 27) + n); }
+    return u;
+  }
+  // Create a bot (returns the token ONCE — it is never retrievable again)
+  app.post('/api/bots', auth, wrap((req, res) => {
+    humanOnly(req);
+    if (hit('botcreate:' + req.user.id, 10, 60 * 60e3)) throw err(429, 'You’re creating bots too fast. Try again later.');
+    const owned = one('SELECT COUNT(*) c FROM users WHERE bot=1 AND owner_id=?', req.user.id).c;
+    if (owned >= MAX_BOTS) throw err(400, `You can have at most ${MAX_BOTS} bots.`);
+    const name = String(req.body?.name || '').trim().slice(0, 32);
+    if (name.length < 2) throw err(400, 'Give your bot a name (2–32 characters).');
+    const id = uid(), username = uniqueBotUsername(name);
+    run('INSERT INTO users(id,username,display_name,bot,owner_id,accent,bio,created) VALUES(?,?,?,1,?,?,?,?)',
+      id, username, name, req.user.id, '#7c5cff', '', now());
+    const tok = newBotToken(id);
+    const u = one('SELECT * FROM users WHERE id=?', id);
+    res.json({ bot: botSummary(u), token: tok });
+  }));
+  // List my bots
+  app.get('/api/bots', auth, wrap((req, res) => {
+    humanOnly(req);
+    res.json(all('SELECT * FROM users WHERE bot=1 AND owner_id=? ORDER BY created', req.user.id).map(botSummary));
+  }));
+  // One of my bots, with the servers it’s in
+  app.get('/api/bots/:id', auth, wrap((req, res) => {
+    const b = botOwned(req.params.id, req.user.id); if (!b) throw err(404, 'Bot not found');
+    const servers = all('SELECT s.id, s.name, s.icon FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=?', b.id);
+    res.json({ ...botSummary(b), server_list: servers });
+  }));
+  // Rename / rebrand a bot
+  app.patch('/api/bots/:id', auth, wrap((req, res) => {
+    const b = botOwned(req.params.id, req.user.id); if (!b) throw err(404, 'Bot not found');
+    const b2 = req.body || {};
+    const name = b2.display_name !== undefined ? String(b2.display_name).trim().slice(0, 32) : b.display_name;
+    if (name.length < 2) throw err(400, 'Name must be at least 2 characters.');
+    const bio = b2.bio !== undefined ? String(b2.bio).slice(0, 190) : b.bio;
+    const accent = /^#[0-9a-fA-F]{6}$/.test(b2.accent || '') ? b2.accent : b.accent;
+    run('UPDATE users SET display_name=?, bio=?, accent=? WHERE id=?', name, bio, accent, b.id);
+    all('SELECT server_id FROM members WHERE user_id=?', b.id).forEach(r => refreshServer(r.server_id));
+    res.json(botSummary(one('SELECT * FROM users WHERE id=?', b.id)));
+  }));
+  // Regenerate a bot’s token (invalidates the old one)
+  app.post('/api/bots/:id/regenerate', auth, wrap((req, res) => {
+    const b = botOwned(req.params.id, req.user.id); if (!b) throw err(404, 'Bot not found');
+    res.json({ token: newBotToken(b.id) });
+  }));
+  // Delete a bot entirely (removes it from every server)
+  app.delete('/api/bots/:id', auth, wrap((req, res) => {
+    const b = botOwned(req.params.id, req.user.id); if (!b) throw err(404, 'Bot not found');
+    const servers = all('SELECT server_id FROM members WHERE user_id=?', b.id).map(r => r.server_id);
+    run('DELETE FROM users WHERE id=?', b.id);   // members rows cascade via FK
+    servers.forEach(refreshServer);
+    res.json({ ok: true });
+  }));
+  // Add a bot to a server (needs Manage Server)
+  app.post('/api/servers/:id/bots', auth, wrap((req, res) => {
+    humanOnly(req);
+    const sid = req.params.id;
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) throw err(403, 'You need Manage Server to add a bot.');
+    const bot = one('SELECT * FROM users WHERE id=? AND bot=1', String(req.body?.bot_id || '').trim());
+    if (!bot) throw err(404, 'No bot with that ID. Copy the Bot ID from the developer portal.');
+    if (isMember(sid, bot.id)) throw err(400, 'That bot is already in this server.');
+    if (one('SELECT COUNT(*) c FROM members WHERE server_id=? AND user_id IN (SELECT id FROM users WHERE bot=1)', sid).c >= 20)
+      throw err(400, 'This server already has the maximum number of bots (20).');
+    run('INSERT INTO members(server_id,user_id,nick,joined) VALUES(?,?,?,?)', sid, bot.id, null, now());
+    joinRooms(bot.id, sid);
+    if (one('SELECT welcome FROM servers WHERE id=?', sid)?.welcome !== 0)
+      systemMessage(sid, `${bot.display_name || bot.username} was added to the server. 🤖`);
+    audit(sid, req.user.id, 'bot_add', { targetId: bot.id, targetName: bot.display_name || bot.username });
+    refreshServer(sid);
+    res.json({ ok: true, bot: publicUser(bot) });
+  }));
+  // Remove a bot from a server (needs Manage Server)
+  app.delete('/api/servers/:id/bots/:bot_id', auth, wrap((req, res) => {
+    humanOnly(req);
+    const sid = req.params.id;
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) throw err(403, 'You need Manage Server to remove a bot.');
+    const bot = one('SELECT * FROM users WHERE id=? AND bot=1', req.params.bot_id);
+    if (!bot || !isMember(sid, bot.id)) throw err(404, 'That bot isn’t in this server.');
+    run('DELETE FROM members WHERE server_id=? AND user_id=?', sid, bot.id);
+    run('DELETE FROM member_roles WHERE server_id=? AND user_id=?', sid, bot.id);
+    io.in('u:' + bot.id).socketsLeave('s:' + sid);
+    audit(sid, req.user.id, 'bot_remove', { targetId: bot.id, targetName: bot.display_name || bot.username });
+    refreshServer(sid);
+    res.json({ ok: true });
   }));
 
   // ----- channels -----
@@ -2464,7 +2589,11 @@ function start(opts = {}) {
   }
 
   io.use((socket, next) => {
-    try { const r = checkToken(socket.handshake.auth?.token || ''); socket.uid = r.u.id; socket.sid = r.sid; next(); }
+    try {
+      const a = socket.handshake.auth || {};
+      const r = checkAnyToken(a.token || '', a.bot ? 'Bot' : null);
+      socket.uid = r.u.id; socket.sid = r.sid; socket.bot = r.bot; next();
+    }
     catch { next(new Error('unauthorized')); }
   });
   io.on('connection', (socket) => {

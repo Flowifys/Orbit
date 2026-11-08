@@ -27,10 +27,10 @@ const ACCENTS = ['#7c5cff', '#5b8def', '#2bb5a8', '#2fbf71', '#d4a72c', '#f0883e
 /* ================= USER SETTINGS ================= */
 function openUserSettings(first = 'account') {
   settingsShell(`<h6>User settings</h6><button data-tab="account">My Account</button><button data-tab="profile">Profile</button><button data-tab="privacy">Privacy &amp; Safety</button><button data-tab="devices">Devices</button><hr>
-    <button data-tab="connections">Connections</button><hr><h6>App settings</h6><button data-tab="appearance">Appearance</button><button data-tab="voice">Voice &amp; Video</button><button data-tab="notifications">Notifications</button><button data-tab="about">About</button><hr>
+    <button data-tab="connections">Connections</button><button data-tab="developer">Developer</button><hr><h6>App settings</h6><button data-tab="appearance">Appearance</button><button data-tab="voice">Voice &amp; Video</button><button data-tab="notifications">Notifications</button><button data-tab="about">About</button><hr>
     <button class="danger" data-action="logout">Log out</button><p style="color:var(--dim);font-size:12px;padding:12px 10px">Orbit ${esc(S.info.version || '')}</p>`, (tab, body, close) => {
     if (tab === '@logout') return confirmModal('Log Out', 'Are you sure you want to log out?', 'Log Out', async () => logout());
-    ({ account: userAccount, profile: userProfile, privacy: userPrivacy, connections: userConnections, appearance: userAppearance, devices: userDevices, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
+    ({ account: userAccount, profile: userProfile, privacy: userPrivacy, connections: userConnections, developer: userDeveloper, appearance: userAppearance, devices: userDevices, voice: userVoice, notifications: userNotify, about: userAbout })[tab](body, close);
   }, first);
 }
 function userAccount(body) {
@@ -196,6 +196,71 @@ function userConnections(body) {
     if (e.target.closest('[data-unspot]')) { await api('DELETE', '/api/connections/spotify').catch(x => toast(x.message, true)); S.me.connections = (S.me.connections || []).filter(c => c.type !== 'spotify'); S.me.spotify_conn = null; userConnections(body); }
     if (e.target.closest('[data-nadd]')) { const name = $('[data-nname]', body).value.trim(); if (!name) return; manual.push({ type: $('[data-ntype]', body).value, name }); $('[data-nname]', body).value = ''; draw(); saveManual(); }
     const rm = e.target.closest('[data-rmc]'); if (rm) { manual.splice(Number(rm.dataset.rmc), 1); draw(); saveManual(); }
+  };
+}
+
+// Show a freshly-minted bot token once, with copy + warning (it can't be retrieved later)
+function showBotToken(token, title = 'Your bot token') {
+  modal(`<div class="mh" style="text-align:left"><h2>${esc(title)}</h2><p>Copy this now — for security, you won’t be able to see it again. If you lose it, regenerate it.</p></div>
+    <div class="mb"><div class="token-box"><code>${esc(token)}</code><button class="btn ghost sm" data-copy>Copy</button></div>
+    <p class="token-warn">⚠️ Treat this like a password. Anyone with it can control your bot.</p>
+    <p style="color:var(--muted);font-size:13px;margin-top:10px">Use it with <code>Authorization: Bot &lt;token&gt;</code> or in the gateway handshake. See the Developer page for a ready-made example bot.</p></div>
+    <div class="mf"><button class="btn primary" data-close>Done</button></div>`, (m) => {
+    $('[data-copy]', m).onclick = () => { navigator.clipboard?.writeText(token).then(() => toast('Token copied')); };
+  });
+}
+async function userDeveloper(body) {
+  body.innerHTML = `<h2>Developer — Bots</h2>
+    <p style="color:var(--muted);margin:-12px 0 6px;font-size:14px">Build bots for Orbit: create a bot account, get a token, and connect it to the gateway or REST API. Add your bot to any server you manage.</p>
+    <div style="margin:14px 0"><button class="btn primary" data-newbot>＋ New Bot</button></div>
+    <div class="bot-list"><div class="loader">Loading…</div></div>
+    <details style="margin-top:22px"><summary style="cursor:pointer;color:var(--muted)">How do I run a bot?</summary>
+      <ol style="color:var(--text-2);font-size:14px;line-height:1.7;margin-top:10px">
+        <li>Create a bot above and copy its <b>token</b>.</li>
+        <li>Add it to a server: <b>Server Settings → Bots</b>, paste the <b>Bot ID</b>.</li>
+        <li>Run the example bot:<div class="token-box" style="margin-top:6px"><code>ORBIT_TOKEN="&lt;token&gt;" node bot/orbit-bot.js</code></div></li>
+        <li>Try <code>!ping</code>, <code>!roll 20</code>, or <code>!help</code> in a channel it can see.</li>
+      </ol></details>`;
+  const list = $('.bot-list', body);
+  const load = async () => {
+    let bots; try { bots = await api('GET', '/api/bots'); } catch (e) { list.innerHTML = `<p>${esc(e.message)}</p>`; return; }
+    if (!bots.length) { list.innerHTML = `<p style="color:var(--muted)">You haven’t made any bots yet. Create one to get started.</p>`; return; }
+    list.innerHTML = bots.map(b => `<div class="bot-card" data-bot="${b.id}">${avatar(b, 's32')}
+      <div class="bc-main"><b>${esc(b.display_name)}<span class="bot-tag">BOT</span></b>
+        <div class="bc-id">ID: ${esc(b.id)}</div>
+        <div class="bc-sub">@${esc(b.username)} · in ${b.servers} server${b.servers === 1 ? '' : 's'}</div></div>
+      <div class="bc-actions">
+        <button class="btn ghost sm" data-copyid title="Copy Bot ID">Copy ID</button>
+        <button class="btn ghost sm" data-regen title="Generate a new token">Regenerate</button>
+        <button class="btn ghost sm" data-rename>Rename</button>
+        <button class="btn ghost sm danger" data-del>Delete</button>
+      </div></div>`).join('');
+  };
+  await load();
+  list.onclick = async (e) => {
+    const card = e.target.closest('[data-bot]'); if (!card) return;
+    const id = card.dataset.bot;
+    if (e.target.closest('[data-copyid]')) { navigator.clipboard?.writeText(id).then(() => toast('Bot ID copied')); }
+    if (e.target.closest('[data-regen]')) {
+      confirmModal('Regenerate token', 'This invalidates the current token immediately. Any running bot using it will stop working until you update it. Continue?', 'Regenerate', async () => {
+        const r = await api('POST', `/api/bots/${id}/regenerate`); showBotToken(r.token, 'New bot token');
+      });
+    }
+    if (e.target.closest('[data-rename]')) {
+      const name = await promptModal('Rename bot', 'Bot name', card.querySelector('b').childNodes[0].textContent, 'Save');
+      if (name) { await api('PATCH', `/api/bots/${id}`, { display_name: name }).catch(x => toast(x.message, true)); load(); }
+    }
+    if (e.target.closest('[data-del]')) {
+      confirmModal('Delete bot', 'This permanently deletes the bot and removes it from every server. This cannot be undone.', 'Delete', async () => {
+        await api('DELETE', `/api/bots/${id}`); load();
+      });
+    }
+  };
+  $('[data-newbot]', body).onclick = async () => {
+    const name = await promptModal('Create a bot', 'Bot name', '', 'Create');
+    if (!name) return;
+    try { const r = await api('POST', '/api/bots', { name }); showBotToken(r.token, 'Bot created 🤖'); load(); }
+    catch (e) { toast(e.message, true); }
   };
 }
 
@@ -382,11 +447,12 @@ function openServerSettings(sid, first) {
   const owner = sd.owner_id === S.me.id;
   const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], can(PERM.MANAGE_SERVER, sid) && ['stickers', 'Stickers'], can(PERM.MANAGE_SERVER, sid) && ['soundboard', 'Soundboard'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
     can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans'],
+    can(PERM.MANAGE_SERVER, sid) && ['bots', 'Bots'],
     can(PERM.MANAGE_SERVER, sid) && ['automod', 'AutoMod'], can(PERM.MANAGE_SERVER, sid) && ['audit', 'Audit Log']].filter(Boolean);
   const ui = settingsShell(`<h6>${esc(sd.name)}</h6>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}${owner ? '<hr><button class="danger" data-action="delete">Delete Server</button>' : ''}`, (tab, body, close) => {
     const cur = S.serverData[sid]; if (!cur) return close();
     if (tab === '@delete') return confirmModal(`Delete ‘${cur.name}’`, `Are you sure you want to delete <b>${esc(cur.name)}</b>? This action cannot be undone.`, 'Delete Server', async () => { await api('DELETE', '/api/servers/' + sid); close(); });
-    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, soundboard: srvSoundboard, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans, automod: srvAutomod, audit: srvAudit })[tab](body, sid, close);
+    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, soundboard: srvSoundboard, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans, bots: srvBots, automod: srvAutomod, audit: srvAudit })[tab](body, sid, close);
   }, first || tabs[0]?.[0]);
   return ui;
 }
@@ -518,6 +584,34 @@ async function srvBans(body, sid) {
   } catch (e) { $('.bl', body).textContent = e.message; }
 }
 
+function srvBots(body, sid) {
+  const draw = () => {
+    const sd = S.serverData[sid];
+    const bots = (sd.members || []).filter(m => m.bot);
+    body.innerHTML = `<h2>Bots</h2>
+      <p style="color:var(--muted);margin:-12px 0 16px;font-size:14px">Add bots to automate and extend your server. Create your own in <b>User Settings → Developer</b>, then paste its Bot ID here.</p>
+      <div class="field" style="max-width:520px"><label>Add a bot</label>
+        <div style="display:flex;gap:8px"><input class="input" data-botid placeholder="Paste a Bot ID (e.g. g6-VWkrFK-rc)" style="flex:1"><button class="btn primary" data-add>Add</button></div></div>
+      <h3 style="margin-top:22px">In this server (${bots.length})</h3>
+      ${bots.length ? `<div class="bot-list">${bots.map(b => `<div class="bot-card" data-bot="${b.id}">${avatar(S.users[b.id] || b, 's32')}
+        <div class="bc-main"><b>${esc(nameIn(sid, b.id))}<span class="bot-tag">BOT</span></b><div class="bc-sub">@${esc(b.username)}</div></div>
+        <button class="btn danger sm" data-remove="${b.id}">Remove</button></div>`).join('')}</div>`
+        : `<p style="color:var(--muted)">No bots in this server yet.</p>`}`;
+    $('[data-add]', body).onclick = async () => {
+      const bid = $('[data-botid]', body).value.trim(); if (!bid) return;
+      $('[data-add]', body).disabled = true;
+      try { await api('POST', `/api/servers/${sid}/bots`, { bot_id: bid }); await fetchServer(sid); toast('Bot added'); srvBots(body, sid); }
+      catch (e) { toast(e.message, true); $('[data-add]', body).disabled = false; }
+    };
+    $$('[data-remove]', body).forEach(btn => btn.onclick = () => {
+      const bid = btn.dataset.remove;
+      confirmModal('Remove bot', 'Remove this bot from the server? You can add it back anytime with its Bot ID.', 'Remove', async () => {
+        await api('DELETE', `/api/servers/${sid}/bots/${bid}`); await fetchServer(sid); srvBots(body, sid);
+      });
+    });
+  };
+  draw();
+}
 async function srvAutomod(body, sid) {
   body.innerHTML = `<h2>AutoMod</h2><div class="loader">Loading…</div>`;
   let cfg;
