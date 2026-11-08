@@ -104,7 +104,7 @@ function userProfile(body) {
       <div class="two-colors"><label>Start<input type="color" data-k="name_color" value="${esc(d.name_color || '#ffffff')}"></label><label>End<input type="color" data-k="name_color2" value="${esc(d.name_color2 || d.name_color || '#ffffff')}"></label><button class="btn ghost sm" data-solid>Use one color</button></div></div>
     <div class="pe-group"><h3>Avatar color</h3><p class="hint">Shown behind your initials when you have no avatar.</p>
       <div class="swatches">${ACCENTS.map(c => `<button class="swatch ${c === d.accent ? 'sel' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-k="accent" value="${esc(d.accent)}"></label></div></div>
-    <div class="pe-group"><h3>Profile effect</h3><div class="chip-select">${[['', 'None'], ['glow', 'Glow'], ['stars', 'Starfield'], ['aurora', 'Aurora']].map(([k, l]) => `<button data-effect="${k}" class="${d.effect === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
+    <div class="pe-group"><h3>Profile effect</h3><div class="chip-select">${FX.map(([k, l]) => `<button data-effect="${k}" class="${d.effect === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
     <div class="field"><label>Custom status</label><input class="input" name="status_text" maxlength="80" value="${esc(d.status_text)}" placeholder="What are you up to?"></div>
     <div class="field"><label>About me</label><textarea class="input" name="bio" maxlength="400" rows="4" placeholder="Markdown and links work here.">${esc(d.bio)}</textarea></div>
     <div class="pe-group"><h3>Links</h3><p class="hint">Up to 6 links on your profile.</p><div class="links-ed"></div><button class="btn secondary sm" data-addlink>${I.plus} Add link</button></div>

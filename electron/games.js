@@ -76,24 +76,26 @@ function listProcesses() {
   });
 }
 
-async function detectGame() {
-  const names = await listProcesses();
-  for (const n of names) {
-    const key = n.toLowerCase().replace(/\.exe$/, '');
-    if (GAMES[key]) return GAMES[key];
-  }
-  return null;
+// every known game running right now (several at once is fine)
+async function detectGames() {
+  const found = new Set();
+  for (const n of await listProcesses()) { const g = GAMES[n.toLowerCase().replace(/\.exe$/, '')]; if (g) found.add(g); }
+  return [...found];
 }
 
-// calls onChange(gameName | null) whenever what you're playing changes
+// calls onChange([game names]) whenever the set of running games changes; games you started first stay first
 function watchGames(onChange, everyMs = 15000) {
-  let current = null, busy = false;
+  let current = [], busy = false;
   const tick = async () => {
     if (busy) return; busy = true;
-    try { const g = await detectGame(); if (g !== current) { current = g; onChange(g); } } catch {} finally { busy = false; }
+    try {
+      const now = await detectGames();
+      const next = [...current.filter(g => now.includes(g)), ...now.filter(g => !current.includes(g))];
+      if (next.join('|') !== current.join('|')) { current = next; onChange(next.length ? next : null); }
+    } catch {} finally { busy = false; }
   };
   tick(); const t = setInterval(tick, everyMs);
-  return { stop: () => clearInterval(t), current: () => current };
+  return { stop: () => clearInterval(t), current: () => (current.length ? current : null) };
 }
 
 module.exports = { watchGames, GAMES };

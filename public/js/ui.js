@@ -1288,6 +1288,14 @@ function friendActionRow(uid) {
   if (st === 'blocked_by') return '';
   return `<div class="actions"><button class="btn primary" data-addfriend="${uid}">${I.invite} Add friend</button></div>`;
 }
+// the thought bubble next to the avatar: your custom status (yours is clickable to change it)
+function statusBubbleHtml(u, mine) {
+  if (u.status_text) return mine ? `<button class="status-bubble" data-cstatus title="Change status">${esc(u.status_text)}</button>` : `<div class="status-bubble">${esc(u.status_text)}</div>`;
+  return mine ? `<button class="status-bubble empty" data-cstatus><span class="sb-ph">${I.plus.replace('width="20" height="20"', 'width="13" height="13"')} What’s on your mind?</span></button>` : '';
+}
+// profile effects: one overlay layer drawn over the whole card (see "profile effects" in styles.css)
+const FX = [['', 'None'], ['glow', 'Glow'], ['stars', 'Starfield'], ['aurora', 'Aurora'], ['embers', 'Embers'], ['snow', 'Snowfall'], ['sakura', 'Petals'], ['prism', 'Prism']];
+function fxLayerHtml(effect) { return effect && FX.some(([k]) => k === effect) ? `<div class="fx-layer fx-l-${effect}" aria-hidden="true"><i></i><i></i><i></i></div>` : ''; }
 function profileCardHtml(u, opts = {}) {
   const { sid, mem, roles = [], self, preview } = opts;
   const themed = !!u.theme_primary;
@@ -1295,12 +1303,11 @@ function profileCardHtml(u, opts = {}) {
   return `<div class="profile-card ${themed ? 'themed' : ''} fx-${esc(u.effect || 'none')}" data-card="${esc(u.id)}" style="${themeStyle(u)}">
     ${bannerHtml(u)}
     ${preview ? '' : `<button class="pc-full" data-fullp title="View full profile">${I.expand}<span>Full profile</span></button>`}
-    <div class="avwrap">${avatar(u, 's80', true)}</div>
-    ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
+    <div class="avwrap">${avatar(u, 's80', true)}${statusBubbleHtml(u, self && !preview)}</div>
+    ${fxLayerHtml(u.effect)}
     <div class="inner">
       <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}</div>
       <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
-      ${u.status_text ? `<div class="stt">${esc(u.status_text)}</div>` : ''}
       <div class="activity-slot">${activityHtml(u.id)}</div>
       ${u.bio ? `<section><h5>About me</h5><div class="bio">${formatText(u.bio)}</div></section>` : ''}
       ${(u.links || []).length ? `<section><h5>Links</h5><div class="links">${u.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link.replace('width="20" height="20"', 'width="14" height="14"')}<span>${esc(l.label || new URL(l.url).hostname)}</span></a>`).join('')}</div></section>` : ''}
@@ -1331,6 +1338,7 @@ async function profilePopout(uidv, anchor, side) {
   else place(el, innerWidth / 2 - el.offsetWidth / 2, innerHeight / 2 - el.offsetHeight / 2);
   el.onclick = async (e) => {
     if (e.target.closest('[data-editp]')) { L.close(); openUserSettings('profile'); }
+    if (e.target.closest('[data-cstatus]')) { L.close(); return customStatusModal(); }
     if (e.target.closest('[data-call]')) { L.close(); const d = await openDM(uidv); if (d) Voice.join(d.id); }
     if (e.target.closest('[data-roles]')) { L.close(); memberRolesModal(sid, uidv); }
     const ur = e.target.closest('[data-unrole]'); if (ur) { await api('PUT', `/api/servers/${sid}/members/${uidv}`, { roles: mem.roles.filter(r => r !== ur.dataset.unrole) }).catch(x => toast(x.message, true)); L.close(); }

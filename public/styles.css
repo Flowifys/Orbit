@@ -435,14 +435,6 @@ select.input{appearance:auto}
 .profile-card:not(.themed) .msgbox{background:var(--input)}
 .profile-card .actions .icon-btn{background:rgba(160,150,230,.12)}
 /* profile effects */
-.fx-glow{box-shadow:0 0 0 1px color-mix(in oklab,var(--card-a,var(--accent)) 70%,white),0 0 40px -6px var(--card-a,var(--accent))}
-.fx-glow:not(.themed){box-shadow:0 0 0 1px var(--accent),0 0 40px -8px var(--accent)}
-.fx-layer{position:absolute;inset:0;z-index:1;pointer-events:none;
-  background-image:radial-gradient(1.4px 1.4px at 10% 30%,#fff,transparent),radial-gradient(1px 1px at 30% 70%,#fffc,transparent),radial-gradient(1.6px 1.6px at 70% 20%,#fff,transparent),radial-gradient(1px 1px at 85% 55%,#fffa,transparent),radial-gradient(1.2px 1.2px at 50% 90%,#fffc,transparent),radial-gradient(1px 1px at 20% 50%,#fff8,transparent),radial-gradient(1.3px 1.3px at 60% 45%,#fffb,transparent);
-  animation:twinkle 3.5s ease-in-out infinite alternate}
-@keyframes twinkle{from{opacity:.35}to{opacity:1}}
-.fx-aurora::before{content:"";position:absolute;inset:-40%;z-index:0;pointer-events:none;background:conic-gradient(from 0deg,transparent,rgba(94,224,214,.25),transparent 30%,rgba(139,109,255,.3),transparent 60%,rgba(255,92,122,.18),transparent);animation:spin 14s linear infinite}
-.fx-aurora>*{position:relative;z-index:1}
 @keyframes spin{to{transform:rotate(1turn)}}
 
 /* modals */
@@ -1712,3 +1704,83 @@ body.has-titlebar .settings,body.has-titlebar .modal-wrap,body.has-titlebar .lig
 }
 .game-tile.has-art{background:var(--bg-3);overflow:hidden;padding:0}
 .game-tile.has-art img{width:100%;height:100%;object-fit:cover;display:block;border-radius:inherit}
+
+/* ===== 1.22: profile effects (drawn over the whole card, never blocking clicks) ===== */
+@property --fxa{syntax:'<angle>';inherits:false;initial-value:0deg}
+.profile-card{isolation:isolate;container-type:inline-size}
+.fx-layer{position:absolute;inset:0;z-index:4;pointer-events:none;overflow:hidden;border-radius:inherit}
+.fx-layer i{position:absolute;inset:0;display:block}
+
+/* Glow: a slowly turning neon ring around the card, plus a soft halo */
+.fx-glow{box-shadow:0 0 28px -4px color-mix(in srgb,var(--card-a,var(--accent)) 70%,var(--accent)),0 0 70px -20px var(--accent)}
+.fx-l-glow i:first-child{padding:2.5px;border-radius:inherit;background:conic-gradient(from var(--fxa),var(--accent),#ff7ad9,#7af0ff,var(--accent));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:fxSpinA 5s linear infinite}
+.fx-l-glow i:nth-child(2){background:radial-gradient(120% 60% at 50% 0%,color-mix(in srgb,var(--accent) 22%,transparent),transparent 60%);animation:fxPulse 3.2s ease-in-out infinite alternate}
+@keyframes fxSpinA{to{--fxa:360deg}}
+@keyframes fxPulse{from{opacity:.35}to{opacity:1}}
+
+/* Starfield: two layers of twinkling stars + a shooting star now and then */
+.fx-l-stars i:first-child,.fx-l-stars i:nth-child(2){background-repeat:repeat;mix-blend-mode:screen;filter:drop-shadow(0 0 3px rgba(255,255,255,.9))}
+.fx-l-stars i:first-child{background-image:radial-gradient(2.7px 2.7px at 12px 18px,#fff,transparent 70%),radial-gradient(2.0px 2.0px at 64px 70px,#fff,transparent 70%),radial-gradient(3.4px 3.4px at 110px 34px,#e8e0ff,transparent 70%),radial-gradient(2.2px 2.2px at 150px 120px,#fff,transparent 70%),radial-gradient(3.1px 3.1px at 40px 140px,#cfe9ff,transparent 70%);background-size:120px 120px;animation:fxTwinkle 2.6s ease-in-out infinite alternate}
+.fx-l-stars i:nth-child(2){background-image:radial-gradient(2.4px 2.4px at 30px 40px,#fff,transparent 70%),radial-gradient(3.7px 3.7px at 96px 110px,#fff,transparent 70%),radial-gradient(2.0px 2.0px at 140px 60px,#ffe8f6,transparent 70%),radial-gradient(2.7px 2.7px at 75px 15px,#fff,transparent 70%);background-size:140px 140px;animation:fxTwinkle 3.4s ease-in-out -1.7s infinite alternate,fxDrift 60s linear infinite}
+.fx-l-stars i:nth-child(3){inset:auto;top:12%;left:-30%;width:120px;height:2px;border-radius:2px;background:linear-gradient(90deg,transparent,#fff);transform:rotate(18deg);opacity:0;animation:fxShoot 7s ease-in 2s infinite}
+.fx-stars{background-image:radial-gradient(140% 70% at 50% 0%,rgba(40,30,110,.35),transparent 70%)}
+@keyframes fxTwinkle{from{opacity:.25}to{opacity:1}}
+@keyframes fxDrift{to{background-position:0 190px}}
+@keyframes fxShoot{0%{opacity:0;transform:translate(0,0) rotate(18deg)}3%{opacity:1}12%{opacity:0;transform:translate(520px,170px) rotate(18deg)}100%{opacity:0;transform:translate(520px,170px) rotate(18deg)}}
+
+/* Aurora: wide soft bands of color drifting across the card */
+.fx-l-aurora i{inset:-30%;filter:blur(28px);mix-blend-mode:screen;opacity:.75}
+.fx-l-aurora i:first-child{background:radial-gradient(40% 30% at 30% 20%,rgba(80,240,200,.55),transparent 70%),radial-gradient(35% 25% at 75% 35%,rgba(139,109,255,.6),transparent 70%);animation:fxAur1 11s ease-in-out infinite alternate}
+.fx-l-aurora i:nth-child(2){background:radial-gradient(45% 25% at 60% 15%,rgba(255,92,180,.4),transparent 70%),radial-gradient(30% 22% at 20% 55%,rgba(90,170,255,.45),transparent 70%);animation:fxAur2 14s ease-in-out infinite alternate}
+.fx-l-aurora i:nth-child(3){background:linear-gradient(180deg,transparent 60%,rgba(80,240,200,.12));filter:none;inset:0;opacity:1}
+@keyframes fxAur1{from{transform:translate(-8%,-4%) rotate(-6deg)}to{transform:translate(10%,8%) rotate(8deg)}}
+@keyframes fxAur2{from{transform:translate(8%,6%) rotate(5deg) scale(1.1)}to{transform:translate(-10%,-6%) rotate(-7deg) scale(.95)}}
+
+/* Embers: glowing sparks floating up from the bottom */
+.fx-l-embers i:first-child,.fx-l-embers i:nth-child(2){background-repeat:repeat;mix-blend-mode:screen;filter:drop-shadow(0 0 4px #ff8a3d) drop-shadow(0 0 8px rgba(255,120,40,.6))}
+.fx-l-embers i:first-child{background-image:radial-gradient(4.1px 4.1px at 20px 30px,#ffb35c,transparent 70%),radial-gradient(3.1px 3.1px at 90px 80px,#ff7a3d,transparent 70%),radial-gradient(4.8px 4.8px at 140px 20px,#ffd27a,transparent 70%),radial-gradient(2.7px 2.7px at 60px 150px,#ff9a4d,transparent 70%);background-size:170px 170px;animation:fxRise 7s linear infinite,fxFlicker 1.3s ease-in-out infinite alternate}
+.fx-l-embers i:nth-child(2){background-image:radial-gradient(3.4px 3.4px at 40px 60px,#ff8a4d,transparent 70%),radial-gradient(5.1px 5.1px at 120px 120px,#ffc46b,transparent 70%),radial-gradient(2.7px 2.7px at 160px 40px,#ff6a3d,transparent 70%);background-size:200px 200px;animation:fxRise2 11s linear infinite,fxFlicker 1.9s ease-in-out -.6s infinite alternate}
+.fx-l-embers i:nth-child(3){background:linear-gradient(0deg,rgba(255,110,50,.28),transparent 45%);animation:fxPulse 2.4s ease-in-out infinite alternate}
+@keyframes fxRise{to{background-position:20px -170px,-10px -170px,15px -170px,-20px -170px}}
+@keyframes fxRise2{to{background-position:-25px -200px,10px -200px,-15px -200px}}
+@keyframes fxFlicker{from{opacity:.55}to{opacity:1}}
+
+/* Snowfall: big and small flakes drifting down */
+.fx-l-snow i:first-child,.fx-l-snow i:nth-child(2){background-repeat:repeat;filter:drop-shadow(0 0 3px rgba(255,255,255,.8))}
+.fx-l-snow i:first-child{background-image:radial-gradient(5.1px 5.1px at 20px 30px,#fff,transparent 70%),radial-gradient(4.1px 4.1px at 100px 90px,#f2f6ff,transparent 70%),radial-gradient(5.8px 5.8px at 150px 10px,#fff,transparent 70%),radial-gradient(3.4px 3.4px at 60px 140px,#fff,transparent 70%);background-size:180px 180px;animation:fxSnow 9s linear infinite;opacity:.9}
+.fx-l-snow i:nth-child(2){background-image:radial-gradient(2.5px 2.5px at 30px 50px,#fff,transparent 70%),radial-gradient(3.1px 3.1px at 110px 20px,#fff,transparent 70%),radial-gradient(2.4px 2.4px at 70px 120px,#fff,transparent 70%);background-size:140px 140px;animation:fxSnow2 14s linear infinite;opacity:.7}
+.fx-l-snow i:nth-child(3){background:linear-gradient(180deg,rgba(200,225,255,.14),transparent 40%)}
+@keyframes fxSnow{to{background-position:40px 180px,10px 180px,-30px 180px,20px 180px}}
+@keyframes fxSnow2{to{background-position:-20px 140px,15px 140px,-10px 140px}}
+
+/* Petals: pink petals tumbling across */
+.fx-l-sakura i:first-child,.fx-l-sakura i:nth-child(2){background-repeat:repeat;filter:drop-shadow(0 0 3px rgba(255,140,190,.7))}
+.fx-l-sakura i:first-child{background-image:radial-gradient(13.6px 8.2px at 30px 40px,#ffb7d5,transparent 70%),radial-gradient(10.9px 7.0px at 120px 100px,#ff9cc6,transparent 70%),radial-gradient(12.2px 8.2px at 80px 160px,#ffc7de,transparent 70%);background-size:190px 190px;animation:fxPetal 10s linear infinite;opacity:.9}
+.fx-l-sakura i:nth-child(2){background-image:radial-gradient(6.0px 4.1px at 50px 20px,#ffd3e6,transparent 70%),radial-gradient(6.8px 4.4px at 150px 130px,#ff9cc6,transparent 70%);background-size:220px 220px;animation:fxPetal2 15s linear infinite;opacity:.75}
+.fx-l-sakura i:nth-child(3){background:radial-gradient(90% 50% at 100% 0%,rgba(255,150,200,.18),transparent 70%)}
+@keyframes fxPetal{to{background-position:-190px 190px,-160px 190px,-210px 190px}}
+@keyframes fxPetal2{to{background-position:-220px 220px,-250px 220px}}
+
+/* Prism: a rainbow sheen sweeping over the card */
+.fx-l-prism i:first-child{background:linear-gradient(115deg,transparent 30%,rgba(255,120,200,.22) 42%,rgba(255,240,140,.22) 48%,rgba(120,255,220,.22) 54%,rgba(130,150,255,.22) 60%,transparent 72%);background-size:300% 100%;mix-blend-mode:screen;animation:fxSweep 4.5s ease-in-out infinite}
+.fx-l-prism i:nth-child(2){padding:1.5px;border-radius:inherit;background:linear-gradient(var(--fxa),#ff7ad9,#ffe27a,#7af0c8,#8f9bff,#ff7ad9);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;animation:fxSpinA 6s linear infinite;opacity:.8}
+@keyframes fxSweep{0%{background-position:100% 0}60%,100%{background-position:-50% 0}}
+
+@media (prefers-reduced-motion:reduce){.fx-layer i{animation:none!important}}
+
+/* ===== 1.22: status thought bubble next to the avatar ===== */
+.profile-card .avwrap .status-bubble{position:absolute;left:calc(100% + 4px);bottom:52px;top:auto;right:auto;width:max-content;max-width:min(210px,calc(100cqw - 124px));
+  z-index:5;text-align:left;background:color-mix(in srgb,var(--bg-0) 88%,transparent);backdrop-filter:blur(8px);border:1px solid var(--line-2);border-radius:16px;
+  padding:8px 12px;font-size:13px;line-height:1.35;color:var(--text);box-shadow:0 6px 18px rgba(0,0,0,.35);white-space:normal;overflow:visible;
+  display:block;word-break:break-word}
+.profile-card .avwrap .status-bubble::before,.profile-card .avwrap .status-bubble::after{content:"";position:absolute;border-radius:50%;background:inherit;border:1px solid var(--line-2);backdrop-filter:none}
+.profile-card .avwrap .status-bubble::before{left:-4px;bottom:-9px;top:auto;width:12px;height:12px}
+.profile-card .avwrap .status-bubble::after{left:-13px;bottom:-17px;width:7px;height:7px}
+button.status-bubble{cursor:pointer}
+button.status-bubble:hover{border-color:var(--accent)}
+.status-bubble.empty .sb-ph{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-style:italic}
+.status-bubble.empty .sb-ph svg{flex:none}
+.act-game .act-row.act-also{margin-top:10px;padding-top:10px;border-top:1px solid rgba(160,150,230,.14)}
+.act-game .act-row.act-also .game-tile{width:48px;height:48px;border-radius:12px;font-size:17px}
+.act-game .act-row.act-also .act-title{font-size:14px}

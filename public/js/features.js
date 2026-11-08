@@ -212,9 +212,8 @@ async function selfProfilePopout(anchor) {
   const L = layer();
   const el = h(`<div class="popout self-pop"><div class="profile-card ${u.theme_primary ? 'themed' : ''} fx-${esc(u.effect || 'none')}" style="${themeStyle(u)}">
       ${bannerHtml(u)}
-      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [^>]*><\/i>/, stDot(st))}</div>
-      <button class="status-bubble" data-cstatus>${u.status_text ? esc(u.status_text) : `<span class="sb-ph">${I.smile.replace('width="20" height="20"', 'width="14" height="14"')} What’s on your mind?</span>`}</button>
-      ${u.effect === 'stars' ? '<div class="fx-layer"></div>' : ''}
+      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [^>]*><\/i>/, stDot(st))}${statusBubbleHtml(u, true)}</div>
+      ${fxLayerHtml(u.effect)}
       <div class="inner self-inner">
         <div class="dn" style="${nameStyle(u)}">${esc(u.display_name)}</div>
         <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
@@ -993,8 +992,11 @@ const GameArt = {
 const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
 function gameActivityHtml(a) {
   const head = a.type === 'playing' ? (a.source === 'detected' ? 'Playing on PC' : 'Playing') : (ACT_HEAD[a.type] || 'Activity');
+  const timer = (g) => g.start ? `<span class="act-elapsed">${(I[ACT_ICON[g.type]] || I.gamepad).replace('width="20" height="20"', 'width="15" height="15"')}<span class="act-since" data-since="${g.start}">${clock(Date.now() - g.start)}</span></span>` : '';
+  // more than one game open at once: the rest are listed underneath, smaller
+  const also = (a.also || []).map(g => `<div class="act-row act-also">${gameTile(g.name)}<div class="act-meta"><b class="act-title">${esc(g.name)}</b>${timer(g)}</div></div>`).join('');
   return `<div class="activity act-game"><h5>${head}</h5><div class="act-row">${a.type === 'playing' ? gameTile(a.name) : `<span class="art-ph">${I[ACT_ICON[a.type]] || I.gamepad}</span>`}
-    <div class="act-meta"><b class="act-title">${esc(a.name)}</b>${a.details ? `<span>${esc(a.details)}</span>` : ''}${a.start ? `<span class="act-elapsed">${(I[ACT_ICON[a.type]] || I.gamepad).replace('width="20" height="20"', 'width="15" height="15"')}<span class="act-since" data-since="${a.start}">${clock(Date.now() - a.start)}</span></span>` : ''}</div></div></div>`;
+    <div class="act-meta"><b class="act-title">${esc(a.name)}</b>${a.details ? `<span>${esc(a.details)}</span>` : ''}${timer(a)}</div></div>${also}</div>`;
 }
 // one ticker keeps every open profile live: game timers and Spotify progress move every second
 setInterval(() => {
@@ -1010,7 +1012,8 @@ const Act = {
   detected: null, sent: undefined,
   desktop: !!window.orbitDesktop?.onGame,
   wanted() {
-    if (this.desktop && S.prefs.detectGames !== false && this.detected) return { type: 'playing', name: this.detected, auto: true };
+    const det = Array.isArray(this.detected) ? this.detected : this.detected ? [this.detected] : [];   // older app versions send one name
+    if (this.desktop && S.prefs.detectGames !== false && det.length) return { games: det, auto: true };
     const c = S.prefs.customActivity;
     if (c && (!c.until || c.until > Date.now())) return { type: c.type, name: c.name, details: c.details || '' };
     return null;
@@ -1040,7 +1043,7 @@ function activityModal() {
       <div class="field"><label>Name</label><input class="input" name="n" maxlength="64" placeholder="e.g. Fortnite, a movie, a tournament" value="${esc(c.name)}"></div>
       <div class="field"><label>Details <small style="color:var(--muted)">optional</small></label><input class="input" name="d" maxlength="100" placeholder="e.g. Ranked with friends" value="${esc(c.details || '')}"></div>
       <div class="field"><label>Clear after</label><div class="act-types">${ACT_CLEAR.map(([m, l], i) => `<button type="button" class="chip ${i === 0 ? 'on' : ''}" data-clr="${m}">${l}</button>`).join('')}</div></div>
-      ${Act.desktop ? `<label class="row-toggle" style="margin-top:14px"><span class="rt">Show the game I’m playing<small>The Orbit app spots popular games (Fortnite, Roblox, Minecraft, CS2, VALORANT and more) and shows them instead of this while you play.${Act.detected ? ` Playing now: <b>${esc(Act.detected)}</b>.` : ''}</small></span><span class="toggle"><input type="checkbox" data-detect ${S.prefs.detectGames !== false ? 'checked' : ''}><span></span></span></label>`
+      ${Act.desktop ? `<label class="row-toggle" style="margin-top:14px"><span class="rt">Show the game I’m playing<small>The Orbit app spots popular games (Fortnite, Roblox, Minecraft, CS2, VALORANT and more) and shows them instead of this while you play.${Act.detected ? ` Playing now: <b>${esc([].concat(Act.detected).join(', '))}</b>.` : ''}</small></span><span class="toggle"><input type="checkbox" data-detect ${S.prefs.detectGames !== false ? 'checked' : ''}><span></span></span></label>`
         : '<p class="hint" style="margin-top:12px">Get the Orbit app for Windows to show the game you’re playing automatically.</p>'}
     </div>
     <div class="mf">${S.prefs.customActivity ? '<button class="btn ghost danger" data-clear style="margin-right:auto">Clear activity</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (el, close) => {

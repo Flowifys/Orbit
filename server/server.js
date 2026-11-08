@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.21.1';
+const VERSION = '1.22.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -556,7 +556,7 @@ function start(opts = {}) {
       if (b[k] !== undefined) { const v = hex(b[k]); if (v !== undefined) run(`UPDATE users SET ${k}=? WHERE id=?`, v, u.id); }
     }
     if (b.pronouns !== undefined) run('UPDATE users SET pronouns=? WHERE id=?', String(b.pronouns).slice(0, 40), u.id);
-    if (b.effect !== undefined && ['', 'stars', 'aurora', 'glow'].includes(b.effect)) run('UPDATE users SET effect=? WHERE id=?', b.effect, u.id);
+    if (b.effect !== undefined && ['', 'stars', 'aurora', 'glow', 'embers', 'snow', 'sakura', 'prism'].includes(b.effect)) run('UPDATE users SET effect=? WHERE id=?', b.effect, u.id);
     const cleanCrop = (c) => c && typeof c === 'object' ? JSON.stringify({ z: Math.min(4, Math.max(1, Number(c.z) || 1)), x: Math.min(100, Math.max(0, Number(c.x) || 50)), y: Math.min(100, Math.max(0, Number(c.y) || 50)) }) : null;
     if (b.avatar_crop !== undefined) run('UPDATE users SET avatar_crop=? WHERE id=?', cleanCrop(b.avatar_crop), u.id);
     if (b.banner_crop !== undefined) run('UPDATE users SET banner_crop=? WHERE id=?', cleanCrop(b.banner_crop), u.id);
@@ -727,13 +727,18 @@ function start(opts = {}) {
     run('UPDATE users SET recent_games=? WHERE id=?', JSON.stringify(list.slice(0, 20)), uidv);
   }
   function setActivity(uidv, a, src = 'spotify') {
-    const before = actParts.get(uidv)?.game;
-    if ((src === 'game' || src === 'all') && before && (!a || src === 'all' || a.name !== before.name || a.type !== before.type)) logGame(uidv, before);
+    // every game that just stopped goes into Recently played (an activity can hold several games: primary + .also)
+    const gamesOf = (x) => (x ? [x, ...(x.also || [])] : []);
+    if (src === 'game' || src === 'all') {
+      const still = new Set(src === 'all' ? [] : gamesOf(a).map(g => g.type + '|' + g.name));
+      for (const g of gamesOf(actParts.get(uidv)?.game)) if (!still.has(g.type + '|' + g.name)) logGame(uidv, g);
+    }
     const parts = src === 'all' ? {} : { ...(actParts.get(uidv) || {}), [src]: a || null };
     if (parts.spotify || parts.game) actParts.set(uidv, parts); else actParts.delete(uidv);
     const eff = parts.game || parts.spotify || null;
     const prev = activities.get(uidv) || null;
-    const same = (!eff && !prev) || (eff && prev && eff.type === prev.type && eff.name === prev.name && eff.title === prev.title && eff.artist === prev.artist && Math.abs((eff.start || 0) - (prev.start || 0)) < 4000);
+    const alsoKey = (x) => (x?.also || []).map(g => g.name).join('|');
+    const same = (!eff && !prev) || (eff && prev && eff.type === prev.type && eff.name === prev.name && eff.title === prev.title && eff.artist === prev.artist && Math.abs((eff.start || 0) - (prev.start || 0)) < 4000 && alsoKey(eff) === alsoKey(prev));
     if (eff) activities.set(uidv, eff); else activities.delete(uidv);
     // people who'd see you as offline (appear-offline list, strict blocking) don't see what you're doing either
     if (!same) audienceOf(uidv).forEach(x => io.to('u:' + x).emit('activity', { user_id: uidv, activity: x === uidv || statusFor(uidv, x) !== 'offline' ? eff : null }));
@@ -743,6 +748,15 @@ function start(opts = {}) {
   app.put('/api/me/activity', auth, wrap((req, res) => {
     limit('act:' + req.user.id, 30, 60e3, 'Too many activity updates.');
     const b = req.body || {};
+    // the desktop app sends every game it sees running: the first is shown big, the rest underneath
+    if (Array.isArray(b.games)) {
+      const names = [...new Set(b.games.map(g => String(g || '').replace(/\s+/g, ' ').trim().slice(0, 64)).filter(Boolean))].slice(0, 5);
+      if (!names.length) { setActivity(req.user.id, null, 'game'); return res.json({ activity: activities.get(req.user.id) || null }); }
+      const prevG = actParts.get(req.user.id)?.game; const prevAll = prevG ? [prevG, ...(prevG.also || [])] : [];
+      const list = names.map(n => ({ type: 'playing', name: n, details: null, source: 'detected', start: prevAll.find(g => g.type === 'playing' && g.name === n)?.start || now() }));
+      setActivity(req.user.id, { ...list[0], also: list.slice(1) }, 'game');
+      return res.json({ activity: activities.get(req.user.id) || null });
+    }
     const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 64);
     if (!name || b.clear) { setActivity(req.user.id, null, 'game'); return res.json({ activity: activities.get(req.user.id) || null }); }
     if (!ACT_TYPES.includes(b.type)) throw err(400, 'Pick playing, watching, listening or competing');

@@ -84,6 +84,7 @@ async function fullProfile(uidv) {
     if (e.target.closest('[data-clearrg]')) { try { await api('DELETE', '/api/me/recent-games'); board.recent_games = []; draw(); } catch (x) { toast(x.message, true); } return; }
     // the profile card's own buttons
     if (e.target.closest('[data-editp]')) { L.close(); return openUserSettings('profile'); }
+    if (e.target.closest('[data-cstatus]')) { L.close(); return customStatusModal(); }
     if (e.target.closest('[data-call]')) { L.close(); const d = await openDM(uidv); if (d) Voice.join(d.id); return; }
     if (e.target.closest('[data-mod]')) { const r = e.target.closest('[data-mod]').getBoundingClientRect(); return profileMoreMenu({ clientX: r.left, clientY: r.bottom + 4 }, null, uidv); }
     const fa = async (sel, fn) => { if (!e.target.closest(sel)) return false; try { await fn(); } catch (x) { toast(x.message, true); } L.close(); return true; };
