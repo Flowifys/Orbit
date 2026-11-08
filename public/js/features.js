@@ -182,7 +182,12 @@ function renderGroupMembers(box, ch) {
   const row = (u) => `<button class="mem ${statusOf(u.id) === 'offline' ? 'offline' : ''}" data-uid="${u.id}">${memBanner(u)}${avatar(u, 's32', true)}<span class="who"><b style="${nameStyle(u)}">${esc(u.display_name)}${u.id === ch.owner ? `<span class="crown" title="Group owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(u)}</b>${activityLine(u.id) ? `<small class="act-line">${esc(activityLine(u.id))}</small>` : u.status_text ? `<small>${esc(u.status_text)}</small>` : ''}</span></button>`;
   const by = (a, b) => a.display_name.localeCompare(b.display_name);
   box.innerHTML = (online.length ? `<h4>Online — ${online.length}</h4>${online.sort(by).map(row).join('')}` : '') + (offline.length ? `<h4>Offline — ${offline.length}</h4>${offline.sort(by).map(row).join('')}` : '');
-  box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
+  if (ch.owner === S.me.id) $$('.mem[data-uid]', box).forEach(row => { if (row.dataset.uid !== S.me.id) row.insertAdjacentHTML('beforeend', `<span class="gm-kick" role="button" tabindex="0" data-kick="${row.dataset.uid}" title="Remove from group">${I.x.replace('width="20" height="20"', 'width="14" height="14"')}</span>`); });
+  box.onclick = (e) => {
+    const k = e.target.closest('[data-kick]');
+    if (k) { e.stopPropagation(); const it = groupOwnerItems(ch.id, k.dataset.kick).find(x => Array.isArray(x) && x[0] === 'Remove From Group'); return it && it[1](); }
+    const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left');
+  };
   box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (!b) return; e.preventDefault(); const id = b.dataset.uid;
     contextMenu(e, [['Profile', () => profilePopout(id, null)], id !== S.me.id && ['Message', () => openDM(id)], ['Copy username', () => copy(user(id).username)], ...groupOwnerItems(ch.id, id)]); };
 }
@@ -1028,3 +1033,18 @@ function activityModal() {
     setTimeout(() => $('[name=n]', el).focus(), 30);
   });
 }
+
+/* phones: press and hold a person in the member list (or a DM) for their menu — iOS never fires contextmenu */
+(function memberLongPress() {
+  let t = null, x = 0, y = 0, swallow = false;
+  document.addEventListener('touchstart', (e) => {
+    const row = e.target.closest('.members .mem[data-uid], .members [data-uid], .dm-item');
+    if (!row || e.touches.length > 1) return;
+    x = e.touches[0].clientX; y = e.touches[0].clientY; clearTimeout(t);
+    t = setTimeout(() => { t = null; swallow = true; navigator.vibrate?.(10); row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: x, clientY: y })); setTimeout(() => (swallow = false), 600); }, 450);
+  }, { passive: true });
+  const stop = (e) => { if (!t) return; if (e.type === 'touchmove' && Math.hypot(e.touches[0].clientX - x, e.touches[0].clientY - y) < 10) return; clearTimeout(t); t = null; };
+  ['touchmove', 'touchend', 'touchcancel'].forEach(ev => document.addEventListener(ev, stop, { passive: true }));
+  document.addEventListener('contextmenu', (e) => { if (e.isTrusted && t) { clearTimeout(t); t = null; } }, true);
+  document.addEventListener('click', (e) => { if (swallow && !e.target.closest('.menu, .modal-wrap, .layer')) { e.preventDefault(); e.stopPropagation(); swallow = false; } }, true);
+})();

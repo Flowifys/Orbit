@@ -462,6 +462,7 @@ function renderMain() {
   renderMembers();
   bindComposer($('.chat .composer', content), ch.id, null);
   bindMessageList($('.messages', content));
+  if (S.messages[ch.id]) refreshMessages(ch.id, true);   // a re-render must never leave the chat blank
   renderVoiceArea();
 }
 function renderTopbar() {
@@ -493,7 +494,7 @@ function renderTopbar() {
   bar.onclick = (e) => {
     if (e.target.closest('[data-back]')) return $('.app').classList.remove('show-main');
     if (e.target.closest('[data-inbox]')) return inboxPopout(e.target.closest('[data-inbox]'));
-    if (e.target.closest('[data-members]')) { S.membersOpen = !S.membersOpen; const m = $('.members'); if (window.innerWidth <= 1100) { if (m) m.classList.toggle('force'); else { S.membersOpen = true; renderMain(); setTimeout(() => $('.members')?.classList.add('force')); } } else renderMain(); return; }
+    if (e.target.closest('[data-members]')) { toggleMembersPanel(); return; }
     if (e.target.closest('[data-topic]') && can(PERM.MANAGE_CHANNELS)) return channelSettingsModal(ch.id);
     if (e.target.closest('[data-pins]')) return pinsPopout(ch.id, e.target.closest('[data-pins]'));
     if (e.target.closest('[data-call]')) return Voice.join(ch.id);
@@ -1622,3 +1623,18 @@ document.addEventListener('keydown', (e) => {
     const ta = $('.chat .composer textarea:not([disabled])'); if (ta) ta.focus();
   }
 });
+
+// open/close the member list (or DM profile) without rebuilding the chat, so messages and scroll stay put
+function toggleMembersPanel() {
+  const ch = curChannel(); const chat = $('.content .chat'); if (!ch || !chat) return;
+  const small = window.innerWidth <= 1100;
+  let m = $('.content .members');
+  if (m && (small ? m.classList.contains('force') : true)) { S.membersOpen = false; m.remove(); }
+  else {
+    S.membersOpen = true;
+    if (!m) { chat.insertAdjacentHTML('afterend', `<aside class="members ${ch.type === 'dm' ? 'dm-panel' : ''}"></aside>`); m = $('.content .members'); }
+    if (small) m.classList.add('force');
+    renderMembers();
+  }
+  renderTopbar();
+}

@@ -1587,3 +1587,8 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
 .act-elapsed{display:inline-flex;align-items:center;gap:6px;margin-top:4px;color:var(--green)!important;font-weight:600;font-variant-numeric:tabular-nums}
 .act-elapsed .act-since{color:inherit!important}
 .act-times .act-pos{font-variant-numeric:tabular-nums}
+.members .mem{position:relative}
+.gm-kick{position:absolute;right:8px;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;background:var(--bg-3);color:var(--muted);opacity:0;transition:opacity .12s;cursor:pointer;z-index:2}
+.members .mem:hover .gm-kick,.gm-kick:focus{opacity:1}
+.gm-kick:hover{background:var(--red);color:#fff}
+@media (hover:none){.gm-kick{opacity:.85}}
