@@ -961,8 +961,35 @@ const sinceText = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 6
 function gameTile(name) {
   let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const ini = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
-  return `<span class="game-tile" style="--gh:${h % 360}">${esc(ini)}</span>`;
+  const art = GameArt.get(name);
+  return `<span class="game-tile${art ? ' has-art' : ''}" style="--gh:${h % 360}" data-game="${esc(name)}">${art ? `<img src="${esc(art)}" alt="" loading="lazy">` : esc(ini)}</span>`;
 }
+/* real game icons / covers: looked up by the server (Steam, or the game's official site), cached here.
+   Tiles show initials until the picture arrives, and stay that way if there isn't one. */
+const GameArt = {
+  map: (() => { try { return JSON.parse(localStorage.getItem('orbit-game-art') || '{}'); } catch { return {}; } })(),
+  want: new Set(), timer: null,
+  get(name) { const v = this.map[name]; if (v === undefined) { this.want.add(name); this.schedule(); } return v && v.u ? v.u : null; },
+  schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.fetch(), 60); },
+  async fetch() {
+    const names = [...this.want].slice(0, 24); this.want.clear(); if (!names.length || !S.me) return;
+    names.forEach(n => (this.map[n] = this.map[n] || { u: null, at: 0, pending: true }));
+    try {
+      const r = await api('GET', '/api/game-art?names=' + encodeURIComponent(names.join('|')));
+      for (const n of names) this.map[n] = { u: r[n] || null, at: Date.now() };
+      // forget misses after a day so new art can show up later
+      for (const [k, v] of Object.entries(this.map)) if (!v.u && Date.now() - v.at > 864e5) delete this.map[k];
+      try { localStorage.setItem('orbit-game-art', JSON.stringify(this.map)); } catch {}
+      this.paint();
+    } catch { names.forEach(n => delete this.map[n]); }
+  },
+  paint() {
+    $$('.game-tile[data-game]:not(.has-art)').forEach(t => {
+      const u = this.map[t.dataset.game]?.u; if (!u) return;
+      const img = new Image(); img.alt = ''; img.onload = () => { t.textContent = ''; t.appendChild(img); t.classList.add('has-art'); }; img.src = u;
+    });
+  },
+};
 const clock = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
 function gameActivityHtml(a) {
   const head = a.type === 'playing' ? (a.source === 'detected' ? 'Playing on PC' : 'Playing') : (ACT_HEAD[a.type] || 'Activity');
@@ -1048,3 +1075,11 @@ function activityModal() {
   document.addEventListener('contextmenu', (e) => { if (e.isTrusted && t) { clearTimeout(t); t = null; } }, true);
   document.addEventListener('click', (e) => { if (swallow && !e.target.closest('.menu, .modal-wrap, .layer')) { e.preventDefault(); e.stopPropagation(); swallow = false; } }, true);
 })();
+// a game picture that fails to load falls back to the initials
+document.addEventListener('error', (e) => {
+  const img = e.target; if (!(img instanceof HTMLImageElement)) return;
+  const t = img.closest?.('.game-tile'); if (!t) return;
+  const name = t.dataset.game || ''; if (GameArt.map[name]) GameArt.map[name] = { u: null, at: Date.now() };
+  t.classList.remove('has-art'); img.remove();
+  t.textContent = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+}, true);

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.21.0';
+const VERSION = '1.21.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -121,6 +121,7 @@ function start(opts = {}) {
     CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id, created);
     CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
     CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
+    CREATE TABLE IF NOT EXISTS game_art(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
   const chanCols = all0(db, "PRAGMA table_info(channels)").map(c => c.name);
@@ -1413,6 +1414,69 @@ function start(opts = {}) {
     res.setHeader('Content-Type', hit2.type); res.setHeader('Cache-Control', 'public, max-age=86400');
     res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
     res.end(hit2.buf);
+  }));
+  // ----- game art: the game's real icon / cover, looked up once and cached -----
+  // Games not on Steam use their official site's app icon; everything else uses its Steam library cover.
+  const OFFICIAL_SITES = {
+    'fortnite': 'https://www.fortnite.com/', 'roblox': 'https://www.roblox.com/', 'valorant': 'https://playvalorant.com/',
+    'league of legends': 'https://www.leagueoflegends.com/', 'minecraft': 'https://www.minecraft.net/', 'osu!': 'https://osu.ppy.sh/home',
+    'genshin impact': 'https://genshin.hoyoverse.com/', 'escape from tarkov': 'https://www.escapefromtarkov.com/', 'call of duty': 'https://www.callofduty.com/',
+    'overwatch 2': 'https://overwatch.blizzard.com/', 'world of warcraft': 'https://worldofwarcraft.blizzard.com/', 'hearthstone': 'https://hearthstone.blizzard.com/',
+  };
+  const normGame = (n) => String(n || '').toLowerCase().replace(/[™®©]/g, '').replace(/[^\p{L}\p{N}!]+/gu, ' ').trim();
+  const artInflight = new Map();
+  async function steamArt(name) {
+    const ctl = AbortSignal.timeout(6000);
+    const r = await fetch('https://store.steampowered.com/api/storesearch/?cc=us&l=english&term=' + encodeURIComponent(name), { signal: ctl });
+    if (!r.ok) return null;
+    const items = (await r.json())?.items || [];
+    const want = normGame(name);
+    const pick = items.find(i => normGame(i.name) === want) || items.find(i => normGame(i.name).startsWith(want)) || (want.length > 3 ? items[0] : null);
+    if (!pick?.id) return null;
+    for (const f of ['library_600x900.jpg', 'header.jpg']) {
+      const u = `https://shared.cloudflare.steamstatic.com/store_item_assets/steam/apps/${pick.id}/${f}`;
+      try { await fetchLimited(u, 4 * 1024 * 1024, 0, true); return u; } catch {}
+    }
+    return null;
+  }
+  async function siteIcon(site) {
+    const page = await fetchLimited(site, 900 * 1024);
+    const head = page.body.slice(0, 300000);
+    // biggest apple-touch-icon / icon, then the share image
+    let best = null, bestSize = 0;
+    for (const tag of head.match(/<link\b[^>]*>/gi) || []) {
+      const rel = (tag.match(/\brel\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+      if (!/apple-touch-icon|(^|\s)icon(\s|$)/i.test(rel)) continue;
+      const href = (tag.match(/\bhref\s*=\s*["']([^"']+)["']/i) || [])[1]; if (!href || /\.svg(\?|$)/i.test(href)) continue;
+      const size = Number(((tag.match(/\bsizes\s*=\s*["'](\d+)x/i) || [])[1]) || (/apple/i.test(rel) ? 180 : 32));
+      if (size > bestSize) { best = href; bestSize = size; }
+    }
+    if (best && bestSize >= 96) return new URL(best, page.url).href;
+    const og = parseMeta(page.body, page.url).image;
+    return og || (best ? new URL(best, page.url).href : null);
+  }
+  async function gameArt(name) {
+    const key = normGame(name); if (!key) return null;
+    const row = one('SELECT url, checked FROM game_art WHERE name=?', key);
+    if (row && (row.url ? row.checked > now() - 30 * 864e5 : row.checked > now() - 864e5)) return row.url;
+    if (artInflight.has(key)) return artInflight.get(key);
+    const job = (async () => {
+      let url = null;
+      try { url = OFFICIAL_SITES[key] ? await siteIcon(OFFICIAL_SITES[key]) : await steamArt(name); } catch {}
+      if (!url && OFFICIAL_SITES[key]) { try { url = await steamArt(name); } catch {} }
+      run('INSERT OR REPLACE INTO game_art(name, url, checked) VALUES(?,?,?)', key, url, now());
+      return url;
+    })().finally(() => artInflight.delete(key));
+    artInflight.set(key, job);
+    return job;
+  }
+  app.get('/api/game-art', auth, wrap(async (req, res) => {
+    limit('art:' + req.user.id, 60, 60e3, 'Too many requests.');
+    const names = [...new Set(String(req.query.names || '').split('|').map(n => n.trim()).filter(Boolean))].slice(0, 24);
+    const out = {};
+    await Promise.all(names.map(async n => { const u = await gameArt(n).catch(() => null); out[n] = u ? proxied(u) : null; }));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.json(out);
   }));
   const embedCache = new Map();
   async function embedFor(url) {

@@ -9,6 +9,7 @@ const WIDGETS = {
   rotation: { name: 'Games in Rotation', icon: 'clock', hint: 'What you’re playing these days' },
   want: { name: 'Want to Play', icon: 'bookmark', hint: 'Games on your list' },
 };
+const PICK_ART = { favorite: ['League of Legends'], like: ['PEAK', 'R.E.P.O.', 'Among Us'], rotation: ['VALORANT', 'Marvel Rivals', 'Rust'], want: ['Elden Ring', 'Hollow Knight: Silksong', 'Baldur’s Gate 3'] };
 const widgetKey = (w) => w.type === 'games' ? w.kind : w.type;
 const agoText = (t) => { const m = Math.floor((Date.now() - t) / 60000); if (m < 1) return 'just now'; if (m < 60) return m + ' min ago'; const h = Math.floor(m / 60); if (h < 24) return h + ' h ago'; const d = Math.floor(h / 24); return d === 1 ? 'yesterday' : d + ' days ago'; };
 const hoursText = (min) => min < 60 ? `${min} min total` : `${(min / 60).toFixed(min < 600 ? 1 : 0)} h total`;
@@ -23,7 +24,7 @@ function widgetPickerHtml(board) {
   const used = new Set(board.widgets.map(widgetKey));
   return `<div class="wg-pick">${Object.entries(WIDGETS).map(([k, v]) => {
     const taken = k !== 'custom' && used.has(k);
-    return `<button class="wg-opt ${taken ? 'taken' : ''}" data-wadd="${k}" ${taken ? 'disabled title="Already on your board"' : ''}><span class="wg-opt-art">${k === 'custom' ? '' : ['Rocket', 'Dragon', 'Pixel'].map(gameTile).join('')}</span><span class="wg-opt-plus">${I.plus}</span><b>${v.name}</b><small>${v.hint}</small></button>`;
+    return `<button class="wg-opt ${taken ? 'taken' : ''}" data-wadd="${k}" ${taken ? 'disabled title="Already on your board"' : ''}><span class="wg-opt-art">${(PICK_ART[k] || []).map(gameTile).join('')}</span><span class="wg-opt-plus">${I.plus}</span><b>${v.name}</b><small>${v.hint}</small></button>`;
   }).join('')}</div>`;
 }
 
