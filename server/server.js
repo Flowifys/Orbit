@@ -16,6 +16,7 @@ const { DatabaseSync } = require('node:sqlite');
 const P = {
   ADMIN: 1, MANAGE_SERVER: 2, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK: 16, BAN: 32,
   MANAGE_MESSAGES: 64, CREATE_INVITE: 128, SEND: 256, CONNECT: 512, ATTACH: 1024, MENTION_EVERYONE: 2048,
+  PRIORITY_SPEAKER: 4096,
 };
 const ALL = Object.values(P).reduce((a, b) => a | b, 0);
 const DEFAULT_PERMS = P.SEND | P.CONNECT | P.ATTACH | P.CREATE_INVITE;
@@ -30,7 +31,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.36.0';
+const VERSION = '1.37.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -171,7 +172,8 @@ function start(opts = {}) {
   if (!srvCols.includes('welcome')) db.exec('ALTER TABLE servers ADD COLUMN welcome INTEGER DEFAULT 1');
   db.exec(`CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, server_id TEXT, channel_id TEXT, name TEXT, description TEXT DEFAULT '', start INTEGER, ends INTEGER, creator_id TEXT, created INTEGER, started INTEGER DEFAULT 0);
     CREATE TABLE IF NOT EXISTS event_rsvps(event_id TEXT, user_id TEXT, created INTEGER, PRIMARY KEY(event_id,user_id));
-    CREATE INDEX IF NOT EXISTS idx_events ON events(server_id, start);`);
+    CREATE INDEX IF NOT EXISTS idx_events ON events(server_id, start);
+    CREATE TABLE IF NOT EXISTS sounds(id TEXT PRIMARY KEY, server_id TEXT, name TEXT, emoji TEXT DEFAULT '🔊', url TEXT, creator_id TEXT, created INTEGER);`);
   // 1.15: sessions (one per logged-in device) so you can see and log out devices
   db.exec(`CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, user_id TEXT REFERENCES users(id) ON DELETE CASCADE, created INTEGER, last_seen INTEGER, ua TEXT, client TEXT, ip TEXT);
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);`);
@@ -341,10 +343,11 @@ function start(opts = {}) {
       .map(m => ({ ...publicUser(m), nick: m.nick, joined: m.joined, roles: mrs.filter(x => x.user_id === m.user_id).map(x => x.role_id), timeout_until: m.t_until > now() ? m.t_until : null }));
     const emojis = all('SELECT id, name, url FROM emojis WHERE server_id=? ORDER BY created', sid);
     const stickers = all('SELECT id, name, url FROM stickers WHERE server_id=? ORDER BY created', sid);
+    const sounds = all('SELECT id, name, emoji, url FROM sounds WHERE server_id=? ORDER BY created', sid);
     return { id: s.id, name: s.name, icon: s.icon, banner: s.banner, description: s.description, owner_id: s.owner_id,
       afk_channel_id: s.afk_channel_id || null, afk_timeout: s.afk_timeout || 300,
       system_channel_id: s.system_channel_id || null, welcome: s.welcome !== 0,
-      channels, roles, members, emojis, stickers, my_perms: permsOf(sid, uidv) };
+      channels, roles, members, emojis, stickers, sounds, my_perms: permsOf(sid, uidv) };
   }
   function serverSummary(s) { return { id: s.id, name: s.name, icon: s.icon, owner_id: s.owner_id }; }
   function groupName(c, uidv, members) {
@@ -411,6 +414,7 @@ function start(opts = {}) {
   });
   const upload = multer({ storage, limits: { fileSize: maxUpload, files: 10 } });
   const imageOnly = multer({ storage, limits: { fileSize: 15 * 1024 * 1024 }, fileFilter: (req, f, cb) => cb(null, /^image\//.test(f.mimetype)) });
+  const audioOnly = multer({ storage, limits: { fileSize: 1024 * 1024 }, fileFilter: (req, f, cb) => cb(null, /^audio\//.test(f.mimetype)) });
 
   const wrap = (fn) => (req, res) => { try { const r = fn(req, res); if (r && r.catch) r.catch(e => fail(res, e)); } catch (e) { fail(res, e); } };
   function fail(res, e) { if (e && e.status) return res.status(e.status).json({ error: e.message }); log('error', e); res.status(500).json({ error: 'Server error' }); }
@@ -2247,6 +2251,28 @@ function start(opts = {}) {
     run('DELETE FROM stickers WHERE id=?', st.id);   // the image file stays so old messages keep showing it
     refreshServer(st.server_id); res.json({ ok: true });
   }));
+
+  // ----- soundboard -----
+  app.post('/api/servers/:id/sounds', auth, audioOnly.single('file'), wrap((req, res) => {
+    const sid = req.params.id; const f = req.file;
+    const drop = () => f && fs.unlink(f.path, () => {});
+    if (!has(sid, req.user.id, P.MANAGE_SERVER)) { drop(); throw err(403, 'You need Manage Server to add sounds'); }
+    if (!f) throw err(400, 'Pick a short audio clip (MP3, OGG, WAV…)');
+    if (f.size > 512 * 1024) { drop(); throw err(400, 'Sounds must be under 512 KB — keep them short.'); }
+    const name = String(req.body?.name || path.parse(f.originalname).name).trim().slice(0, 30);
+    if (name.length < 1) { drop(); throw err(400, 'Give the sound a name'); }
+    if (one('SELECT COUNT(*) c FROM sounds WHERE server_id=?', sid).c >= 40) { drop(); throw err(400, 'This server has the maximum of 40 sounds'); }
+    const emoji = String(req.body?.emoji || '🔊').slice(0, 8);
+    const id = uid();
+    run('INSERT INTO sounds(id,server_id,name,emoji,url,creator_id,created) VALUES(?,?,?,?,?,?,?)', id, sid, name, emoji, fileUrl(f), req.user.id, now());
+    refreshServer(sid);
+    res.json({ id, name, emoji, url: fileUrl(f) });
+  }));
+  app.delete('/api/sounds/:id', auth, wrap((req, res) => {
+    const sd = one('SELECT * FROM sounds WHERE id=?', req.params.id);
+    if (!sd || !has(sd.server_id, req.user.id, P.MANAGE_SERVER)) throw err(403, 'Missing permission');
+    run('DELETE FROM sounds WHERE id=?', sd.id); refreshServer(sd.server_id); res.json({ ok: true });
+  }));
   // inbox: recent @mentions and replies to you, from every server and DM you can still see
   app.get('/api/inbox', auth, wrap((req, res) => {
     const me = req.user.id; const before = Number(req.query.before) || 9e15;
@@ -2511,6 +2537,18 @@ function start(opts = {}) {
     });
     socket.on('voice:signal', ({ to, data } = {}) => {
       for (const [, room] of voice) if (room.has(me) && room.has(to)) { io.to(room.get(to).socket).emit('voice:signal', { from: me, data }); return; }
+    });
+    // soundboard: play a server sound for everyone in your current voice channel
+    socket.on('soundboard:play', ({ sound_id } = {}) => {
+      if (hit('sound:' + me, 5, 8e3)) return;                       // rate-limit spam
+      let cid = null; for (const [c, room] of voice) if (room.has(me)) { cid = c; break; }
+      if (!cid) return;
+      const ch = chanRow(cid); if (!ch || !ch.server_id) return;
+      const snd = one('SELECT * FROM sounds WHERE id=? AND server_id=?', String(sound_id || ''), ch.server_id);
+      if (!snd) return;
+      const room = voice.get(cid); if (!room) return;
+      const payload = { channel_id: cid, url: snd.url, name: snd.name, emoji: snd.emoji, by: getUser(me) };
+      room.forEach((st) => io.to(st.socket).emit('soundboard:played', payload));   // only people in the call
     });
     socket.on('call:decline', ({ channel_id } = {}) => {
       const ch = chanRow(channel_id);

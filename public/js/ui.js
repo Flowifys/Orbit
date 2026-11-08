@@ -193,6 +193,7 @@ function connectSocket() {
   });
   socket.on('events:refresh', ({ server_id }) => { if (S._eventsRefresh && S._eventsRefresh.sid === server_id && $('.events-hub')) S._eventsRefresh.fn(); });
   socket.on('event:start', ({ event }) => { if (!event) return; toast(`📅 ${event.name} is starting now!`); try { playNotif({ type: 'mention', serverId: event.server_id }); } catch {} });
+  socket.on('soundboard:played', ({ url }) => { if (Voice.deaf || !url) return; try { const a = new Audio(url); a.volume = S.prefs.sbVolume ?? 0.7; a.play().catch(() => {}); } catch {} });
   socket.on('voicepass', ({ channel_id, server_id, name, expires, by }) => {
     S.voicePasses = S.voicePasses || {};
     S.voicePasses[channel_id] = { expires, server_id, name };
@@ -419,12 +420,24 @@ function voiceBarHtml() {
   const where = !ch ? '' : ch.type === 'dm' ? 'Call with ' + ch.name : ch.type === 'group' ? ch.name : [ch.name, S.serverData[ch.server_id]?.name].filter(Boolean).join(' / ');
   return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}<time data-vtime>${Voice.joinedAt ? fmtCallTime(Date.now() - Voice.joinedAt) : ''}</time></b><span data-goto-voice>${esc(where)}</span></div>
     <button class="icon-btn" data-vleave title="Disconnect">${I.hangup}</button></div>
-    <div class="row2"><button data-vcam class="${Voice.video ? 'on' : ''}" title="Camera">${Voice.video ? I.video : I.videoOff}</button><button data-vscreen class="${Voice.screen ? 'on' : ''}" title="Share screen">${I.screen}</button></div></div>`;
+    <div class="row2"><button data-vcam class="${Voice.video ? 'on' : ''}" title="Camera">${Voice.video ? I.video : I.videoOff}</button><button data-vscreen class="${Voice.screen ? 'on' : ''}" title="Share screen">${I.screen}</button>${ch && ch.server_id ? `<button data-soundboard title="Soundboard">🎵</button>` : ''}</div></div>`;
+}
+function soundboardPopover(anchor) {
+  const ch = findChannel(Voice.channel); const sd = ch && S.serverData[ch.server_id];
+  const sounds = sd?.sounds || [];
+  const r = anchor.getBoundingClientRect();
+  if (!sounds.length) {
+    const items = [['No sounds in this server yet', () => {}]];
+    if (ch && can(PERM.MANAGE_SERVER, ch.server_id)) items.push(['Add sounds →', () => openServerSettings(ch.server_id, 'soundboard')]);
+    return contextMenu({ clientX: r.left, clientY: r.top - 8, above: true }, items, '', 240);
+  }
+  contextMenu({ clientX: r.left, clientY: r.top - 8, above: true }, sounds.map(s => [`${s.emoji || '🔊'} ${esc(s.name)}`, () => socket.emit('soundboard:play', { sound_id: s.id })]), '', 220);
 }
 function voiceBarClick(e) {
   if (e.target.closest('[data-vleave]')) Voice.leave();
   else if (e.target.closest('[data-vcam]')) Voice.toggleCamera();
   else if (e.target.closest('[data-vscreen]')) Voice.toggleScreen();
+  else if (e.target.closest('[data-soundboard]')) soundboardPopover(e.target.closest('[data-soundboard]'));
   else if (e.target.closest('[data-goto-voice]')) { const ch = findChannel(Voice.channel); if (ch) { if (ch.type === 'dm') selectChannel(ch.id); else { S.view = { server: ch.server_id, channel: ch.id }; renderRail(); renderSidebar(); renderMain(); } showMainMobile(); } }
 }
 function serverRailMenu(e, sid) {

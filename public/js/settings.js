@@ -231,6 +231,8 @@ async function userVoice(body) {
     <h3>Mic test</h3><p style="color:var(--muted);font-size:13px;margin-bottom:8px">Say something and watch the bar move.</p>
     <div style="display:flex;gap:12px;align-items:center"><button class="btn primary sm" data-test>Let’s Check</button><div style="flex:1;height:10px;background:var(--bg-0);border-radius:5px;overflow:hidden"><div data-level style="height:100%;width:0;background:var(--green);transition:width .05s"></div></div></div>
     <label class="row-toggle" style="margin-top:12px"><span class="rt">Noise suppression<small>Filters background noise from your mic.</small></span><span class="toggle"><input type="checkbox" data-p="noise" ${S.prefs.noise ? 'checked' : ''}><span></span></span></label>
+    <label class="row-toggle"><span class="rt">Push to talk<small>Only transmit while you hold a key (instead of always-on).</small></span><span class="toggle"><input type="checkbox" data-p="ptt" ${S.prefs.ptt ? 'checked' : ''}><span></span></span></label>
+    <div class="field" style="margin-top:4px"><label>Push-to-talk shortcut</label><button class="btn secondary sm" data-ptt-key style="min-width:160px">${S.prefs.pttKeyLabel ? esc(S.prefs.pttKeyLabel) : 'Click, then press a key'}</button></div>
     <h3>Camera</h3><div class="field"><select class="input" data-p="cam">${opt('videoinput', S.prefs.cam)}</select></div>
     <div style="display:flex;gap:12px;align-items:flex-start"><button class="btn primary sm" data-cam>Test Video</button><video data-preview autoplay muted playsinline style="width:320px;max-width:100%;border-radius:8px;background:#000;display:none;transform:scaleX(-1)"></video></div>
     ${!devices.some(d => d.label) ? '<p style="color:var(--muted);font-size:13px;margin-top:12px">Device names appear after you allow microphone or camera access once.</p>' : ''}`;
@@ -238,7 +240,18 @@ async function userVoice(body) {
   const stop = () => { stream?.getTracks().forEach(t => t.stop()); camStream?.getTracks().forEach(t => t.stop()); cancelAnimationFrame(raf); };
   const obs = new MutationObserver(() => { if (!document.body.contains(body) || !$('[data-test]', body)) { stop(); obs.disconnect(); } });
   obs.observe(document.body, { childList: true, subtree: true });
-  $$('[data-p]', body).forEach(el => el.onchange = () => { S.prefs[el.dataset.p] = el.type === 'checkbox' ? el.checked : el.value; savePrefs(); });
+  $$('[data-p]', body).forEach(el => el.onchange = () => { S.prefs[el.dataset.p] = el.type === 'checkbox' ? el.checked : el.value; savePrefs(); if (el.dataset.p === 'ptt' && typeof Voice !== 'undefined' && Voice.applyMute) Voice.applyMute(); });
+  const kb = $('[data-ptt-key]', body);
+  if (kb) kb.onclick = () => {
+    kb.textContent = 'Press any key…';
+    const onKey = (ev) => {
+      ev.preventDefault(); removeEventListener('keydown', onKey, true);
+      S.prefs.pttKey = ev.code;
+      S.prefs.pttKeyLabel = ev.code.startsWith('Key') ? ev.code.slice(3) : ev.code.startsWith('Digit') ? ev.code.slice(5) : ev.code === 'Space' ? 'Space' : ev.code;
+      savePrefs(); kb.textContent = S.prefs.pttKeyLabel;
+    };
+    addEventListener('keydown', onKey, true);
+  };
   $('[data-test]', body).onclick = async (e) => {
     if (stream) { stop(); stream = null; e.target.textContent = 'Let’s Check'; $('[data-level]', body).style.width = '0'; return; }
     try {
@@ -367,13 +380,13 @@ function userAbout(body) {
 function openServerSettings(sid, first) {
   const sd = S.serverData[sid];
   const owner = sd.owner_id === S.me.id;
-  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], can(PERM.MANAGE_SERVER, sid) && ['stickers', 'Stickers'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
+  const tabs = [can(PERM.MANAGE_SERVER, sid) && ['overview', 'Overview'], can(PERM.MANAGE_ROLES, sid) && ['roles', 'Roles'], can(PERM.MANAGE_SERVER, sid) && ['emoji', 'Emoji'], can(PERM.MANAGE_SERVER, sid) && ['stickers', 'Stickers'], can(PERM.MANAGE_SERVER, sid) && ['soundboard', 'Soundboard'], (can(PERM.KICK, sid) || can(PERM.BAN, sid) || can(PERM.MANAGE_ROLES, sid)) && ['members', 'Members'],
     can(PERM.MANAGE_SERVER, sid) && ['invites', 'Invites'], can(PERM.BAN, sid) && ['bans', 'Bans'],
     can(PERM.MANAGE_SERVER, sid) && ['automod', 'AutoMod'], can(PERM.MANAGE_SERVER, sid) && ['audit', 'Audit Log']].filter(Boolean);
   const ui = settingsShell(`<h6>${esc(sd.name)}</h6>${tabs.map(([k, l]) => `<button data-tab="${k}">${l}</button>`).join('')}${owner ? '<hr><button class="danger" data-action="delete">Delete Server</button>' : ''}`, (tab, body, close) => {
     const cur = S.serverData[sid]; if (!cur) return close();
     if (tab === '@delete') return confirmModal(`Delete ‘${cur.name}’`, `Are you sure you want to delete <b>${esc(cur.name)}</b>? This action cannot be undone.`, 'Delete Server', async () => { await api('DELETE', '/api/servers/' + sid); close(); });
-    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans, automod: srvAutomod, audit: srvAudit })[tab](body, sid, close);
+    ({ overview: srvOverview, emoji: srvEmojis, stickers: srvStickers, soundboard: srvSoundboard, roles: srvRoles, members: srvMembers, invites: srvInvites, bans: srvBans, automod: srvAutomod, audit: srvAudit })[tab](body, sid, close);
   }, first || tabs[0]?.[0]);
   return ui;
 }
@@ -550,6 +563,29 @@ async function srvAudit(body, sid) {
       return `<div class="list-row"><div class="grow"><b>${who}</b> ${esc(verb[e.action] || e.action)}${tgt}${det}<small>${new Date(e.created).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' })}</small></div></div>`;
     }).join('') : '<p style="color:var(--muted)">Nothing here yet. Moderation actions will show up here.</p>';
   } catch (e) { $('.al', body).textContent = e.message; }
+}
+
+function srvSoundboard(body, sid) {
+  const sd = S.serverData[sid];
+  const draw = () => {
+    const sounds = sd.sounds || [];
+    body.innerHTML = `<h2>Soundboard</h2><p style="color:var(--muted);margin:-12px 0 18px;font-size:14px">Short audio clips anyone can play in a voice call. Under 512&nbsp;KB each, up to 40.</p>
+      <div class="sb-grid">${sounds.map(s => `<div class="sb-item"><button class="sb-play" data-play="${esc(s.url)}" title="Preview">${s.emoji || '🔊'}</button><span class="nm">${esc(s.name)}</span><button class="icon-btn sm" data-del="${s.id}" title="Delete">${I.x}</button></div>`).join('') || '<p style="color:var(--muted)">No sounds yet — add one below.</p>'}</div>
+      <h3>Add a sound</h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div class="field" style="margin:0"><label>Name</label><input class="input" name="sname" maxlength="30" placeholder="airhorn" style="max-width:200px"></div>
+        <div class="field" style="margin:0"><label>Emoji</label><input class="input" name="semoji" maxlength="8" value="🔊" style="max-width:80px"></div>
+        <label class="btn primary sm">Upload sound<input type="file" accept="audio/*" hidden name="sfile"></label>
+      </div>`;
+    $('[name=sfile]', body).onchange = async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      const fd = new FormData(); fd.append('file', f); fd.append('name', $('[name=sname]', body).value.trim() || f.name); fd.append('emoji', $('[name=semoji]', body).value.trim() || '🔊');
+      try { await upload(`/api/servers/${sid}/sounds`, fd); await fetchServer(sid); srvSoundboard(body, sid); } catch (x) { toast(x.message, true); }
+    };
+    $$('[data-play]', body).forEach(b => b.onclick = () => { try { const a = new Audio(b.dataset.play); a.volume = 0.7; a.play().catch(() => {}); } catch {} });
+    $$('[data-del]', body).forEach(b => b.onclick = async () => { await api('DELETE', '/api/sounds/' + b.dataset.del).catch(x => toast(x.message, true)); await fetchServer(sid); srvSoundboard(body, sid); });
+  };
+  draw();
 }
 
 /* start */

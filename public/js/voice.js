@@ -165,12 +165,22 @@ const Voice = {
     } catch (e) { console.warn('signal error', e); }
   },
 
-  applyMute() { this.local?.getAudioTracks().forEach(t => (t.enabled = !this.muted && !this.deaf)); },
+  applyMute() { const talk = this.deaf ? false : (S.prefs.ptt ? (this.pttHeld && !this.muted) : !this.muted); this.local?.getAudioTracks().forEach(t => (t.enabled = talk)); },
+  // does this member have the Priority Speaker permission in the current voice channel's server?
+  isPriority(uid) {
+    const ch = typeof findChannel === 'function' ? findChannel(this.channel) : null;
+    const sd = ch && S.serverData[ch.server_id]; if (!sd) return false;
+    const mem = sd.members.find(m => m.id === uid); if (!mem) return false;
+    const rids = new Set(mem.roles || []);
+    return sd.roles.some(r => (r.is_default || rids.has(r.id)) && (r.perms & (PERM.PRIORITY_SPEAKER | PERM.ADMIN)));
+  },
   // one place that decides volume / mute / output device for everything we hear from a peer
   applyPeerAudio(p) {
     const muted = this.deaf || this.localMutes.has(p.id);
-    const micVol = Math.min(1, this.volumes[p.id] ?? 1);
-    const scrVol = Math.min(1, this.screenVolumes[p.id] ?? (S.prefs.streamVolumes?.[p.id] ?? 1));
+    // priority-speaker ducking: if a priority speaker is talking, quiet everyone else
+    const duck = this._duck && !this.isPriority(p.id) ? 0.3 : 1;
+    const micVol = Math.min(1, this.volumes[p.id] ?? 1) * duck;
+    const scrVol = Math.min(1, this.screenVolumes[p.id] ?? (S.prefs.streamVolumes?.[p.id] ?? 1)) * duck;
     const pairs = [[p.audio, micVol], [p.screenAudioEl, this.screenMutes.has(p.id) ? 0 : scrVol]];
     for (const [el, vol] of pairs) {
       if (!el) continue;
@@ -305,6 +315,9 @@ const Voice = {
     }
     if (changed) {
       paintSpeaking();
+      // priority-speaker ducking: duck everyone when a priority speaker (not you) is talking
+      const duck = [...this.speaking].some(id => id !== S.me.id && this.isPriority(id));
+      if (duck !== this._duck) { this._duck = duck; this.peers.forEach(p => this.applyPeerAudio(p)); }
       // let everyone else (sidebar, their overlays) know when I start/stop talking
       const meOn = this.speaking.has(S.me.id);
       if (meOn !== this._sentSpeak && this.socket?.connected !== false && typeof socket !== 'undefined' && socket) { this._sentSpeak = meOn; socket.emit('voice:speaking', { on: meOn }); }
@@ -668,4 +681,18 @@ window.addEventListener('load', () => {
       try { toast('Moved to the AFK channel — you were idle.'); } catch {}
     }
   }, 5000);
+})();
+
+// Push-to-talk: with PTT enabled, your mic only transmits while the chosen key is held
+(() => {
+  const inField = () => { const el = document.activeElement; return el && (/INPUT|TEXTAREA|SELECT/.test(el.tagName) || el.isContentEditable); };
+  addEventListener('keydown', (e) => {
+    if (!S.prefs.ptt || !S.prefs.pttKey || !Voice.channel || e.repeat) return;
+    if (e.code !== S.prefs.pttKey || inField()) return;
+    if (!Voice.pttHeld) { Voice.pttHeld = true; Voice.applyMute(); }
+  }, true);
+  addEventListener('keyup', (e) => {
+    if (!S.prefs.ptt || e.code !== S.prefs.pttKey) return;
+    if (Voice.pttHeld) { Voice.pttHeld = false; Voice.applyMute(); }
+  }, true);
 })();

@@ -1,6 +1,6 @@
 'use strict';
 /* Orbit client core: state, API, helpers, icons, formatting */
-const PERM = { ADMIN: 1, MANAGE_SERVER: 2, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK: 16, BAN: 32, MANAGE_MESSAGES: 64, CREATE_INVITE: 128, SEND: 256, CONNECT: 512, ATTACH: 1024, MENTION_EVERYONE: 2048 };
+const PERM = { ADMIN: 1, MANAGE_SERVER: 2, MANAGE_CHANNELS: 4, MANAGE_ROLES: 8, KICK: 16, BAN: 32, MANAGE_MESSAGES: 64, CREATE_INVITE: 128, SEND: 256, CONNECT: 512, ATTACH: 1024, MENTION_EVERYONE: 2048, PRIORITY_SPEAKER: 4096 };
 const PERM_INFO = [
   ['ADMIN', 'Administrator', 'Members with this permission have every permission and can see every channel. Grant with care.'],
   ['MANAGE_SERVER', 'Manage Server', 'Change the server name, icon, banner and see invites.'],
@@ -14,6 +14,7 @@ const PERM_INFO = [
   ['ATTACH', 'Attach Files', 'Upload files and media.'],
   ['MENTION_EVERYONE', 'Mention @everyone', 'Notify every member with @everyone or @here.'],
   ['CONNECT', 'Connect to Voice', 'Join voice channels, talk and share video.'],
+  ['PRIORITY_SPEAKER', 'Priority Speaker', 'When they talk, everyone else’s volume lowers so they can be heard clearly.'],
 ];
 
 const S = {
@@ -21,7 +22,7 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, layout: 'classic', fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {} },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, layout: 'classic', fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {}, ptt: false, pttKey: '', pttKeyLabel: '', sbVolume: 0.7 },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };

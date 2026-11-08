@@ -1935,3 +1935,12 @@ body.pad .chat>.composer .typing{bottom:4px}
 .ev-live{font-size:10px;font-weight:700;color:#06120a;background:var(--green,#3fd77f);padding:1px 7px;border-radius:999px}
 .ev-actions{flex:none;display:flex;flex-direction:column;gap:6px;align-items:flex-end}
 .ev-actions .icon-btn.sm{width:28px;height:28px}
+
+/* soundboard settings */
+.sb-grid{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px}
+.sb-item{display:flex;flex-direction:column;align-items:center;gap:4px;width:92px;background:var(--bg-1);border:1px solid var(--line);border-radius:12px;padding:10px 6px;position:relative}
+.sb-item .sb-play{font-size:26px;width:52px;height:52px;border-radius:12px;background:var(--bg-3);display:grid;place-items:center;transition:.12s}
+.sb-item .sb-play:hover{background:var(--accent-soft);transform:scale(1.05)}
+.sb-item .nm{font-size:12px;color:var(--text-2);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sb-item [data-del]{position:absolute;top:3px;right:3px;width:22px;height:22px;opacity:.6}
+.sb-item:hover [data-del]{opacity:1}
