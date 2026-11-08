@@ -43,8 +43,10 @@ jobs:
         run: |
           # every build gets a higher version number (the Meta store requires it)
           node -e "const f='twa-manifest.json',m=require('./'+f);m.appVersionCode=Number(process.env.GITHUB_RUN_NUMBER);m.appVersionName='1.0.'+process.env.GITHUB_RUN_NUMBER;require('fs').writeFileSync(f,JSON.stringify(m,null,2))"
-          yes | bubblewrap update --skipVersionUpgrade 2>&1 | tee build.log
-          yes | bubblewrap build --skipPwaValidation 2>&1 | tee -a build.log
+          bubblewrap update --skipVersionUpgrade < /dev/null 2>&1 | tee build.log
+          # mark the project as up to date with twa-manifest.json so build doesn't stop to ask about regenerating it
+          sha1sum twa-manifest.json | cut -d' ' -f1 > manifest-checksum.txt
+          printf 'n\n' | bubblewrap build --skipPwaValidation 2>&1 | tee -a build.log
           test -f app-release-signed.apk
           cp app-release-signed.apk Orbit-Quest.apk
       - name: Attach Orbit-Quest.apk to the quest release
