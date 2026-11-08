@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.24.0';
+const VERSION = '1.24.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -1517,7 +1517,8 @@ function start(opts = {}) {
   }
   function unfurlLater(id, content, authorId) {
     if (authorId && hit('unfurl:' + authorId, 20, 60e3)) return;   // someone spamming links: skip previews for a minute
-    const urls = linksIn(content).filter(u => !/^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(u));
+    const urls = linksIn(content).filter(u => !/^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(u))
+      .filter(u => !/^https?:\/\/(www\.)?(orbital\.sbs|orbit-5l9u\.onrender\.com)\/invite\//i.test(u) && !(PUBLIC_URL && u.startsWith(PUBLIC_URL + '/invite/')));   // invites get a server card instead
     if (!urls.length) return;
     Promise.all(urls.map(embedFor)).then(list => {
       const embeds = list.filter(Boolean); if (!embeds.length) return;

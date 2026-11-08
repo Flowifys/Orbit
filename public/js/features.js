@@ -18,7 +18,8 @@ function toggleCollapsed(key) { S.prefs.collapsed = S.prefs.collapsed || {}; if 
 
 /* ---------- link previews ---------- */
 function embedsHtml(m) {
-  const list = (m.embeds || []).filter(Boolean); if (!list.length) return '';
+  // invite links already get a server card, so skip their plain link preview
+  const list = (m.embeds || []).filter(e => e && !(e.url && inviteCodesIn(e.url).length)); if (!list.length) return '';
   const canRemove = m.author_id === S.me.id;
   return `<div class="embeds">${list.map((e, i) => {
     if (e.type === 'image') return `<div class="embed-img"><img src="${esc(e.image)}" alt="" loading="lazy" data-lightbox="${esc(e.image)}" data-name="image" referrerpolicy="no-referrer"></div>`;
