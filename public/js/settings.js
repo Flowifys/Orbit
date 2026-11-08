@@ -421,7 +421,7 @@ function srvRoles(body, sid, close, selected) {
       <div class="field"><label>Role color</label><div class="swatches">${['#99aab5', '#ef4f5f', '#f0883e', '#f0b232', '#2fbf71', '#2bb5a8', '#4ea1ff', '#7c5cff', '#e05cb7', '#ffffff'].map(c => `<button class="swatch ${c === d.color ? 'sel' : ''}" data-c="${c}" style="background:${c}"></button>`).join('')}<input type="color" value="${esc(d.color)}"></div></div>
       <label class="row-toggle"><span class="rt">Display role members separately from online members</span><span class="toggle"><input type="checkbox" name="hoist" ${d.hoist ? 'checked' : ''}><span></span></span></label>`}
       <h3>Permissions</h3>
-      ${PERM_INFO.map(([k, l, desc]) => `<div class="perm-row"><div><b>${l}</b><small>${desc}</small></div><span class="toggle"><input type="checkbox" data-perm="${k}" ${(d.perms & PERM[k]) ? 'checked' : ''}><span></span></span></div>`).join('')}
+      ${PERM_INFO.map(([k, l, desc]) => `<label class="perm-row"><div><b>${l}</b><small>${desc}</small></div><span class="toggle"><input type="checkbox" data-perm="${k}" ${(d.perms & PERM[k]) ? 'checked' : ''}><span></span></span></label>`).join('')}
       ${!r.is_default ? `<div class="danger-zone"><div class="grow"><b>Delete role</b><small>Members lose this role and its permissions.</small></div><button class="btn danger sm" data-del>Delete</button></div>` : ''}
       </div></div>`;
     const dirty = () => { if (JSON.stringify(d) !== orig) saveBar(body, async () => { await api('PATCH', '/api/roles/' + r.id, d); await fetchServer(sid); srvRoles(body, sid, close, r.id); }, draw); else $('.save-bar', body)?.remove(); };

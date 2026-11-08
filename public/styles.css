@@ -550,7 +550,8 @@ select.input{appearance:auto}
 .role-list button:hover{background:var(--bg-hover)}
 .role-list button.active{background:var(--bg-active);color:var(--text)}
 .role-list i{width:12px;height:12px;border-radius:50%;display:block;flex:none}
-.perm-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--line)}
+.perm-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.perm-row:hover b{color:var(--text)}
 .perm-row small{display:block;color:var(--muted);font-size:13px}
 .danger-zone{border:1px solid color-mix(in oklab,var(--red) 45%,transparent);border-radius:14px;padding:16px;display:flex;align-items:center;gap:16px;margin-top:26px}
 .danger-zone .grow{flex:1}
