@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.6';
+const VERSION = '1.25.7';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -536,7 +536,8 @@ function start(opts = {}) {
         60410: 'Twilio’s fraud protection blocked texts to that number. Try email codes instead.',
         60605: 'Texts to that country are turned off in Twilio’s Geo Permissions.', 20429: 'Too many codes sent. Try again in a minute.',
       }[j.code] || (r.status === 404 ? 'Twilio couldn’t find the Verify service. Check TWILIO_VERIFY_SID on Render (it starts with VA).' : `Couldn’t send the text message (Twilio error ${j.code || r.status}${j.message ? ': ' + String(j.message).slice(0, 160) : ''}).`);
-      throw err(r.status === 429 || j.code === 60203 ? 429 : 502, why);
+      const raw = j.message ? ` (Twilio ${j.code || r.status}: ${String(j.message).replace(/\s+/g, ' ').slice(0, 140)})` : '';
+      throw err(r.status === 429 || j.code === 60203 ? 429 : 502, why + (why.startsWith('Couldn’t send the text message (Twilio') ? '' : raw));
     }
     return { ok: true, ...j };
   }
