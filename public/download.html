@@ -578,9 +578,14 @@
   const onScroll = () => top.classList.toggle('stuck', scrollY > 10);
   addEventListener('scroll', onScroll, { passive: true }); onScroll();
 
-  // reveal sections on scroll
-  const io = new IntersectionObserver((es) => es.forEach(x => { if (x.isIntersecting) { x.target.classList.add('in'); io.unobserve(x.target); } }), { rootMargin: '0px 0px -8% 0px' });
-  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  // reveal sections on scroll — with a safety net so content can never stay hidden
+  const reveal = el => el.classList.add('in');
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => es.forEach(x => { if (x.isIntersecting) { reveal(x.target); io.unobserve(x.target); } }), { rootMargin: '0px 0px -6% 0px', threshold: 0 });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+    // if a fast jump-scroll outruns the observer, show anything still hidden
+    setTimeout(() => document.querySelectorAll('.reveal:not(.in)').forEach(reveal), 2200);
+  } else document.querySelectorAll('.reveal').forEach(reveal);
 
   // satellites travel a tilted ellipse around the planet; behind the planet they dim and shrink
   const sky = document.querySelector('.sky'), sats = [...document.querySelectorAll('.sat')];
@@ -603,6 +608,8 @@
   requestAnimationFrame(frame);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 })();
+// independent failsafe: whatever happens above, never leave a section hidden
+setTimeout(() => document.querySelectorAll('.reveal:not(.in)').forEach(el => el.classList.add('in')), 3000);
 </script>
 </body>
 </html>
