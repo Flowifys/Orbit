@@ -262,6 +262,33 @@
   footer a{color:var(--violet-hi);text-decoration:none}
   footer a:hover{text-decoration:underline}
 
+  /* ---------- live Discord (Lanyard) credit card ---------- */
+  .credits .wrap > .eyebrow,.credits .wrap > h2{text-align:center}
+  .dcard{width:min(420px,100%);margin:34px auto 0;background:rgba(16,12,30,.92);border:1px solid var(--line-2);border-radius:18px;overflow:hidden;box-shadow:0 40px 90px -30px #000,0 0 70px -30px #8b6dff66}
+  .dc-banner{height:112px;background:linear-gradient(120deg,#7657f0,#b16cff 45%,#5ad1ff);background-size:cover;background-position:center}
+  .dc-row{display:flex;align-items:flex-end;justify-content:space-between;padding:0 18px;margin-top:-42px}
+  .dc-avatar{position:relative;width:88px;height:88px;border-radius:50%;background:var(--ink-2);padding:4px;box-shadow:0 6px 18px #0007}
+  .dc-avatar img{width:80px;height:80px;border-radius:50%;object-fit:cover;display:block;background:var(--ink-2)}
+  .dc-avatar .ini{width:80px;height:80px;border-radius:50%;display:grid;place-items:center;font:700 28px var(--display);color:#fff;background:linear-gradient(140deg,#9a7dff,#7657f0)}
+  .dc-status{position:absolute;right:2px;bottom:2px;width:22px;height:22px;border-radius:50%;border:4px solid #16122e;background:#747f8d}
+  .dc-status.online{background:#3fd77f}.dc-status.idle{background:#f2b84b}.dc-status.dnd{background:#ff5d6c}.dc-status.offline{background:#747f8d}
+  .dc-role{margin-bottom:10px;font:700 12px var(--body);letter-spacing:.02em;color:#fff;background:linear-gradient(135deg,#9a7dff,#7657f0);padding:6px 13px;border-radius:999px;box-shadow:0 8px 20px -10px #8b6dffcc}
+  .dc-plate{margin:12px 16px 18px;background:rgba(8,6,16,.6);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .dc-name{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .dc-name b{font:700 20px var(--display);letter-spacing:-.01em;color:#fff}
+  .dc-name span{font-size:14px;color:var(--mist)}
+  .dc-custom{margin-top:8px;font-size:14px;color:var(--star);display:flex;align-items:center;gap:7px}
+  .dc-custom .emo{font-size:15px}
+  .dc-act{margin-top:12px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:12px;align-items:center}
+  .dc-act .art{width:54px;height:54px;border-radius:9px;flex:none;object-fit:cover;background:var(--ink-2)}
+  .dc-act .art.round{border-radius:50%}
+  .dc-act .meta{min-width:0;flex:1}
+  .dc-act .meta small{display:block;font:700 10.5px var(--body);letter-spacing:.08em;text-transform:uppercase;color:var(--violet-hi);margin-bottom:3px}
+  .dc-act .meta b{display:block;font-size:14px;color:#fff;font-family:var(--body);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-act .meta span{display:block;font-size:12.5px;color:var(--mist);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dc-bar{height:4px;border-radius:999px;background:var(--line-2);margin-top:7px;overflow:hidden}
+  .dc-bar i{display:block;height:100%;background:linear-gradient(90deg,#9a7dff,#5ad1ff);width:0}
+
   /* reveal on scroll */
   .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
   .reveal.in{opacity:1;transform:none}
@@ -529,6 +556,25 @@
     </div>
   </section>
 
+  <section class="sec credits reveal" id="credits" hidden>
+    <div class="wrap">
+      <p class="eyebrow">Credits</p>
+      <h2>Who built Orbit</h2>
+      <div class="dcard" id="dcard">
+        <div class="dc-banner" id="dc-banner"></div>
+        <div class="dc-row">
+          <div class="dc-avatar"><img id="dc-av" alt="" width="80" height="80"><span class="dc-status" id="dc-status" title=""></span></div>
+          <span class="dc-role">Main Software Engineer</span>
+        </div>
+        <div class="dc-plate">
+          <div class="dc-name"><b id="dc-name">—</b><span id="dc-user"></span></div>
+          <div class="dc-custom" id="dc-custom" hidden></div>
+          <div class="dc-act" id="dc-act" hidden></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <footer>
     <span class="fbrand"><img src="/logo.png" alt="">Orbit</span>
     <a href="/">Already installed? Open Orbit →</a>
@@ -610,6 +656,68 @@
 })();
 // independent failsafe: whatever happens above, never leave a section hidden
 setTimeout(() => document.querySelectorAll('.reveal:not(.in)').forEach(el => el.classList.add('in')), 3000);
+
+// ---------- live Orbit credit card ("Lanyard for Orbit": /api/lanyard/:user) ----------
+(() => {
+  const ORBIT_USER = '__';   // Orbit username (or id) to show. Needs Settings → Privacy → Public profile card ON.
+  const $ = id => document.getElementById(id);
+  const sec = $('credits');
+  const statusText = { online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' };
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const initials = n => (String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase();
+  let sp = null;   // {start,end} of the current song, for the smooth progress bar
+
+  function render(d) {
+    if (!d || !d.orbit_user) { sec.hidden = true; return; }
+    const u = d.orbit_user;
+    sec.hidden = false;
+    // avatar (Orbit stores a usable path/URL; initials fallback when there's no avatar)
+    const av = $('dc-av'), avWrap = av.parentElement;
+    avWrap.querySelector('.ini')?.remove();
+    if (u.avatar) { av.src = u.avatar; av.alt = u.display_name || ''; av.style.display = ''; }
+    else { av.removeAttribute('src'); av.style.display = 'none'; const ini = document.createElement('span'); ini.className = 'ini'; ini.textContent = initials(u.display_name || u.username); avWrap.insertBefore(ini, avWrap.firstChild); }
+    // banner: image, then solid colour, else the CSS gradient stays
+    const b = $('dc-banner');
+    if (u.banner) { b.style.backgroundImage = `url("${u.banner}")`; b.style.backgroundSize = 'cover'; b.style.backgroundPosition = 'center'; }
+    else if (u.banner_color) b.style.background = u.banner_color;
+    // name (+ optional gradient name colour) and status
+    const nm = $('dc-name'); nm.textContent = u.display_name || u.username;
+    if (u.name_color && u.name_color2) { nm.style.background = `linear-gradient(90deg,${u.name_color},${u.name_color2})`; nm.style.webkitBackgroundClip = 'text'; nm.style.backgroundClip = 'text'; nm.style.color = 'transparent'; }
+    else if (u.name_color) nm.style.color = u.name_color;
+    $('dc-user').textContent = '@' + u.username;
+    const st = d.status || 'offline';
+    const dot = $('dc-status'); dot.className = 'dc-status ' + st; dot.title = statusText[st] || st;
+    // custom status
+    const cb = $('dc-custom');
+    if (d.status_text) { cb.innerHTML = `<span>${esc(d.status_text)}</span>`; cb.hidden = false; } else cb.hidden = true;
+    // activity — Orbit sends one effective activity {type, name, title, artist, art, start, end}
+    const act = $('dc-act'), a = d.activity;
+    sp = null;
+    if (a && a.type === 'listening') {
+      const dur = (a.end && a.start) ? a.end - a.start : 0;
+      const pct = dur ? Math.min(100, Math.max(0, (Date.now() - a.start) / dur * 100)) : 0;
+      act.innerHTML = `${a.art ? `<img class="art" src="${esc(a.art)}" alt="">` : ''}<div class="meta"><small>Listening to ${esc(a.name || 'Spotify')}</small><b>${esc(a.title || '')}</b>${a.artist ? `<span>by ${esc(a.artist)}</span>` : ''}<div class="dc-bar"><i style="width:${pct}%"></i></div></div>`;
+      act.hidden = false; sp = dur ? { start: a.start, end: a.end } : null;
+    } else if (a) {
+      const verb = a.type === 'watching' ? 'Watching' : a.type === 'competing' ? 'Competing in' : 'Playing';
+      const elapsed = a.start ? elapsedStr(a.start) : '';
+      act.innerHTML = `${a.art ? `<img class="art round" src="${esc(a.art)}" alt="">` : ''}<div class="meta"><small>${verb}</small><b>${esc(a.name || a.title || '')}</b>${a.title && a.name !== a.title ? `<span>${esc(a.title)}</span>` : ''}${elapsed ? `<span>${elapsed}</span>` : ''}</div>`;
+      act.hidden = false;
+    } else act.hidden = true;
+  }
+  function elapsedStr(start) { const s = Math.max(0, Math.floor((Date.now() - start) / 1000)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return (h ? h + 'h ' : '') + m + 'm elapsed'; }
+
+  function load() {
+    fetch(`/api/lanyard/${encodeURIComponent(ORBIT_USER)}`, { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && j.success) render(j.data); else sec.hidden = true; })
+      .catch(() => {});
+  }
+  // smooth Spotify progress between refreshes
+  setInterval(() => { const bar = document.querySelector('#dc-act .dc-bar i'); if (bar && sp) bar.style.width = Math.min(100, (Date.now() - sp.start) / (sp.end - sp.start) * 100) + '%'; }, 1000);
+  load();
+  setInterval(load, 7000);   // live-ish: refresh presence every 7s
+})();
 </script>
 </body>
 </html>

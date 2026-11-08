@@ -264,6 +264,7 @@ function userPrivacy(body) {
   body.innerHTML = `<h2>Privacy &amp; Safety</h2>
     <label class="row-toggle"><span class="rt">Send read receipts<small>Let people see when you’ve read their direct messages. Turning this off also hides their “seen” status from you.</small></span><span class="toggle"><input type="checkbox" data-priv="read_receipts" ${me.read_receipts ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Strict blocking<small>When on, people you’ve blocked can’t see your online status in shared servers, and their messages are hidden from you completely instead of collapsed.</small></span><span class="toggle"><input type="checkbox" data-priv="block_mode" ${me.block_mode === 'strict' ? 'checked' : ''}><span></span></span></label>
+    <label class="row-toggle"><span class="rt">Public profile card<small>Let anyone read your live status and activity at <b>/api/lanyard/${esc(me.username)}</b> — the Orbit version of Lanyard. Used for embeddable profile cards. Turn off to keep your presence private.</small></span><span class="toggle"><input type="checkbox" data-priv="card_public" ${me.card_public ? 'checked' : ''}><span></span></span></label>
     <h3>Appear offline to specific people</h3>
     <p class="hint">Chosen friends always see you as offline, even when you’re online. Everyone else sees your real status.</p>
     <div class="invis-grid">${friends.length ? friends.map(chip).join('') : '<p class="hint">Add some friends first.</p>'}</div>

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.28.1';
+const VERSION = '1.29.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -147,7 +147,7 @@ function start(opts = {}) {
   [['pronouns', "TEXT DEFAULT ''"], ['theme_primary', 'TEXT'], ['theme_accent', 'TEXT'], ['name_color', 'TEXT'], ['name_color2', 'TEXT'],
    ['avatar_crop', 'TEXT'], ['banner_crop', 'TEXT'], ['links', "TEXT DEFAULT '[]'"], ['connections', "TEXT DEFAULT '[]'"], ['spotify', 'TEXT'],
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
-   ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"],
+   ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"], ['card_public', 'INTEGER DEFAULT 0'],
    ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"],
    ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"], ['live_games', "TEXT DEFAULT '{}'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
@@ -449,6 +449,28 @@ function start(opts = {}) {
     run('DELETE FROM codes WHERE email=? AND purpose=?', email, purpose);
   }
   app.get('/api/info', (req, res) => res.json({ name: 'Orbit', version: VERSION, email_verification: emailEnabled, max_upload_mb: maxUpload / 1048576, spotify: !!SPOTIFY_ID, gif: !!GIPHY_KEY }));
+
+  // "Lanyard for Orbit": a public, read-only presence API. Opt-in per user (Settings → Privacy →
+  // Public profile card). Returns live status, custom status and current activity/Spotify.
+  app.get('/api/lanyard/:key', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    const key = String(req.params.key || '');
+    const row = one('SELECT * FROM users WHERE id=? OR lower(username)=lower(?)', key, key.toLowerCase());
+    if (!row || !row.card_public) return res.status(404).json({ success: false, error: 'User not found, or their public card is turned off.' });
+    const pu = publicUser(row);
+    let status = online.get(row.id)?.status || 'offline';
+    if (status === 'invisible') status = 'offline';
+    const activity = status === 'offline' ? null : (activities.get(row.id) || null);
+    res.json({ success: true, data: {
+      orbit_user: { id: pu.id, username: pu.username, display_name: pu.display_name, avatar: pu.avatar || null,
+        banner: pu.banner || null, banner_color: pu.banner_color || null, accent: pu.accent || null,
+        name_color: pu.name_color || null, name_color2: pu.name_color2 || null, badges: pu.badges || [], staff: pu.staff, created: pu.created },
+      status, status_text: pu.status_text || '',
+      activity,
+      listening_to_spotify: !!(activity && activity.type === 'listening'),
+      spotify: activity && activity.type === 'listening' ? activity : null } });
+  });
   app.post('/api/auth/register', wrap(async (req, res) => {
     const { email, username, password, display_name } = req.body || {};
     limit('reg:' + clientIp(req), 5, 3600e3, 'Too many new accounts from your network.');
@@ -647,7 +669,7 @@ function start(opts = {}) {
   // ----- me / users -----
   app.get('/api/me', auth, wrap((req, res) => {
     const me = { ...publicUser(req.user), email: req.user.email,
-      read_receipts: req.user.read_receipts == null ? 1 : req.user.read_receipts, block_mode: req.user.block_mode || 'standard',
+      read_receipts: req.user.read_receipts == null ? 1 : req.user.read_receipts, block_mode: req.user.block_mode || 'standard', card_public: req.user.card_public ? 1 : 0,
       invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id),
       spotify_conn: spotifyConn(req.user), twofa: twofaInfo(req.user) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
@@ -1421,6 +1443,7 @@ function start(opts = {}) {
     const b = req.body || {};
     if (b.read_receipts !== undefined) run('UPDATE users SET read_receipts=? WHERE id=?', b.read_receipts ? 1 : 0, req.user.id);
     if (b.block_mode !== undefined && ['standard', 'strict'].includes(b.block_mode)) run('UPDATE users SET block_mode=? WHERE id=?', b.block_mode, req.user.id);
+    if (b.card_public !== undefined) run('UPDATE users SET card_public=? WHERE id=?', b.card_public ? 1 : 0, req.user.id);
     if (Array.isArray(b.invisible_to)) {
       const fset = new Set(friendIds(req.user.id));
       const wanted = [...new Set(b.invisible_to.filter(x => fset.has(x)))];
@@ -1430,8 +1453,8 @@ function start(opts = {}) {
       // anyone whose view of me changed needs a fresh presence ping
       broadcastPresence(req.user.id);
     }
-    const u = one('SELECT read_receipts, block_mode FROM users WHERE id=?', req.user.id);
-    res.json({ read_receipts: u.read_receipts == null ? 1 : u.read_receipts, block_mode: u.block_mode || 'standard',
+    const u = one('SELECT read_receipts, block_mode, card_public FROM users WHERE id=?', req.user.id);
+    res.json({ read_receipts: u.read_receipts == null ? 1 : u.read_receipts, block_mode: u.block_mode || 'standard', card_public: u.card_public ? 1 : 0,
       invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id) });
   }));
 
