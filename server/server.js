@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.9';
+const VERSION = '1.25.10';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -137,8 +137,8 @@ function start(opts = {}) {
     CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id, created);
     CREATE TABLE IF NOT EXISTS voice_passes(id TEXT PRIMARY KEY, channel_id TEXT, user_id TEXT, granted_by TEXT, expires INTEGER, created INTEGER);
     CREATE INDEX IF NOT EXISTS idx_voicepass ON voice_passes(channel_id, user_id);
-    CREATE TABLE IF NOT EXISTS game_art(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
-    DELETE FROM game_art WHERE url IS NULL;
+    CREATE TABLE IF NOT EXISTS game_art2(name TEXT PRIMARY KEY, url TEXT, checked INTEGER);
+    DROP TABLE IF EXISTS game_art;
     CREATE TABLE IF NOT EXISTS twofa_tickets(ticket TEXT PRIMARY KEY, user_id TEXT, purpose TEXT, method TEXT, target TEXT, code_hash TEXT, expires INTEGER, tries INTEGER DEFAULT 0, sent INTEGER);
   `);
   const userCols = all0(db, "PRAGMA table_info(users)").map(c => c.name);
@@ -1651,14 +1651,16 @@ function start(opts = {}) {
   }
   async function gameArt(name) {
     const key = normGame(name); if (!key) return null;
-    const row = one('SELECT url, checked FROM game_art WHERE name=?', key);
+    const row = one('SELECT url, checked FROM game_art2 WHERE name=?', key);
     if (row && (row.url ? row.checked > now() - 30 * 864e5 : row.checked > now() - 864e5)) return row.url;
     if (artInflight.has(key)) return artInflight.get(key);
     const job = (async () => {
       let url = null;
       const tries = OFFICIAL_SITES[key] ? [() => siteIcon(OFFICIAL_SITES[key]), () => wikiArt(name), () => steamArt(name)] : [() => steamArt(name), () => wikiArt(name)];
-      for (const t of tries) { if (url) break; try { url = await t(); } catch {} }
-      run('INSERT OR REPLACE INTO game_art(name, url, checked) VALUES(?,?,?)', key, url, now());
+      // only keep a picture that really downloads as an image; otherwise try the next source
+      const loads = async (u) => { try { await fetchLimited(u, 6 * 1024 * 1024, 0, true); return true; } catch { return false; } };
+      for (const t of tries) { let u = null; try { u = await t(); } catch {} if (u && await loads(u)) { url = u; break; } }
+      run('INSERT OR REPLACE INTO game_art2(name, url, checked) VALUES(?,?,?)', key, url, now());
       return url;
     })().finally(() => artInflight.delete(key));
     artInflight.set(key, job);
