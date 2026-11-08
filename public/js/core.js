@@ -392,3 +392,21 @@ applyAppearance();
   document.addEventListener('focusout', () => setTimeout(fit, 60));
   fit();
 })();
+
+/* every password box gets an eye button to show or hide what you typed */
+ic('eye', '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>');
+ic('eyeSlash', '<path d="M3 3l18 18M10.6 5.1A9.8 9.8 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.3 2 12 2 12s3.6 7 10 7a9.5 9.5 0 0 0 4.4-1.1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>');
+function addPasswordEyes(root = document) {
+  root.querySelectorAll?.('input[type=password]:not([data-eye])').forEach(inp => {
+    inp.dataset.eye = '1';
+    const wrap = document.createElement('span'); wrap.className = 'pw-wrap';
+    inp.parentNode.insertBefore(wrap, inp); wrap.appendChild(inp);
+    const b = document.createElement('button'); b.type = 'button'; b.className = 'pw-eye'; b.tabIndex = -1;
+    const set = (show) => { inp.type = show ? 'text' : 'password'; b.innerHTML = show ? I.eyeSlash : I.eye; b.title = show ? 'Hide password' : 'Show password'; b.setAttribute('aria-label', b.title); };
+    set(false);
+    b.onmousedown = (e) => e.preventDefault();   // keep the cursor in the box
+    b.onclick = () => { set(inp.type === 'password'); inp.focus(); };
+    wrap.appendChild(b);
+  });
+}
+new MutationObserver((ms) => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1) addPasswordEyes(n.matches?.('input') ? n.parentNode : n); }).observe(document.documentElement, { childList: true, subtree: true });

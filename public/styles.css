@@ -1851,3 +1851,8 @@ body.pad .msg .toolbar{display:none!important}
 .typing .dots i{width:6px;height:6px}
 @media (max-width:760px){.chat>.composer{padding-bottom:max(26px,calc(env(safe-area-inset-bottom) + 20px))!important}.chat>.composer .typing{left:16px;bottom:max(4px,env(safe-area-inset-bottom))}}
 body.pad .chat>.composer .typing{bottom:4px}
+.pw-wrap{position:relative;display:block}
+.pw-wrap>input{width:100%;padding-right:44px!important}
+.pw-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--muted);background:none;border:0;cursor:pointer}
+.pw-eye:hover{color:var(--text);background:var(--bg-hover)}
+.pw-eye svg{width:18px;height:18px}

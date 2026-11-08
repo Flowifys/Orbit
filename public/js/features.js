@@ -445,7 +445,7 @@ function createCategoryModal(sid) {
     <div class="mb"><div class="field"><label>Category name</label><input class="input" name="name" maxlength="40" placeholder="New Category"></div></div>
     <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Create Category</button></div>`, (m, close) => {
     const go = async () => { const name = $('[name=name]', m).value.trim(); if (!name) return; try { await api('POST', `/api/servers/${sid}/channels`, { name, type: 'category' }); await fetchServer(sid); close(); renderSidebar(); } catch (e) { toast(e.message, true); } };
-    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go(); $('[name=name]', m).focus();
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); }; $('[name=name]', m).focus();
   });
 }
 function categoryMenu(e, catId) {
@@ -462,7 +462,7 @@ function renameCategoryModal(c) {
   modal(`<div class="mh" style="text-align:left"><h2>Rename category</h2></div><div class="mb"><input class="input" name="name" maxlength="40" value="${esc(c.name)}"></div>
     <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (m, close) => {
     const go = async () => { try { await api('PATCH', '/api/channels/' + c.id, { name: $('[name=name]', m).value }); close(); } catch (e) { toast(e.message, true); } };
-    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go(); $('[name=name]', m).select();
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); }; $('[name=name]', m).select();
   });
 }
 

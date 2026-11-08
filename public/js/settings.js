@@ -498,7 +498,7 @@ function passwordPrompt(title, text, okLabel, fn, danger) {
   modal(`<div class="mh"><h2>${esc(title)}</h2><p>${esc(text)}</p></div><div class="mb"><div class="field"><label>Your password</label><input class="input" type="password" name="p" autocomplete="current-password"></div><div class="err hidden"></div></div>
     <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" data-ok>${esc(okLabel)}</button></div>`, (m, close) => {
     const go = async () => { try { await fn($('[name=p]', m).value); close(); } catch (x) { const e = $('.err', m); e.textContent = x.message; e.classList.remove('hidden'); } };
-    $('[data-ok]', m).onclick = go; $('[name=p]', m).onkeydown = (e) => e.key === 'Enter' && go();
+    $('[data-ok]', m).onclick = go; $('[name=p]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
     setTimeout(() => $('[name=p]', m).focus(), 30);
   });
 }
@@ -518,7 +518,7 @@ function twofaSetupModal(method, done) {
           $('.mh p', m).textContent = `Enter the 6-digit code we sent to ${r.to}.`;
           $('.tf-step', m).innerHTML = `<div class="field"><label>Code</label><input class="input code-input" name="code" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>`;
           $('[data-ok]', m).textContent = 'Turn on';
-          $('[name=code]', m).onkeydown = (e) => e.key === 'Enter' && go();
+          $('[name=code]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
           setTimeout(() => $('[name=code]', m).focus(), 30);
         } else {
           const r = await api('POST', '/api/me/2fa/confirm', { ticket, code: $('[name=code]', m).value });
@@ -527,7 +527,7 @@ function twofaSetupModal(method, done) {
       } catch (x) { err(x.message); }
     };
     $('[data-ok]', m).onclick = go;
-    $$('input', m).forEach(i => i.onkeydown = (e) => e.key === 'Enter' && go());
+    $$('input', m).forEach(i => i.onkeydown = (e) => { if (e.key === 'Enter') go(); });
     setTimeout(() => $('input', m)?.focus(), 30);
   });
 }

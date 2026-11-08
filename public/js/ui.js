@@ -1466,7 +1466,7 @@ function createServerModal() {
         await fetchServer(sd.id); close(); selectServer(sd.id);
       } catch (e) { toast(e.message, true); }
     };
-    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go();
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
   });
 }
 function joinServerModal(prefill = '') {
@@ -1475,7 +1475,7 @@ function joinServerModal(prefill = '') {
     <p style="font-size:13px;color:var(--muted)">Invites look like <b>hTKzmak</b> or <b>${esc(location.origin)}/invite/hTKzmak</b></p></div>
     <div class="mf"><button class="btn ghost" data-close>Back</button><span class="sp"></span><button class="btn primary" data-ok>Join Server</button></div>`, (m, close) => {
     const go = async () => { const code = $('[name=code]', m).value.trim().split('/').pop(); if (!code) return; close(); showInvite(code); };
-    $('[data-ok]', m).onclick = go; $('[name=code]', m).onkeydown = (e) => e.key === 'Enter' && go();
+    $('[data-ok]', m).onclick = go; $('[name=code]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
   });
 }
 async function showInvite(code) {
@@ -1523,7 +1523,7 @@ function createChannelModal(type = 'text', parentId = null) {
       try { const c = await api('POST', `/api/servers/${sd.id}/channels`, { name, type: sel, private: priv, allowed_roles: roles, parent_id: parentId }); await fetchServer(sd.id); close(); if (c.type === 'text' || c.type === 'forum') selectChannel(c.id); else renderSidebar(); }
       catch (e) { toast(e.message, true); }
     };
-    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => e.key === 'Enter' && go();
+    $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
   });
 }
 function channelSettingsModal(cid) {
@@ -1630,7 +1630,7 @@ function customStatusModal() {
     const save = async (v) => { try { const u = await api('PATCH', '/api/me', { status_text: v }); S.me = { ...S.me, ...u }; renderUserPanel(); close(); } catch (e) { toast(e.message, true); } };
     $('[data-ok]', m).onclick = () => save($('[name=st]', m).value);
     $('[data-clear]', m).onclick = () => save('');
-    $('[name=st]', m).onkeydown = (e) => e.key === 'Enter' && save(e.target.value);
+    $('[name=st]', m).onkeydown = (e) => { if (e.key === 'Enter') save(e.target.value); };
   });
 }
 

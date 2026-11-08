@@ -1,5 +1,5 @@
 // Orbit service worker — enables install + offline shell. Network-first so the app stays current.
-const CACHE = 'orbit-shell-v42';
+const CACHE = 'orbit-shell-v43';
 const MEDIA = 'orbit-media-v1';
 async function trimMedia() { const c = await caches.open(MEDIA); const keys = await c.keys(); for (const k of keys.slice(0, Math.max(0, keys.length - 600))) await c.delete(k); }
 const SHELL = ['/', '/styles.css', '/js/core.js', '/js/voice.js', '/js/ui.js', '/js/features.js', '/js/titlebar.js', '/js/profile.js', '/js/gamepad.js', '/js/settings.js', '/logo.png', '/manifest.webmanifest', '/sounds/ring1.mp3','/sounds/ring2.mp3','/sounds/ring3.mp3','/sounds/notif1.mp3','/sounds/notif2.mp3','/sounds/notif3.mp3','/sounds/join.mp3','/sounds/leave.mp3'];
