@@ -53,7 +53,6 @@
         </div>
         <div class="tc-body">
           <div class="tc-name"><b>Orbit</b><span>@orbit</span></div>
-          <p class="tc-bio">The founder and owner — the one who sketched out what a chat app should feel like when it's genuinely built for the people using it, not for an ad budget. Sets the product vision, the design direction, and the bar every release has to clear before it ships.</p>
           <div class="tc-tags"><span>Vision</span><span>Product</span><span>Design direction</span></div>
         </div>
       </div>
@@ -69,7 +68,6 @@
         </div>
         <div class="tc-body">
           <div class="tc-name"><b>Flow</b><span>@__</span></div>
-          <p class="tc-bio">Builds and ships Orbit end to end — the real-time voice and video stack, screen sharing, the two-step security and sign-in system, and the release pipeline that pushes Orbit to Windows, Linux, iPhone, Android, Quest and Xbox. If it runs, Flow wrote it.</p>
           <div class="tc-tags"><span>Full-stack</span><span>Voice &amp; Video</span><span>Security</span><span>Six platforms</span></div>
         </div>
       </div>
@@ -113,12 +111,15 @@
       .then(r => r.ok ? r.json() : null)
       .then(j => {
         if (!j || !j.success) return;
-        const d = j.data, dot = el.querySelector('.st');
+        const d = j.data, u = d.orbit_user || {}, dot = el.querySelector('.st');
         dot.className = 'st ' + (d.status || 'offline');
         dot.title = ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' })[d.status] || '';
-        if (d.orbit_user && d.orbit_user.avatar) {
-          const inner = el.querySelector('.inner');
-          inner.innerHTML = '<img src="' + d.orbit_user.avatar + '" alt="">';
+        if (u.avatar) el.querySelector('.inner').innerHTML = '<img src="' + u.avatar + '" alt="">';
+        // use the member's real Orbit banner / banner colour on the card
+        const banner = el.closest('.tcard')?.querySelector('.tc-banner');
+        if (banner) {
+          if (u.banner) { banner.style.backgroundImage = 'url("' + u.banner + '")'; banner.style.backgroundSize = 'cover'; banner.style.backgroundPosition = 'center'; }
+          else if (u.banner_color) banner.style.background = u.banner_color;
         }
       }).catch(() => {});
   }
