@@ -1569,3 +1569,15 @@ kbd{font:600 11px var(--font);background:var(--bg-3);border:1px solid var(--line
   .composer{padding-bottom:max(12px,env(safe-area-inset-bottom))}
   .members.force{width:min(320px,88vw)}
 }
+
+/* ===== 1.19: activities ===== */
+.game-tile{width:64px;height:64px;border-radius:14px;flex:none;display:grid;place-items:center;font-weight:800;font-size:22px;letter-spacing:-.02em;color:#fff;
+  background:linear-gradient(140deg,hsl(var(--gh) 62% 46%),hsl(calc(var(--gh) + 40) 58% 30%));box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.act-game .art-ph svg{width:28px;height:28px;color:var(--muted)}
+.act-game .act-meta b{font-weight:700;color:var(--text)}
+.act-since{color:var(--accent)!important;font-weight:600}
+.act-types{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.act-types .chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg-3);border:1px solid var(--line);color:var(--text-2);border-radius:999px;padding:6px 12px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.act-types .chip:hover{color:var(--text)}
+.act-types .chip.on{background:var(--accent-soft);border-color:var(--accent);color:var(--text)}
+.act-types .chip svg{width:15px;height:15px}

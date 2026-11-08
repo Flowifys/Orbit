@@ -1,0 +1,30 @@
+# Builds the Windows app (Orbit.exe) on GitHub and attaches it to a release, so
+# https://YOUR-ORBIT/download/windows always has a file to hand out.
+# Runs when the desktop app's code changes on main, or by hand from the Actions tab.
+name: Build Windows app
+on:
+  push:
+    branches: [main]
+    paths: ['electron/**', 'scripts/**', 'package.json', '.github/workflows/desktop.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: desktop-build, cancel-in-progress: true }
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npx electron-builder --win --publish never
+        env: { CSC_IDENTITY_AUTO_DISCOVERY: 'false' }
+      - name: Attach Orbit.exe to the release
+        shell: bash
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          TAG="v$VER"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Orbit $VER" --notes "Orbit for Windows. Download Orbit.exe and run it — no install needed." --latest
+          gh release upload "$TAG" dist/Orbit.exe --clobber

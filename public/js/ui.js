@@ -130,7 +130,7 @@ const pickUser = (m) => { const { nick, joined, roles, ...u } = m; if (u.activit
 function connectSocket() {
   socket = io({ auth: { token: S.token, status: S.prefs.status } });
   let wasDown = false;
-  socket.on('connect', () => { $('.offline-banner')?.remove(); if (wasDown) { wasDown = false; resync(); } });
+  socket.on('connect', () => { $('.offline-banner')?.remove(); if (wasDown) { wasDown = false; resync(); } Act.sent = undefined; Act.push(); });
   socket.on('disconnect', () => { wasDown = true; if (!$('.offline-banner')) $('.main')?.prepend(h('<div class="offline-banner">Reconnecting…</div>')); });
   socket.on('connect_error', (e) => { if (e.message === 'unauthorized') logout(); });
   socket.on('friends:refresh', (f) => { S.friends = f; cacheFriends(); if (S.view.server === '@me' && !S.view.channel) renderMain(); renderRail(); renderSidebar(); });
@@ -386,7 +386,7 @@ function statusMenu(anchor) {
   const r = anchor.getBoundingClientRect();
   const items = [['View profile', () => profilePopout(S.me.id, anchor)], ['Edit profile', () => openUserSettings('profile')], '-',
     ...opts.map(([k, l, c]) => [`<span><span class="dot" style="background:${c}"></span>${l}</span>${S.prefs.status === k ? I.check : ''}`, () => { S.prefs.status = k; savePrefs(); socket.emit('presence', k); renderUserPanel(); }]),
-    '-', ['Set custom status', () => customStatusModal()], ['Log out', logout, 'danger']];
+    '-', ['Set custom status', () => customStatusModal()], ['Set activity', () => activityModal()], ['Log out', logout, 'danger']];
   contextMenu({ clientX: r.left, clientY: r.top - 8, above: true }, items, 'status-menu');
 }
 function voiceBarHtml() {
@@ -663,7 +663,7 @@ function renderMembers() {
   const sortName = (a, b) => nameIn(sd.id, a.id).localeCompare(nameIn(sd.id, b.id));
   box.innerHTML = groups.map(([t, list]) => `<h4>${esc(t)} — ${list.length}</h4>` + list.sort(sortName).map(m => {
     const color = colorIn(sd.id, m.id);
-    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${memBanner(S.users[m.id] || m)}${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(S.users[m.id] || m)}</b>${activityLine(m.id) ? `<small class="act-line">${I.music.replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
+    return `<button class="mem ${statusOf(m.id) === 'offline' ? 'offline' : ''}" data-uid="${m.id}">${memBanner(S.users[m.id] || m)}${avatar(S.users[m.id] || m, 's32', true)}<span class="who"><b style="${color ? 'color:' + color : ''}">${esc(nameIn(sd.id, m.id))}${m.id === sd.owner_id ? `<span class="crown" title="Server owner">${I.crown.replace('width="20" height="20"', 'width="14" height="14"')}</span>` : ''}${badgeHtml(S.users[m.id] || m)}</b>${activityLine(m.id) ? `<small class="act-line">${(I[ACT_ICON[activityOf(m.id)?.type]] || I.music).replace('width="20" height="20"', 'width="12" height="12"')} ${esc(activityLine(m.id))}</small>` : m.status_text ? `<small>${esc(m.status_text)}</small>` : ''}</span></button>`;
   }).join('')).join('');
   box.onclick = (e) => { const b = e.target.closest('[data-uid]'); if (b) profilePopout(b.dataset.uid, b, 'left'); };
   box.oncontextmenu = (e) => { const b = e.target.closest('[data-uid]'); if (b) { e.preventDefault(); memberMenu(e, sd.id, b.dataset.uid); } };
@@ -1268,7 +1268,8 @@ function emojiPicker(anchor, onPick, keepOpen) {
 }
 function activityHtml(uidv) {
   const a = activityOf(uidv);
-  if (!a || a.type !== 'listening') return '';
+  if (!a) return '';
+  if (a.name !== 'Spotify' || !a.title) return gameActivityHtml(a);
   const dur = Math.max(1, a.end - a.start), pos = Math.min(dur, Date.now() - a.start);
   const t = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   return `<div class="activity"><h5>Listening to ${esc(a.name)}</h5><div class="act-row">${a.art ? `<img src="${esc(a.art)}" alt="">` : `<span class="art-ph">${I.music}</span>`}

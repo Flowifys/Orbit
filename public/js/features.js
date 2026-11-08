@@ -222,6 +222,7 @@ async function selfProfilePopout(anchor) {
           <div class="sm-statuses hidden">${STATUS.map(([k, l, c, d]) => `<button data-st="${k}" class="${k === st ? 'on' : ''}"><span class="st-solo">${stDot(k)}</span><span>${l}${d ? `<small>${d}</small>` : ''}</span></button>`).join('')}</div>
           <div class="sm-sep"></div>
           <button data-sm="copy">${I.copy}<span>Copy User ID</span></button>
+          <button data-sm="activity">${I.gamepad}<span>${S.prefs.customActivity ? 'Change activity' : 'Set activity'}</span></button>
           <button data-sm="settings">${I.gear}<span>User Settings</span></button>
           ${Install.canOffer() ? `<button data-sm="install">${I.download}<span>Install Orbit app</span></button>` : ''}
           <button data-sm="apps">${I.external}<span>Download apps</span></button>
@@ -233,6 +234,7 @@ async function selfProfilePopout(anchor) {
   el.onclick = (e) => {
     const a = e.target.closest('[data-sm]')?.dataset.sm;
     if (e.target.closest('[data-cstatus]')) { L.close(); return customStatusModal(); }
+    if (a === 'activity') { L.close(); return activityModal(); }
     if (a === 'edit') { L.close(); openUserSettings('profile'); }
     if (a === 'settings') { L.close(); openUserSettings(); }
     if (a === 'copy') { L.close(); copy(S.me.id); }
@@ -941,4 +943,78 @@ async function labelBookmark(id) {
   const label = await promptModal('Label', 'A short searchable label', it?.label || '', 'Save');
   if (label === null) return;
   try { await api('PATCH', '/api/bookmarks/' + id, { label }); await refreshBookmarks(); } catch (x) { toast(x.message, true); }
+}
+
+/* ---------- activities: "Playing Fortnite" from the desktop app, or one you set yourself ---------- */
+ic('gamepad', '<path d="M6 11h4M8 9v4M15 12h.01M18 10h.01"/><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6l-.6 6.1A2.9 2.9 0 0 0 5 18c1 0 1.9-.5 2.4-1.3L8.5 15h7l1.1 1.7A2.9 2.9 0 0 0 19 18a2.9 2.9 0 0 0 2.9-3.3l-.6-6.1A4 4 0 0 0 17.3 5z"/>');
+ic('tv', '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>');
+ic('trophy', '<path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/>');
+const ACT_ICON = { playing: 'gamepad', watching: 'tv', listening: 'music', competing: 'trophy' };
+const ACT_HEAD = { playing: 'Playing a game', watching: 'Watching', listening: 'Listening to', competing: 'Competing in' };
+const sinceText = (t) => { const m = Math.max(0, Math.floor((Date.now() - t) / 60000)); return m < 1 ? 'just started' : m < 60 ? `for ${m} min` : `for ${Math.floor(m / 60)} h ${m % 60 ? (m % 60) + ' min' : ''}`.trim(); };
+// a colored tile with the game's initials, so we never need anyone's logo
+function gameTile(name) {
+  let h = 0; for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const ini = name.replace(/[^\p{L}\p{N} ]/gu, '').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  return `<span class="game-tile" style="--gh:${h % 360}">${esc(ini)}</span>`;
+}
+function gameActivityHtml(a) {
+  return `<div class="activity act-game"><h5>${ACT_HEAD[a.type] || 'Activity'}</h5><div class="act-row">${a.type === 'playing' ? gameTile(a.name) : `<span class="art-ph">${I[ACT_ICON[a.type]] || I.gamepad}</span>`}
+    <div class="act-meta"><b class="act-title">${esc(a.name)}</b>${a.details ? `<span>${esc(a.details)}</span>` : ''}<span class="act-since" data-since="${a.start || 0}">${a.start ? sinceText(a.start) : ''}</span></div></div></div>`;
+}
+setInterval(() => $$('.act-since[data-since]').forEach(el => { const t = Number(el.dataset.since); if (t) el.textContent = sinceText(t); }), 30e3);
+
+const Act = {
+  detected: null, sent: undefined,
+  desktop: !!window.orbitDesktop?.onGame,
+  wanted() {
+    if (this.desktop && S.prefs.detectGames !== false && this.detected) return { type: 'playing', name: this.detected, auto: true };
+    const c = S.prefs.customActivity;
+    if (c && (!c.until || c.until > Date.now())) return { type: c.type, name: c.name, details: c.details || '' };
+    return null;
+  },
+  async push() {
+    if (!S.me || typeof socket === 'undefined') return;
+    const w = this.wanted(), key = JSON.stringify(w);
+    if (key === this.sent) return;
+    this.sent = key;
+    try { const r = await api('PUT', '/api/me/activity', w || { clear: true }); if (r.activity) S.activities[S.me.id] = r.activity; else delete S.activities[S.me.id]; renderMembers(); }
+    catch { this.sent = undefined; }
+  },
+};
+if (Act.desktop) {
+  window.orbitDesktop.onGame((g) => { Act.detected = g; Act.push(); });
+  window.orbitDesktop.currentGame().then(g => { Act.detected = g; Act.push(); }).catch(() => {});
+}
+setInterval(() => { const c = S.prefs.customActivity; if (c?.until && c.until <= Date.now()) { delete S.prefs.customActivity; savePrefs(); } Act.push(); }, 60e3);
+
+const ACT_CLEAR = [[0, 'Don’t clear'], [30, '30 minutes'], [60, '1 hour'], [240, '4 hours'], [1440, 'Today']];
+function activityModal() {
+  const c = S.prefs.customActivity || { type: 'playing', name: '', details: '' };
+  const types = [['playing', 'Playing'], ['watching', 'Watching'], ['listening', 'Listening to'], ['competing', 'Competing in']];
+  modal(`<div class="mh"><h2>Set an activity</h2><p>Shows under your name in member lists and on your profile.</p></div>
+    <div class="mb">
+      <div class="act-types">${types.map(([k, l]) => `<button type="button" class="chip ${c.type === k ? 'on' : ''}" data-t="${k}">${I[ACT_ICON[k]]}${l}</button>`).join('')}</div>
+      <div class="field"><label>Name</label><input class="input" name="n" maxlength="64" placeholder="e.g. Fortnite, a movie, a tournament" value="${esc(c.name)}"></div>
+      <div class="field"><label>Details <small style="color:var(--muted)">optional</small></label><input class="input" name="d" maxlength="100" placeholder="e.g. Ranked with friends" value="${esc(c.details || '')}"></div>
+      <div class="field"><label>Clear after</label><div class="act-types">${ACT_CLEAR.map(([m, l], i) => `<button type="button" class="chip ${i === 0 ? 'on' : ''}" data-clr="${m}">${l}</button>`).join('')}</div></div>
+      ${Act.desktop ? `<label class="row-toggle" style="margin-top:14px"><span class="rt">Show the game I’m playing<small>The Orbit app spots popular games (Fortnite, Roblox, Minecraft, CS2, VALORANT and more) and shows them instead of this while you play.${Act.detected ? ` Playing now: <b>${esc(Act.detected)}</b>.` : ''}</small></span><span class="toggle"><input type="checkbox" data-detect ${S.prefs.detectGames !== false ? 'checked' : ''}><span></span></span></label>`
+        : '<p class="hint" style="margin-top:12px">Get the Orbit app for Windows to show the game you’re playing automatically.</p>'}
+    </div>
+    <div class="mf">${S.prefs.customActivity ? '<button class="btn ghost danger" data-clear style="margin-right:auto">Clear activity</button>' : ''}<button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Save</button></div>`, (el, close) => {
+    let type = c.type, clr = 0;
+    el.addEventListener('click', (e) => {
+      const t = e.target.closest('[data-t]'); if (t) { type = t.dataset.t; $$('[data-t]', el).forEach(b => b.classList.toggle('on', b === t)); }
+      const k = e.target.closest('[data-clr]'); if (k) { clr = Number(k.dataset.clr); $$('[data-clr]', el).forEach(b => b.classList.toggle('on', b === k)); }
+    });
+    $('[data-detect]', el)?.addEventListener('change', (e) => { S.prefs.detectGames = e.target.checked; savePrefs(); Act.push(); });
+    $('[data-clear]', el)?.addEventListener('click', () => { delete S.prefs.customActivity; savePrefs(); Act.push(); close(); toast('Activity cleared'); });
+    $('[data-ok]', el).onclick = () => {
+      const name = $('[name=n]', el).value.trim();
+      if (!name) { delete S.prefs.customActivity; savePrefs(); Act.push(); return close(); }
+      S.prefs.customActivity = { type, name: name.slice(0, 64), details: $('[name=d]', el).value.trim().slice(0, 100), until: clr ? Date.now() + clr * 60e3 : 0 };
+      savePrefs(); Act.push(); close(); toast(`${ACT_VERB[type]} ${name}`);
+    };
+    setTimeout(() => $('[name=n]', el).focus(), 30);
+  });
 }

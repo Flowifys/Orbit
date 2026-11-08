@@ -177,7 +177,8 @@ function friendState(uid) {
 const incomingCount = () => (S.friends.incoming || []).length;
 const isFriend = (uid) => friendState(uid) === 'friend';
 const isBlockedUser = (uid) => uid !== S.me?.id && (S.friends.blocked || []).some(u => u.id === uid);
-function activityLine(uidv) { const a = activityOf(uidv); return a && a.type === 'listening' ? `Listening to ${a.name}` : ''; }
+const ACT_VERB = { playing: 'Playing', watching: 'Watching', listening: 'Listening to', competing: 'Competing in' };
+function activityLine(uidv) { const a = activityOf(uidv); return a && ACT_VERB[a.type] ? `${ACT_VERB[a.type]} ${a.name}` : ''; }
 function hueOf(str) { let h = 0; for (const c of String(str)) h = (h * 31 + c.codePointAt(0)) % 360; return h; }
 function gradFor(str) { return 'transparent'; }  // server initials sit on the rail's own neutral tile (no gradients)
 function serverIcon(s) { return s.icon ? `<img src="${esc(s.icon)}" alt="">` : `<span class="srv-ini" style="background:${gradFor(s.id + s.name)}">${esc(initials(s.name))}</span>`; }

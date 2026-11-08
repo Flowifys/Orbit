@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.18.2';
+const VERSION = '1.19.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -482,7 +482,7 @@ function start(opts = {}) {
       invisible_to: all('SELECT target_id FROM invisible_to WHERE user_id=?', req.user.id).map(r => r.target_id) };
     const servers = all('SELECT s.* FROM servers s JOIN members m ON m.server_id=s.id WHERE m.user_id=? ORDER BY m.joined', req.user.id).map(serverSummary);
     const upgrade = req.sid ? undefined : token(req.user, req);   // older login without a session: give this device one
-    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries(activities), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
+    res.json({ session_token: upgrade, me, servers, dms: dmList(req.user.id), unread: unreadFor(req.user.id), presence: presenceSnapshot(req.user.id), voice: voiceSnapshot(req.user.id), activities: Object.fromEntries([...activities].filter(([k]) => k === req.user.id || statusFor(k, req.user.id) !== 'offline')), friends: friendsPayload(req.user.id), bookmarkFolders: bookmarkFolders(req.user.id) });
   }));
   // ICE servers for voice/video. Add a TURN relay in Render -> Environment so calls work on strict networks:
   //   TURN_URLS + TURN_USERNAME + TURN_CREDENTIAL   (any TURN provider)
@@ -666,12 +666,31 @@ function start(opts = {}) {
       album: isEp ? it.show?.name : it.album?.name, art: (isEp ? it.images : it.album?.images)?.[1]?.url || (isEp ? it.images : it.album?.images)?.[0]?.url || null,
       url: it.external_urls?.spotify || null, start: now() - (d.progress_ms || 0), end: now() - (d.progress_ms || 0) + (it.duration_ms || 0) });
   }
-  function setActivity(uidv, a) {
+  // each person can have a Spotify song and a game/custom activity at once; a game wins over music
+  const actParts = new Map();   // userId -> { spotify, game }
+  function setActivity(uidv, a, src = 'spotify') {
+    const parts = src === 'all' ? {} : { ...(actParts.get(uidv) || {}), [src]: a || null };
+    if (parts.spotify || parts.game) actParts.set(uidv, parts); else actParts.delete(uidv);
+    const eff = parts.game || parts.spotify || null;
     const prev = activities.get(uidv) || null;
-    const same = (!a && !prev) || (a && prev && a.title === prev.title && a.artist === prev.artist && Math.abs(a.start - prev.start) < 4000);
-    if (a) activities.set(uidv, a); else activities.delete(uidv);
-    if (!same) audienceOf(uidv).forEach(x => io.to('u:' + x).emit('activity', { user_id: uidv, activity: a }));
+    const same = (!eff && !prev) || (eff && prev && eff.type === prev.type && eff.name === prev.name && eff.title === prev.title && eff.artist === prev.artist && Math.abs((eff.start || 0) - (prev.start || 0)) < 4000);
+    if (eff) activities.set(uidv, eff); else activities.delete(uidv);
+    // people who'd see you as offline (appear-offline list, strict blocking) don't see what you're doing either
+    if (!same) audienceOf(uidv).forEach(x => io.to('u:' + x).emit('activity', { user_id: uidv, activity: x === uidv || statusFor(uidv, x) !== 'offline' ? eff : null }));
   }
+  // games the desktop app spots running, or an activity you set yourself
+  const ACT_TYPES = ['playing', 'watching', 'listening', 'competing'];
+  app.put('/api/me/activity', auth, wrap((req, res) => {
+    limit('act:' + req.user.id, 30, 60e3, 'Too many activity updates.');
+    const b = req.body || {};
+    const name = String(b.name || '').replace(/\s+/g, ' ').trim().slice(0, 64);
+    if (!name || b.clear) { setActivity(req.user.id, null, 'game'); return res.json({ activity: activities.get(req.user.id) || null }); }
+    if (!ACT_TYPES.includes(b.type)) throw err(400, 'Pick playing, watching, listening or competing');
+    const prev = actParts.get(req.user.id)?.game;
+    const start = prev && prev.name === name && prev.type === b.type ? prev.start : Math.min(now(), Number(b.start) || now());
+    setActivity(req.user.id, { type: b.type, name, details: String(b.details || '').trim().slice(0, 100) || null, source: b.auto ? 'detected' : 'custom', start }, 'game');
+    res.json({ activity: activities.get(req.user.id) || null });
+  }));
   if (SPOTIFY_ID) setInterval(() => { for (const uidv of online.keys()) pollSpotify(uidv).catch(() => {}); }, 12000);
 
   // ----- servers -----
@@ -1868,7 +1887,7 @@ function start(opts = {}) {
     socket.on('disconnect', () => {
       for (const [, room] of voice) for (const [u, s] of room) if (u === me && s.socket === socket.id) leaveVoice(me);
       entry.sockets.delete(socket.id);
-      if (!entry.sockets.size) { online.delete(me); broadcastPresence(me); if (activities.has(me)) setActivity(me, null); }
+      if (!entry.sockets.size) { online.delete(me); broadcastPresence(me); if (activities.has(me) || actParts.has(me)) setActivity(me, null, 'all'); }
     });
   });
 

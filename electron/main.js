@@ -74,8 +74,18 @@ function createWindow(url) {
   win.loadURL(url);
 }
 
+// "Playing …": tell the page which known game is running (checked every 15 seconds)
+const { watchGames } = require('./games');
+let gameWatch = null;
+ipcMain.handle('orbit:current-game', () => gameWatch?.current() || null);
+function startGameWatch() {
+  if (gameWatch) return;
+  gameWatch = watchGames((game) => { if (win && !win.isDestroyed()) win.webContents.send('orbit:game', game); });
+}
+
 app.whenReady().then(async () => {
   setupSession();
+  startGameWatch();
   try { await session.defaultSession.clearCache(); } catch {}
   if (process.platform === 'darwin') { try { await systemPreferences.askForMediaAccess('microphone'); await systemPreferences.askForMediaAccess('camera'); } catch {} }
   let url = remote;
