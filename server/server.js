@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.2';
+const VERSION = '1.25.3';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -71,7 +71,10 @@ function start(opts = {}) {
   const PUBLIC_URL = (process.env.PUBLIC_URL || opts.publicUrl || cfg.publicUrl || '').replace(/\/$/, '');
   fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
   const SECRET = process.env.JWT_SECRET || cfg.jwtSecret;
-  const emailEnabled = !!smtp.host;
+  // email: Resend's web API (RESEND_API_KEY) works on Render's free plan, which blocks normal SMTP ports; SMTP still works on paid plans
+  const RESEND_KEY = process.env.RESEND_API_KEY || '';
+  const EMAIL_FROM = process.env.EMAIL_FROM || smtp.from || 'Orbit <no-reply@orbital.sbs>';
+  const emailEnabled = !!(RESEND_KEY || smtp.host);
   let mailer = null;
   if (emailEnabled) {
     const nodemailer = require('nodemailer');
@@ -82,12 +85,19 @@ function start(opts = {}) {
   const devCode = (to, code) => { if (DEV_CODES) try { fs.appendFileSync(path.join(dataDir, 'dev-codes.txt'), `${to} ${code}\n`); } catch {} };
   async function sendCode(email, code, purpose) {
     const subject = purpose === 'reset' ? 'Your Orbit password reset code' : purpose === 'login' ? 'Your Orbit sign-in code' : purpose === 'setup' ? 'Confirm two-step sign-in for Orbit' : 'Your Orbit verification code';
-    if (!mailer) { log(`${subject} for ${email}: ${code}`); devCode(email, code); return; }
+    if (!mailer && !RESEND_KEY) { log(`${subject} for ${email}: ${code}`); devCode(email, code); return; }
     const mins = purpose === 'login' || purpose === 'setup' ? 10 : 15;
     const warn = purpose === 'login' ? '<p style="color:#666">If you didn’t just try to sign in, someone has your password — change it now.</p>' : '';
-    await mailer.sendMail({ from: smtp.from || smtp.user, to: email, subject,
-      text: `Your code is ${code}. It expires in ${mins} minutes.`,
-      html: `<div style="font-family:sans-serif"><h2>Orbit</h2><p>Your code is</p><p style="font-size:28px;letter-spacing:6px;font-weight:bold">${code}</p><p>It expires in ${mins} minutes.</p>${warn}</div>` });
+    const text = `Your code is ${code}. It expires in ${mins} minutes.`;
+    const html = `<div style="font-family:sans-serif"><h2>Orbit</h2><p>Your code is</p><p style="font-size:28px;letter-spacing:6px;font-weight:bold">${code}</p><p>It expires in ${mins} minutes.</p>${warn}</div>`;
+    if (RESEND_KEY) {
+      const r = await fetch('https://api.resend.com/emails', { method: 'POST', signal: AbortSignal.timeout(10000),
+        headers: { Authorization: 'Bearer ' + RESEND_KEY, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: EMAIL_FROM, to: [email], subject, text, html }) });
+      if (!r.ok) { log('Email failed', r.status, (await r.text().catch(() => '')).slice(0, 300)); throw err(502, 'Couldn’t send the email. Try again in a minute.'); }
+      return;
+    }
+    await mailer.sendMail({ from: smtp.from || smtp.user, to: email, subject, text, html });
   }
 
 

@@ -27,7 +27,8 @@ Any host with Node 22.13+ or Docker and a persistent disk works: Railway, Fly.io
 | `ORBIT_DATA` | Folder for the database and uploads (default `./data`) |
 | `MAX_UPLOAD_MB` | Upload limit (default 50) |
 | `SPOTIFY_CLIENT_ID` | Turns on "Connect Spotify" (see below) |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Sends email codes (sign-up, password reset, two-step sign-in by email) |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Sends email codes through Resend (works on Render's free plan). `EMAIL_FROM` like `Orbit <no-reply@orbital.sbs>` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Sends email codes over SMTP instead (Render blocks SMTP on free plans) (sign-up, password reset, two-step sign-in by email) |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_VERIFY_SID` | Sends text-message codes for two-step sign-in through Twilio Verify (no A2P number registration needed). `TWILIO_FROM` works instead of `TWILIO_VERIFY_SID` if you have a registered Twilio number |
 | `PUBLIC_URL` | Your public address, if the host is behind a proxy that hides it |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Turns on email verification and password-reset emails |
