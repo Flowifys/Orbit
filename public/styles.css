@@ -1881,3 +1881,6 @@ body.pad .chat>.composer .typing{bottom:4px}
 @media (max-width:900px){.voice-split.with-chat{position:relative}.vc-chat{position:absolute;inset:0;width:100%;z-index:5;border-left:0}}
 .av .st.dev{width:17px;height:17px;right:-4px;bottom:-4px}
 .av.s80 .st.dev,.av.s96 .st.dev{width:28px;height:28px}
+/* ===== 1.27: who's talking, easier to see ===== */
+.vc-user.speaking>span:not(.icons){color:var(--green);font-weight:700}
+.vc-user .av.speaking{box-shadow:0 0 0 2px var(--bg-1),0 0 0 4px var(--green)}

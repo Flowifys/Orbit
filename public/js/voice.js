@@ -88,7 +88,7 @@ const Voice = {
     this.videoTrack?.stop(); this.screenAudio?.stop();
     this.local = null; this.videoTrack = null; this.screenAudio = null; this.screenAudioStream = null; this._localPreview = null;
     this.video = false; this.screen = false; this.expanded = false; this.stripHidden = false;
-    this._analysers.forEach(a => a.ctx.close().catch(() => {})); this._analysers.clear(); this.speaking.clear();
+    this._analysers.forEach(a => a.ctx.close().catch(() => {})); this._analysers.clear(); this.speaking.clear(); clearTimeout(this._raf); this._raf = null; this._sentSpeak = false;
     cancelAnimationFrame(this._raf); this._raf = null;
     this.channel = null; this.state = 'idle'; this.focus = null; this.joinedAt = null;
     rerenderVoiceUi();
@@ -279,6 +279,7 @@ const Voice = {
     } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast('Screen sharing isn’t available here.', true); }
   },
 
+  remoteSpeaking: new Set(),   // people talking in calls I'm not in (from the server)
   watchSpeaking(id, stream) {
     if (!stream || !stream.getAudioTracks().length || this._analysers.has(id)) return;
     try {
@@ -298,8 +299,14 @@ const Voice = {
       const on = now - a.last < 250;
       if (on !== this.speaking.has(id)) { on ? this.speaking.add(id) : this.speaking.delete(id); changed = true; }
     }
-    if (changed) { $$('[data-speak]').forEach(el => el.classList.toggle('speaking', this.speaking.has(el.dataset.speak))); $$('.vc-user').forEach(el => $('.av', el)?.classList.toggle('speaking', this.speaking.has(el.dataset.uid))); }
-    this._raf = this._analysers.size ? requestAnimationFrame(() => this.tick()) : null;
+    if (changed) {
+      paintSpeaking();
+      // let everyone else (sidebar, their overlays) know when I start/stop talking
+      const meOn = this.speaking.has(S.me.id);
+      if (meOn !== this._sentSpeak && this.socket?.connected !== false && typeof socket !== 'undefined' && socket) { this._sentSpeak = meOn; socket.emit('voice:speaking', { on: meOn }); }
+    }
+    // a timer instead of requestAnimationFrame: animation frames stop when Orbit is behind a game, timers keep going
+    this._raf = this._analysers.size ? setTimeout(() => this.tick(), 50) : null;
   },
 
   // one place that ends an incoming call ring: sound + popup
@@ -581,3 +588,53 @@ async function pickScreenSource() {
     }, 'sp-modal');
   });
 }
+
+/* green rings / names for whoever is talking — in your call, the sidebar, and the overlay */
+const isSpeaking = (id) => Voice.speaking.has(id) || Voice.remoteSpeaking.has(id);
+function paintSpeaking() {
+  $$('[data-speak]').forEach(el => el.classList.toggle('speaking', isSpeaking(el.dataset.speak)));
+  $$('.vc-user').forEach(el => { const on = isSpeaking(el.dataset.uid); el.classList.toggle('speaking', on); $('.av', el)?.classList.toggle('speaking', on); });
+  Overlay.sync();
+}
+
+/* In-game overlay (Orbit for Windows): a small always-on-top list of who's in your call, lit up green when they talk.
+   It floats over borderless/windowed games and never takes clicks. Shift+` hides or shows it. */
+const Overlay = {
+  ok: !!window.orbitDesktop?.overlay,
+  last: '',
+  state() {
+    if (!Voice.channel || Voice.state !== 'connected' || S.prefs.overlay === false) return { show: false };
+    const ch = findChannel(Voice.channel); const sid = ch?.server_id;
+    const users = (S.voice[Voice.channel] || []).map(u => {
+      const usr = user(u.user_id);
+      return { id: u.user_id, name: sid ? nameIn(sid, u.user_id) : usr.display_name, avatar: usr.avatar ? new URL(usr.avatar, location.origin).href : null,
+        color: usr.accent || '#8b6dff', initial: (usr.display_name || '?')[0].toUpperCase(), speaking: isSpeaking(u.user_id), muted: !!u.muted, deaf: !!u.deaf, live: !!u.screen, me: u.user_id === S.me.id };
+    });
+    return { show: true, channel: ch ? (ch.type === 'voice' ? ch.name : (ch.name || ch.user?.display_name || 'Call')) : 'Call', users, corner: S.prefs.overlayCorner || 'top-left', size: S.prefs.overlaySize || 'normal' };
+  },
+  sync() {
+    if (!this.ok) return;
+    const st = this.state(), key = JSON.stringify(st);
+    if (key === this.last) return; this.last = key;
+    try { window.orbitDesktop.overlay(st); } catch {}
+  },
+};
+if (Overlay.ok) setInterval(() => Overlay.sync(), 1000);
+// Settings → Voice & Video → In-game overlay (desktop app only)
+window.addEventListener('load', () => {
+  if (!Overlay.ok || typeof userVoice !== 'function') return;
+  const _uv = userVoice;
+  userVoice = async function (body) {
+    await _uv(body);
+    const P = S.prefs, pick = (k, opts, cur) => `<div class="chip-select">${opts.map(([v, l]) => `<button data-ov-${k}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</div>`;
+    body.insertAdjacentHTML('beforeend', `<h3>In-game overlay</h3>
+      <label class="row-toggle"><span class="rt">Show the overlay in calls<small>A small list of who’s in your call floats over your games, and lights up green when someone talks. Works with games in windowed or borderless mode. Press <b>Shift + \`</b> to hide or show it.</small></span><span class="toggle"><input type="checkbox" data-ov-on ${P.overlay !== false ? 'checked' : ''}><span></span></span></label>
+      <p class="hint" style="margin:10px 0 6px">Corner</p>${pick('corner', [['top-left', 'Top left'], ['top-right', 'Top right'], ['bottom-left', 'Bottom left'], ['bottom-right', 'Bottom right']], P.overlayCorner || 'top-left')}
+      <p class="hint" style="margin:10px 0 6px">Size</p>${pick('size', [['small', 'Small'], ['normal', 'Normal'], ['large', 'Large']], P.overlaySize || 'normal')}`);
+    $('[data-ov-on]', body).onchange = (e) => { S.prefs.overlay = e.target.checked; savePrefs(); Overlay.sync(); };
+    for (const k of ['corner', 'size']) $$(`[data-ov-${k}]`, body).forEach(b => b.onclick = () => {
+      S.prefs[k === 'corner' ? 'overlayCorner' : 'overlaySize'] = b.dataset[k === 'corner' ? 'ovCorner' : 'ovSize']; savePrefs();
+      $$(`[data-ov-${k}]`, body).forEach(x => x.classList.toggle('on', x === b)); Overlay.sync();
+    });
+  };
+});

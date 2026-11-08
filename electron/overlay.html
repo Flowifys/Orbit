@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http: data:; style-src 'unsafe-inline'; script-src 'self'">
+<title>Orbit overlay</title>
+<style>
+  html,body{margin:0;background:transparent;overflow:hidden;font:600 13px/1.2 "Segoe UI",system-ui,sans-serif;color:#fff;-webkit-user-select:none;user-select:none}
+  #box{display:inline-flex;flex-direction:column;gap:4px;padding:8px;border-radius:12px;background:rgba(14,12,22,.62);backdrop-filter:blur(6px);max-width:260px}
+  #box.hidden{display:none}
+  .ch{font-size:11px;font-weight:700;color:#b9b3d6;padding:0 4px 2px;letter-spacing:.02em;display:flex;align-items:center;gap:6px}
+  .ch i{width:7px;height:7px;border-radius:50%;background:#23a55a;display:inline-block}
+  .u{display:flex;align-items:center;gap:8px;padding:3px 8px 3px 3px;border-radius:999px;transition:background .12s}
+  .av{width:28px;height:28px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;font-weight:800;background-size:cover;background-position:center;box-shadow:0 0 0 2px transparent;transition:box-shadow .1s}
+  .u.on .av{box-shadow:0 0 0 2px #0e0c16,0 0 0 4px #23a55a}
+  .u.on .n{color:#3ddc84}
+  .n{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px;text-shadow:0 1px 2px rgba(0,0,0,.6)}
+  .ic{margin-left:auto;display:flex;gap:4px;opacity:.85}
+  .ic svg{width:13px;height:13px}
+  .live{background:#f23f43;font-size:9px;padding:1px 4px;border-radius:4px;font-weight:800}
+  body.small .av{width:22px;height:22px;font-size:10px}body.small{font-size:12px}
+  body.large .av{width:36px;height:36px;font-size:14px}body.large{font-size:15px}
+</style></head>
+<body><div id="box" class="hidden"></div><script src="overlay.js"></script></body></html>

@@ -3,6 +3,8 @@ contextBridge.exposeInMainWorld('orbitDesktop', {
   isDesktop: true,
   // the window has no system title bar: the page draws one (see public/js/titlebar.js)
   frame: process.platform === 'darwin' ? 'mac' : 'overlay',
+  // in-game overlay: send who's in the call (see Overlay in public/js/voice.js)
+  overlay: (state) => ipcRenderer.invoke('orbit:overlay', state),
   setTitleBarColors: (color, symbolColor) => ipcRenderer.invoke('orbit:titlebar', { color, symbolColor }),
   getScreenSources: () => ipcRenderer.invoke('orbit:get-sources'),
   // pick what the next getDisplayMedia() call shares (and whether to include the computer's sound)

@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.26.0';
+const VERSION = '1.27.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -2264,6 +2264,16 @@ function start(opts = {}) {
       }
     });
     socket.on('voice:leave', () => leaveVoice(me));
+    // someone in a call started/stopped talking: tell everyone who can see the channel (sidebar rings, overlay)
+    socket.on('voice:speaking', ({ on } = {}) => {
+      for (const [cid, room] of voice) {
+        if (!room.has(me)) continue;
+        const s = room.get(me); if (s.socket !== socket.id) return;
+        if (hit('speak:' + me, 40, 10e3)) return;
+        emitToChannel(chanRow(cid), 'voice:speaking', { channel_id: cid, user_id: me, on: !!on && !s.muted });
+        return;
+      }
+    });
     socket.on('voice:update', (st = {}) => {
       for (const [cid, room] of voice) if (room.has(me) && room.get(me).socket === socket.id) {
         const s = room.get(me);

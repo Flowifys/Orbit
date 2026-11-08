@@ -198,7 +198,13 @@ function connectSocket() {
     toast(`${by?.display_name || 'Someone'} gave you ${mins} min access to 🔊 ${name}`);
     playNotif({ type: 'mention', serverId: server_id });
   });
+  socket.on('voice:speaking', ({ channel_id, user_id, on }) => {
+    if (user_id === S.me.id || (Voice.channel === channel_id && Voice._analysers.has(user_id))) return;   // already measured locally
+    on ? Voice.remoteSpeaking.add(user_id) : Voice.remoteSpeaking.delete(user_id);
+    paintSpeaking();
+  });
   socket.on('voice:state', ({ channel_id, users }) => {
+    const here = new Set((users || []).map(u => u.user_id)); [...Voice.remoteSpeaking].forEach(id => { if (!here.has(id) && !Object.values(S.voice || {}).some(l => l !== S.voice[channel_id] && (l || []).some(u => u.user_id === id))) Voice.remoteSpeaking.delete(id); });
     // stop ringing once you're in that call (from any device) or once everyone has left it
     if (Voice.ringing === channel_id && (!users.length || users.some(u => u.user_id === S.me.id))) Voice.stopRing();
     const prev = (S.voice[channel_id] || []).map(u => u.user_id);
@@ -331,7 +337,7 @@ function renderSidebar() {
         <span class="ico">${c.private ? I.lock : icon}</span><span class="nm">${esc(c.name)}</span>
         ${un && un.mentions && S.view.channel !== c.id ? `<span class="badge">${un.mentions}</span>` : ''}
         <span class="act">${can(PERM.CREATE_INVITE) ? `<button data-invite title="Invite">${I.invite}</button>` : ''}${can(PERM.MANAGE_CHANNELS) ? `<button data-edit="${c.id}" title="Edit channel">${I.gear}</button>` : ''}</span>
-      </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (Voice.speaking.has(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live" aria-label="Streaming live">LIVE</span>' : ''}${p.video ? srIcon(I.video, 'Camera on') : ''}${p.deaf ? srIcon(I.deaf, 'Deafened') : p.muted ? srIcon(I.micOff, 'Muted') : ''}</span></div>`).join('')}</div>` : ''}`;
+      </div>${people.length ? `<div class="vc-users">${people.map(p => `<div class="vc-user ${isSpeaking(p.user_id) ? 'speaking' : ''}" data-uid="${p.user_id}">${avatar(p.user_id, 's24' + (isSpeaking(p.user_id) ? ' speaking' : ''))}<span>${esc(nameIn(sd.id, p.user_id))}</span><span class="icons">${p.screen ? '<span class="live" aria-label="Streaming live">LIVE</span>' : ''}${p.video ? srIcon(I.video, 'Camera on') : ''}${p.deaf ? srIcon(I.deaf, 'Deafened') : p.muted ? srIcon(I.micOff, 'Muted') : ''}</span></div>`).join('')}</div>` : ''}`;
     };
     const head = `<div class="side-head" data-smenu><span class="sh-icon">${serverIcon(sd)}</span><span class="t">${esc(sd.name)}</span>${I.chevron}</div>`;
     side.innerHTML = `${sd.banner ? `<div class="side-banner" style="background-image:url('${esc(sd.banner)}')">${head}</div>` : head}

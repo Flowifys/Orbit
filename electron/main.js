@@ -1,7 +1,7 @@
 // Orbit desktop app. Opens straight to Orbit — no setup screen.
 // It connects to the server address in electron/config.json ("serverUrl").
 // If that is empty, it runs a private Orbit server inside the app so it still works offline/for testing.
-const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain, nativeImage, net } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain, nativeImage, net, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -54,7 +54,7 @@ function createWindow(url) {
     // Orbit draws its own title bar (back/forward + where you are); Windows/Linux keep their real min/max/close buttons on top of it
     ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 12, y: 11 } }
       : { titleBarStyle: 'hidden', titleBarOverlay: { color: '#0e0c15', symbolColor: '#b9b3d6', height: 36 } }),
-    webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true },
+    webPreferences: { preload: require('path').join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, spellcheck: true, backgroundThrottling: false },
   });
   win.once('ready-to-show', () => win.show());
   // Belt-and-suspenders: in dev mode Windows shows electron.exe's default atom icon in the taskbar,
@@ -76,6 +76,49 @@ function createWindow(url) {
   });
   win.loadURL(url);
 }
+
+// ---------- in-game overlay: who's in your call, lit up when they talk ----------
+let overlay = null, overlayState = { show: false }, overlayHidden = false, overlaySize = { w: 0, h: 0 };
+function placeOverlay() {
+  if (!overlay || overlay.isDestroyed()) return;
+  const area = screen.getPrimaryDisplay().workArea, m = 16, w = Math.max(1, overlaySize.w), h = Math.max(1, overlaySize.h);
+  const c = overlayState.corner || 'top-left';
+  const x = c.endsWith('right') ? area.x + area.width - w - m : area.x + m;
+  const y = c.startsWith('bottom') ? area.y + area.height - h - m : area.y + m;
+  overlay.setBounds({ x, y, width: w, height: h });
+}
+function ensureOverlay() {
+  if (overlay && !overlay.isDestroyed()) return overlay;
+  overlay = new BrowserWindow({
+    width: 1, height: 1, frame: false, transparent: true, resizable: false, movable: false, focusable: false, skipTaskbar: true, hasShadow: false, show: false,
+    alwaysOnTop: true, backgroundColor: '#00000000',
+    webPreferences: { preload: path.join(__dirname, 'overlay-preload.js'), contextIsolation: true, nodeIntegration: false, backgroundThrottling: false },
+  });
+  overlay.setAlwaysOnTop(true, 'screen-saver');
+  overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  overlay.setIgnoreMouseEvents(true);   // clicks go straight through to the game
+  overlay.loadFile(path.join(__dirname, 'overlay.html'));
+  overlay.webContents.on('did-finish-load', () => pushOverlay());
+  return overlay;
+}
+function pushOverlay() {
+  const on = overlayState.show && !overlayHidden;
+  if (!on) { if (overlay && !overlay.isDestroyed()) overlay.hide(); return; }
+  const o = ensureOverlay();
+  if (!o.webContents.isLoading()) o.webContents.send('overlay:state', overlayState);
+}
+ipcMain.on('overlay:size', (e, { w, h } = {}) => {
+  overlaySize = { w: Math.min(400, Number(w) || 0), h: Math.min(900, Number(h) || 0) };
+  if (!overlay || overlay.isDestroyed()) return;
+  if (!overlaySize.w || !overlaySize.h || !overlayState.show || overlayHidden) return overlay.hide();
+  placeOverlay(); if (!overlay.isVisible()) overlay.showInactive();
+});
+ipcMain.handle('orbit:overlay', (e, st) => { overlayState = st && typeof st === 'object' ? st : { show: false }; pushOverlay(); return true; });
+app.whenReady().then(() => {
+  // Shift+` (the key under Esc) hides or shows the overlay, like Discord
+  try { globalShortcut.register('Shift+`', () => { overlayHidden = !overlayHidden; pushOverlay(); }); } catch {}
+});
+app.on('will-quit', () => { try { globalShortcut.unregisterAll(); } catch {} });
 
 // "Playing …": tell the page which known game is running (checked every 15 seconds)
 const { watchGames } = require('./games');
