@@ -1856,3 +1856,5 @@ body.pad .chat>.composer .typing{bottom:4px}
 .pw-eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border-radius:8px;display:grid;place-items:center;color:var(--muted);background:none;border:0;cursor:pointer}
 .pw-eye:hover{color:var(--text);background:var(--bg-hover)}
 .pw-eye svg{width:18px;height:18px}
+.sms-notice{display:flex;align-items:center;gap:10px;margin-top:10px;padding:10px 12px;border-radius:10px;background:color-mix(in srgb,var(--yellow) 14%,var(--bg-2));border:1px solid color-mix(in srgb,var(--yellow) 45%,transparent);color:var(--text);font-size:13.5px;font-weight:600}
+.sms-notice svg{width:18px;height:18px;flex:none;color:var(--yellow)}

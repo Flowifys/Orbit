@@ -474,6 +474,9 @@ boot();
     drawTwofa(box);
   };
 }
+// temporary notice while Twilio sorts out the account (set to '' to remove)
+const SMS_NOTICE = 'We are aware of the phone verification not working. It will be fixed soon!';
+const smsNoticeHtml = () => SMS_NOTICE ? `<div class="sms-notice" role="status">${I.clock}<span>${esc(SMS_NOTICE)}</span></div>` : '';
 async function drawTwofa(box) {
   try { const r = await api('GET', '/api/me'); S.me.twofa = r.me.twofa; } catch {}
   const t = S.me.twofa || { method: '' };
@@ -484,7 +487,7 @@ async function drawTwofa(box) {
       <div class="tf-actions"><button class="btn secondary sm" data-tf="switch">${t.method === 'sms' ? 'Use email instead' : 'Use my phone instead'}</button><button class="btn secondary sm" data-tf="backup">New backup codes</button><button class="btn ghost sm danger" data-tf="off">Turn off</button></div>`
       : `<div class="tf-pick">
         <button class="tf-opt" data-tf="email" ${t.email_ok ? '' : 'disabled'}>${I.message || I.inbox}<b>Email</b><small>${t.email_ok ? 'Codes go to ' + esc(S.me.email || 'your email') : 'Not available yet — the server owner needs to set up email'}</small></button>
-        <button class="tf-opt" data-tf="sms" ${t.sms_ok ? '' : 'disabled'}>${I.phone}<b>Text message</b><small>${t.sms_ok ? 'Codes go to your phone' : 'Not available yet — the server owner needs to set up texting'}</small></button></div>`}`;
+        <button class="tf-opt" data-tf="sms" ${t.sms_ok ? '' : 'disabled'}>${I.phone}<b>Text message</b><small>${t.sms_ok ? 'Codes go to your phone' : 'Not available yet — the server owner needs to set up texting'}</small></button></div>${smsNoticeHtml()}`}`;
   box.onclick = (e) => {
     const b = e.target.closest('[data-tf]'); if (!b) return;
     const k = b.dataset.tf;
@@ -506,7 +509,7 @@ function twofaSetupModal(method, done) {
   let ticket = null;
   const step1 = `<div class="field"><label>Your password</label><input class="input" type="password" name="p" autocomplete="current-password"></div>
     ${method === 'sms' ? `<div class="field"><label>Phone number</label><input class="input" name="phone" type="tel" autocomplete="tel" placeholder="+1 602 555 0123"><small class="hint">Include the country code (+1 for the US). Message and data rates may apply.</small></div>` : `<p class="hint">We’ll send a code to <b>${esc(S.me.email || '')}</b>.</p>`}`;
-  modal(`<div class="mh"><h2>${method === 'sms' ? 'Use your phone' : 'Use your email'}</h2><p>First, confirm it’s you.</p></div><div class="mb tf-step">${step1}</div><div class="err hidden" style="margin:0 24px"></div>
+  modal(`<div class="mh"><h2>${method === 'sms' ? 'Use your phone' : 'Use your email'}</h2><p>First, confirm it’s you.</p></div>${method === 'sms' && SMS_NOTICE ? `<div style="padding:0 24px">${smsNoticeHtml()}</div>` : ''}<div class="mb tf-step">${step1}</div><div class="err hidden" style="margin:0 24px"></div>
     <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" data-ok>Send code</button></div>`, (m, close) => {
     const err = (x) => { const e = $('.err', m); e.textContent = x; e.classList.remove('hidden'); };
     const go = async () => {
