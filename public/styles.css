@@ -1884,3 +1884,20 @@ body.pad .chat>.composer .typing{bottom:4px}
 /* ===== 1.27: who's talking, easier to see ===== */
 .vc-user.speaking>span:not(.icons){color:var(--green);font-weight:700}
 .vc-user .av.speaking{box-shadow:0 0 0 2px var(--bg-1),0 0 0 4px var(--green)}
+
+/* ===== 1.28: phones ===== */
+/* the DM profile panel stays closed on small screens until you open it (it used to cover the chat) */
+@media (max-width:1100px){.members.dm-panel:not(.force){display:none}}
+@media (max-width:760px){
+  .chat .cbox textarea:placeholder-shown{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .topbar .topic{display:none}
+  .topbar{gap:4px;padding:0 6px 0 4px}
+  .topbar .title{margin-right:auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  /* busy top bars (group chats, DMs) get slimmer buttons so the name still fits */
+  .topbar:has(> .icon-btn:nth-of-type(5)) .icon-btn{width:31px}
+  /* settings: close button sits in the corner of the tab strip instead of floating over the page */
+  .settings .close{top:calc(7px + env(safe-area-inset-top));bottom:auto;right:8px;padding:0;background:none;font-size:0;gap:0}
+  .settings .close .c{width:36px;height:36px;background:var(--bg-2);border-width:1px}
+  .settings .snav .in{padding-right:56px}
+  .settings .sbody{padding-bottom:calc(40px + env(safe-area-inset-bottom))}
+}

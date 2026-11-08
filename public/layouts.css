@@ -1,0 +1,234 @@
+/* ============ Orbit layouts — Settings → Appearance → Layout ============
+   html[data-layout] picks one. "classic" is the normal look and has no rules here.
+   Shapes that change the grid only apply on screens wider than a phone (min-width:761px);
+   phone versions are in the @media (max-width:760px) blocks. */
+
+/* ---------- the picker ---------- */
+.set-sub{color:var(--muted);font-size:13.5px;margin:-2px 0 12px}
+.lay-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:8px}
+.lay-pick button{display:flex;flex-direction:column;gap:10px;padding:9px;border-radius:14px;background:var(--bg-1);border:2px solid var(--line);text-align:left;transition:border-color .15s,background .15s}
+.lay-pick button:hover{border-color:var(--line-2)}
+.lay-pick button.on{border-color:var(--accent);background:var(--accent-soft)}
+.lay-pick .lt b{display:block;font-weight:700;font-size:14.5px}
+.lay-pick .lt small{display:block;color:var(--muted);font-size:12.5px;line-height:1.35;margin-top:2px}
+.lp{position:relative;display:block;height:86px;border-radius:9px;background:#0c0a11;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.lp i{position:absolute;display:block;border-radius:4px}
+.lp .r{left:3px;top:4px;bottom:4px;width:11%;background:repeating-linear-gradient(#2d2838 0 9px,transparent 9px 14px);background-size:100% 14px;background-position:0 2px;border-radius:3px}
+.lp .s{left:15%;top:4px;bottom:4px;width:27%;background:#17141f}
+.lp .m{left:44%;right:4px;top:4px;bottom:4px;background:#1d1926;display:flex;flex-direction:column;gap:6px;padding:10px 8px}
+.lp .m b{display:block;height:6px;border-radius:3px;background:#3a3350;width:70%}
+.lp .m b:nth-child(2){width:50%}.lp .m b:nth-child(3){width:62%;background:var(--accent)}
+.lp-nebula{background:radial-gradient(60px 40px at 80% 90%,#5a3fd0,transparent),radial-gradient(1px 1px at 20% 30%,#fff 50%,transparent),#0a0816}
+.lp-nebula .s,.lp-nebula .m{border-radius:8px;background:rgba(40,32,70,.75);box-shadow:0 0 0 1px rgba(190,170,255,.18)}
+.lp-nebula .s{left:16%;top:7px;bottom:7px}.lp-nebula .m{top:7px;bottom:7px;right:7px}
+.lp-console{background:#0e0e12}.lp-console i{border-radius:0}
+.lp-console .r{left:0;top:0;bottom:0;width:11%;background:#0b0b0e}
+.lp-console .s{left:11%;top:0;bottom:0;width:27%;background:#121217}
+.lp-console .m{left:38%;right:0;top:0;bottom:0;background:#16161c;gap:4px;padding:8px 6px}.lp-console .m b{height:4px;border-radius:0}
+.lp-daylight{background:#ece6ff}
+.lp-daylight .r{background:repeating-linear-gradient(#fff 0 9px,transparent 9px 14px)}
+.lp-daylight .s{background:#f7f4ff;border-radius:8px}.lp-daylight .m{background:#fff;border-radius:8px}.lp-daylight .m b{background:#ddd3ff}
+.lp-bubble .r{left:4px;right:4px;top:4px;bottom:auto;width:auto;height:11px;background:repeating-linear-gradient(90deg,#2d2838 0 16px,transparent 16px 22px);border-radius:6px}
+.lp-bubble .s{top:19px}.lp-bubble .m{top:19px}
+.lp-bubble .m b{height:9px;border-radius:6px}.lp-bubble .m b:nth-child(3){align-self:flex-end}
+.lp-dock .r{left:28%;right:28%;top:auto;bottom:4px;width:auto;height:12px;background:repeating-linear-gradient(90deg,#3a3350 0 10px,transparent 10px 14px);border-radius:6px;box-shadow:0 0 0 2px #1d1926}
+.lp-dock .s{left:4px;width:30%;bottom:20px}.lp-dock .m{left:34%;bottom:20px}
+.lp-inbox .r{left:4px;top:4px;bottom:auto;width:44%;height:11px;background:repeating-linear-gradient(90deg,#2d2838 0 12px,transparent 12px 16px)}
+.lp-inbox .s{left:4px;width:44%;top:19px;background:repeating-linear-gradient(#17141f 0 12px,#211c2c 12px 14px)}
+.lp-inbox .m{left:50%}
+.lp-stage{background:radial-gradient(80px 50px at 30% 20%,#2a1d55,#0d0a18)}
+.lp-stage .s{left:15%;width:52%;background:linear-gradient(160deg,#3b2a1a,#1a120c);border-radius:8px;box-shadow:0 0 0 2px #23a55a}
+.lp-stage .m{left:70%;background:#120e20}
+.lp-columns .r{width:8%}
+.lp-columns .s{left:11%;width:27%;border-top:3px solid var(--accent)}
+.lp-columns .m{left:40%;right:28%;border-top:3px solid #5b8def}
+.lp-columns::after{content:"";position:absolute;right:4px;top:4px;bottom:4px;width:23%;background:#1d1926;border-radius:4px;border-top:3px solid #e07a3a}
+@media (max-width:760px){.lay-pick{grid-template-columns:repeat(2,minmax(0,1fr))}.lp{height:72px}}
+
+/* rails laid out in a row (Bubble, Dock, Inbox): a dot under the open server instead of the side pill */
+[data-layout=bubble] .rail-item .pill,[data-layout=dock] .rail-item .pill,[data-layout=inbox] .rail-item .pill{display:none}
+[data-layout=bubble] .rail-item.active::after,[data-layout=dock] .rail-item.active::after,[data-layout=inbox] .rail-item.active::after,
+[data-layout=bubble] .rail-item.unread:not(.active)::after,[data-layout=dock] .rail-item.unread:not(.active)::after,[data-layout=inbox] .rail-item.unread:not(.active)::after{
+  content:"";position:absolute;left:50%;bottom:-7px;width:14px;height:4px;margin-left:-7px;border-radius:2px;background:var(--accent)}
+[data-layout=bubble] .rail-item.unread:not(.active)::after,[data-layout=dock] .rail-item.unread:not(.active)::after,[data-layout=inbox] .rail-item.unread:not(.active)::after{width:4px;margin-left:-2px;background:var(--text)}
+[data-layout=bubble] .rail,[data-layout=dock] .rail,[data-layout=inbox] .rail{flex-direction:row;overflow-x:auto;overflow-y:hidden;align-items:center}
+[data-layout=bubble] .rail-sep,[data-layout=dock] .rail-sep,[data-layout=inbox] .rail-sep{width:2px;height:28px}
+
+/* =============== Nebula — glassy panels over a starry sky =============== */
+[data-layout=nebula] .app{background:
+  radial-gradient(1px 1px at 12% 18%,#fff9 50%,transparent),radial-gradient(1px 1px at 72% 12%,#fff7 50%,transparent),radial-gradient(1.5px 1.5px at 86% 64%,#fff8 50%,transparent),
+  radial-gradient(1px 1px at 30% 82%,#fff6 50%,transparent),radial-gradient(1px 1px at 55% 40%,#fff5 50%,transparent),radial-gradient(1.5px 1.5px at 6% 58%,#fff7 50%,transparent),
+  radial-gradient(1px 1px at 92% 30%,#fff6 50%,transparent),radial-gradient(1px 1px at 44% 8%,#fff6 50%,transparent),
+  radial-gradient(900px 600px at 85% 110%,color-mix(in oklab,var(--accent) 34%,transparent),transparent 70%),
+  radial-gradient(700px 500px at -5% -10%,rgba(94,224,214,.10),transparent 70%),#08060f}
+[data-layout=nebula] .rail-btn{background:rgba(40,32,70,.55);border-color:rgba(190,170,255,.14);backdrop-filter:blur(10px)}
+[data-layout=nebula] .user-panel,[data-layout=nebula] .voice-bar{background:rgba(10,8,20,.55);border-color:rgba(190,170,255,.12)}
+[data-layout=nebula] .cbox{background:rgba(40,32,70,.6);border-color:rgba(190,170,255,.14);backdrop-filter:blur(10px)}
+[data-layout=nebula] .topbar{background:transparent;border-bottom-color:rgba(190,170,255,.08)}
+@media (min-width:761px){
+  [data-layout=nebula] .app{gap:12px;padding:12px 12px 12px 0}
+  [data-layout=nebula] .sidebar,[data-layout=nebula] .main{border-radius:22px;border:1px solid rgba(190,170,255,.13);box-shadow:0 24px 60px rgba(0,0,0,.45);backdrop-filter:blur(20px)}
+  [data-layout=nebula] .sidebar{background:rgba(20,16,36,.72)}
+  [data-layout=nebula] .main{background:rgba(24,19,44,.66)}
+  [data-layout=nebula] .members{background:transparent;border-left-color:rgba(190,170,255,.08)}
+  [data-layout=nebula] .rail-btn{border-radius:18px}
+}
+@media (max-width:760px){
+  [data-layout=nebula] .sidebar{background:rgba(16,13,30,.78);backdrop-filter:blur(18px)}
+  [data-layout=nebula] .main{background:radial-gradient(600px 300px at 80% 110%,color-mix(in oklab,var(--accent) 22%,transparent),transparent 70%),#100d1d}
+}
+
+/* =============== Console — flat, sharp, dense =============== */
+html[data-layout=console]{--bg-0:#0b0b0e;--bg-1:#121217;--bg-2:#16161c;--bg-3:#1c1b24;--bg-4:#26252f;--tile-bg:#1a1921;
+  --line:rgba(255,255,255,.07);--line-2:rgba(255,255,255,.12);--bg-hover:rgba(255,255,255,.04);--bg-active:rgba(255,255,255,.08);
+  --text:#ececf1;--text-2:#c9c9d3;--muted:#8e8e9c;--dim:#65656f;--input:#0e0e12;--code:#0e0e12;
+  --font:"Instrument Sans","Onest","Segoe UI",system-ui,sans-serif;--display:"Instrument Sans","Onest",system-ui,sans-serif}
+[data-layout=console] .app{gap:0;padding:0;background:var(--bg-0)}
+[data-layout=console] .sidebar,[data-layout=console] .main{border-radius:0;border:0}
+[data-layout=console] .sidebar{border-right:1px solid var(--line)}
+[data-layout=console] .main{background:var(--bg-2)}
+[data-layout=console] .rail{gap:6px}
+[data-layout=console] .rail-btn,[data-layout=console] .rail-btn:hover{border-radius:8px}
+[data-layout=console] .rail-item.active .rail-btn{border-radius:8px;box-shadow:0 0 0 2px var(--accent)}
+[data-layout=console] .side-head,[data-layout=console] .topbar{height:48px;font-size:15px}
+[data-layout=console] .topbar .title{font-size:15px}
+[data-layout=console] .ch,[data-layout=console] .dm-item{border-radius:4px;padding-top:5px;padding-bottom:5px}
+[data-layout=console] .ch.active{background:var(--bg-active);box-shadow:inset 2px 0 var(--accent)}
+[data-layout=console] .msg.head{margin-top:8px}
+[data-layout=console] .msg .meta .ts{font-family:"Cascadia Code",Consolas,"SF Mono",monospace;font-size:11px}
+[data-layout=console] .cbox,[data-layout=console] .btn,[data-layout=console] .input,[data-layout=console] .side-search,[data-layout=console] .react{border-radius:6px}
+[data-layout=console] .composer{padding:0 12px 12px}
+[data-layout=console] .user-panel{margin:0;border-radius:0;border:0;border-top:1px solid var(--line);background:var(--bg-1)}
+[data-layout=console] .voice-bar{margin:0;border-radius:0;border-width:1px 0 0}
+[data-layout=console] .modal,[data-layout=console] .menu,[data-layout=console] .toolbar,[data-layout=console] .popout{border-radius:10px}
+[data-layout=console] .tile{border-radius:8px}
+[data-layout=console] .members{background:var(--bg-1)}
+@media (max-width:760px){[data-layout=console] .user-panel{padding-bottom:env(safe-area-inset-bottom);height:auto;min-height:56px}}
+
+/* =============== Daylight — soft light lavender =============== */
+html[data-layout=daylight]{--bg-0:#ebe5fd;--bg-1:#f6f3fe;--bg-2:#ffffff;--bg-3:#f0ebfd;--bg-4:#e3dbf8;--tile-bg:#e7e0f8;
+  --bg-hover:rgba(70,40,160,.05);--bg-active:rgba(91,63,208,.11);--line:rgba(70,40,160,.09);--line-2:rgba(70,40,160,.17);
+  --text:#1d1530;--text-2:#3b3152;--muted:#6b6283;--dim:#978eb0;--input:#f4f0fe;--code:#f4f0fe;
+  --shadow:0 14px 34px rgba(60,30,140,.14);--glass:rgba(255,255,255,.95);
+  --font:"Outfit","Onest","Segoe UI",system-ui,sans-serif;--display:"Outfit","Onest",system-ui,sans-serif;color-scheme:light}
+[data-layout=daylight] .main{background:radial-gradient(1000px 360px at 30% -120px,color-mix(in oklab,var(--accent) 10%,transparent),transparent 70%),var(--bg-2)}
+[data-layout=daylight] .topbar{background:transparent}
+[data-layout=daylight] .rail-btn{background:#fff;box-shadow:0 1px 2px rgba(40,20,90,.08);border-color:transparent}
+[data-layout=daylight] .rail-btn.home{background:#fff}
+[data-layout=daylight] .rail-btn.home img{filter:none}
+[data-layout=daylight] .rail-item.active .rail-btn.home{background:var(--accent)}
+[data-layout=daylight] .rail-item.active .rail-btn.home img{filter:brightness(0) invert(1)}
+[data-layout=daylight] .user-panel{background:#fff;border-color:var(--line)}
+[data-layout=daylight] .cbox{background:#fff;border-color:var(--line-2)}
+[data-layout=daylight] .msg:hover{background:rgba(70,40,160,.035)}
+[data-layout=daylight] .toolbar{background:#fff}
+@media (min-width:761px){
+  [data-layout=daylight] .app{gap:12px;padding:12px 12px 12px 0}
+  [data-layout=daylight] .sidebar,[data-layout=daylight] .main{border-radius:24px;border:0;box-shadow:0 1px 3px rgba(40,20,90,.06)}
+  [data-layout=daylight] .rail-btn,[data-layout=daylight] .rail-item.active .rail-btn{border-radius:18px}
+}
+
+/* =============== Bubble — servers as tabs on top, messages in bubbles =============== */
+html[data-layout=bubble]{--font:"Manrope","Onest","Segoe UI",system-ui,sans-serif}
+@media (min-width:761px){
+  [data-layout=bubble] .app{grid-template-columns:var(--side) 1fr;grid-template-rows:auto minmax(0,1fr);padding:0 10px 10px;gap:0 10px}
+  [data-layout=bubble] .rail{grid-column:1/-1;height:70px;padding:8px 6px 12px;gap:10px}
+  [data-layout=bubble] .rail-item,[data-layout=bubble] .rail-btn{width:44px;height:44px}
+  [data-layout=bubble] .rail-btn[data-dm] .av{width:44px;height:44px}
+  [data-layout=bubble] .rail-btn,[data-layout=bubble] .rail-btn:hover,[data-layout=bubble] .rail-item.active .rail-btn{border-radius:50%}
+}
+[data-layout=bubble] .msg .text{background:var(--bg-3);padding:8px 14px;border-radius:18px 18px 18px 6px;width:fit-content;max-width:100%;margin-top:2px}
+[data-layout=bubble] .msg.system .text,[data-layout=bubble] .msg .text:has(> .big-emoji:only-child){background:none;padding:0}
+[data-layout=bubble] .msg.mine{flex-direction:row-reverse;padding:2px 20px 2px 56px}
+[data-layout=bubble] .msg.mine .body{display:flex;flex-direction:column;align-items:flex-end}
+[data-layout=bubble] .msg.mine .meta{flex-direction:row-reverse}
+[data-layout=bubble] .msg.mine .text{background:var(--accent);color:var(--on-accent);border-radius:18px 18px 6px 18px}
+[data-layout=bubble] .msg.mine .text .mention{background:rgba(255,255,255,.22);color:#fff}
+[data-layout=bubble] .msg.mine .text a{color:#fff;text-decoration:underline}
+[data-layout=bubble] .msg.mine .text .edited{color:rgba(255,255,255,.7)}
+[data-layout=bubble] .msg.mine .toolbar{right:auto;left:20px}
+[data-layout=bubble] .msg.mine .edit-box,[data-layout=bubble] .msg.mine .edit-hint{align-self:stretch}
+[data-layout=bubble] .msg.mine .reactions,[data-layout=bubble] .msg.mine .attachments{justify-content:flex-end}
+[data-layout=bubble] .cbox{border-radius:26px;padding-left:10px}
+[data-layout=bubble] .send-btn{border-radius:50%}
+[data-layout=bubble] .ch,[data-layout=bubble] .dm-item{border-radius:20px}
+
+/* =============== Dock — servers in a dock at the bottom =============== */
+html[data-layout=dock]{--font:"Figtree","Onest","Segoe UI",system-ui,sans-serif}
+@media (min-width:761px){
+  [data-layout=dock] .app{grid-template-columns:var(--side) 1fr;grid-template-rows:minmax(0,1fr) auto;padding:10px 10px 0;gap:10px}
+  [data-layout=dock] .sidebar,[data-layout=dock] .main{grid-row:1}
+  [data-layout=dock] .rail{grid-column:1/-1;grid-row:2;justify-self:center;max-width:100%;height:76px;padding:10px 14px 14px;margin-bottom:10px;gap:12px;
+    background:var(--glass);border:1px solid var(--line-2);border-radius:24px;box-shadow:var(--shadow);backdrop-filter:blur(16px)}
+  [data-layout=dock] .rail-item{transition:transform .18s cubic-bezier(.3,1.4,.6,1)}
+  [data-layout=dock] .rail-item:hover{transform:translateY(-5px) scale(1.08)}
+  [data-layout=dock] .rail-btn,[data-layout=dock] .rail-item.active .rail-btn{border-radius:15px}
+  [data-layout=dock] .rail-item.active .rail-btn{box-shadow:0 0 0 2px var(--accent)}
+}
+
+/* =============== Inbox — one wide list, servers on top =============== */
+html[data-layout=inbox]{--font:"Nunito Sans","Onest","Segoe UI",system-ui,sans-serif}
+@media (min-width:761px){
+  [data-layout=inbox] .app{--side:360px;grid-template-columns:var(--side) 1fr;grid-template-rows:auto minmax(0,1fr);padding:10px;gap:10px}
+  [data-layout=inbox] .rail{grid-column:1;grid-row:1;height:70px;padding:8px 10px 12px;gap:8px;background:var(--bg-1);border:1px solid var(--line);border-radius:16px}
+  [data-layout=inbox] .sidebar{grid-column:1;grid-row:2}
+  [data-layout=inbox] .main{grid-column:2;grid-row:1/3}
+  [data-layout=inbox] .rail-item,[data-layout=inbox] .rail-btn{width:42px;height:42px}
+  [data-layout=inbox] .rail-btn[data-dm] .av{width:42px;height:42px}
+  [data-layout=inbox] .rail-item .badge{box-shadow:0 0 0 3px var(--bg-1)}
+}
+[data-layout=inbox] .dm-item{padding:10px 12px;gap:14px;border-radius:14px;margin:2px 0}
+[data-layout=inbox] .dm-item .av{width:46px;height:46px}
+[data-layout=inbox] .dm-item .nm{font-size:15.5px}
+[data-layout=inbox] .dm-item .nm small{font-size:13px;margin-top:1px}
+[data-layout=inbox] .dm-item.active{background:var(--accent-soft);box-shadow:inset 3px 0 var(--accent)}
+[data-layout=inbox] .ch{padding:9px 12px;border-radius:12px;font-size:15px}
+
+/* =============== Stage — big call tiles, roomy and bold =============== */
+html[data-layout=stage]{--font:"Sora","Onest","Segoe UI",system-ui,sans-serif;--display:"Sora","Onest",system-ui,sans-serif}
+[data-layout=stage] .app{background:radial-gradient(1100px 700px at 30% 10%,color-mix(in oklab,var(--accent) 22%,#0d0a18),#0b0914 70%)}
+[data-layout=stage] .tile{border-radius:28px;min-height:200px;background:linear-gradient(160deg,color-mix(in oklab,var(--accent) 30%,#1d1636),#120e22);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+[data-layout=stage] .tile.speaking{box-shadow:0 0 0 3px var(--comet),0 0 40px rgba(35,165,90,.35)}
+[data-layout=stage] .tile .av{width:118px;height:118px;font-size:42px}
+[data-layout=stage] .tile .label{border-radius:12px;padding:6px 12px;font-size:14px}
+[data-layout=stage] .vbtn{border-radius:18px}
+[data-layout=stage] .voice-view{background:transparent}
+[data-layout=stage] .topbar .title{font-size:18px;font-weight:800}
+[data-layout=stage] .msg.head{margin-top:20px}
+[data-layout=stage] .cbox{border-radius:18px}
+[data-layout=stage] .rail-btn,[data-layout=stage] .rail-item.active .rail-btn{border-radius:16px}
+@media (min-width:761px){
+  [data-layout=stage] .app{gap:12px;padding:12px 12px 12px 0}
+  [data-layout=stage] .sidebar,[data-layout=stage] .main{border-radius:24px;border-color:rgba(255,255,255,.06)}
+  [data-layout=stage] .sidebar{background:rgba(16,12,30,.86)}
+  [data-layout=stage] .main{background:rgba(18,14,34,.9)}
+}
+@media (max-width:760px){[data-layout=stage] .tile{min-height:150px;border-radius:22px}[data-layout=stage] .tile .av{width:84px;height:84px;font-size:30px}}
+
+/* =============== Columns — every part as its own card =============== */
+html[data-layout=columns]{--font:"Plus Jakarta Sans","Onest","Segoe UI",system-ui,sans-serif}
+[data-layout=columns] .rail-btn,[data-layout=columns] .rail-btn:hover,[data-layout=columns] .rail-item.active .rail-btn{border-radius:12px}
+[data-layout=columns] .msg .left .av,[data-layout=columns] .msg .left .av .crop,[data-layout=columns] .mem .av,[data-layout=columns] .mem .av .crop,
+[data-layout=columns] .dm-item .av:not(.gc),[data-layout=columns] .dm-item .av:not(.gc) .crop{border-radius:11px}
+@media (min-width:761px){
+  [data-layout=columns] .app{gap:12px;padding:12px 12px 12px 0;--rail:64px}
+  [data-layout=columns] .rail-item,[data-layout=columns] .rail-btn{width:42px;height:42px}
+  [data-layout=columns] .rail-btn[data-dm] .av{width:42px;height:42px}
+  [data-layout=columns] .sidebar{border-top:4px solid var(--accent)}
+  [data-layout=columns] .main{border-top:4px solid #5b8def;background:var(--bg-1)}
+  [data-layout=columns] .content{gap:12px;padding:0 0 0 0}
+  [data-layout=columns] .members{margin:12px 12px 12px 0;border-radius:14px;border:1px solid var(--line);border-top:4px solid #e07a3a;background:var(--bg-2)}
+}
+@media (max-width:760px){[data-layout=columns] .sidebar{border-top:4px solid var(--accent)}}
+
+/* =============== phones: Bubble / Inbox put servers in a row on top, Dock puts them at the bottom =============== */
+@media (max-width:760px){
+  [data-layout=bubble] .app,[data-layout=inbox] .app{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+  [data-layout=bubble] .rail,[data-layout=inbox] .rail{height:auto;padding:max(10px,env(safe-area-inset-top)) 12px 12px;gap:10px;background:var(--bg-0)}
+  [data-layout=bubble] .sidebar,[data-layout=inbox] .sidebar{padding-top:0}
+  [data-layout=dock] .app{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto}
+  [data-layout=dock] .sidebar{grid-row:1}
+  [data-layout=dock] .rail{grid-row:2;height:auto;padding:10px 12px max(10px,env(safe-area-inset-bottom));gap:12px;background:var(--bg-1);border-top:1px solid var(--line)}
+  [data-layout=dock] .user-panel{margin-bottom:6px}
+  [data-layout=dock] .rail-item.active::after,[data-layout=dock] .rail-item.unread:not(.active)::after{bottom:auto;top:-8px}
+}

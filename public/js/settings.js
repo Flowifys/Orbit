@@ -202,6 +202,8 @@ function userConnections(body) {
 function userAppearance(body) {
   const p = S.prefs;
   body.innerHTML = `<h2>Appearance</h2>
+    <h3>Layout</h3><p class="set-sub">Change how Orbit is laid out. Classic is the normal look; switch back any time.</p>
+    <div class="lay-pick">${LAYOUTS.map(([k, l, d]) => `<button data-lay="${k}" class="${(p.layout || 'classic') === k ? 'on' : ''}" aria-pressed="${(p.layout || 'classic') === k}"><span class="lp lp-${k}"><i class="r"></i><i class="s"></i><i class="m"><b></b><b></b><b></b></i></span><span class="lt"><b>${l}</b><small>${d}</small></span></button>`).join('')}</div>
     <h3>Theme</h3><div class="theme-pick">${[['dark', 'Dark'], ['midnight', 'Midnight'], ['light', 'Light']].map(([k, l]) => `<button data-th="${k}" class="${p.theme === k ? 'on' : ''}"><span class="th-prev th-${k}"><i></i><i></i><i></i></span>${l}</button>`).join('')}</div>
     <h3>Accent color</h3><div class="swatches">${['#8b6dff', '#a78bfa', '#5b8def', '#10919f', '#22c3b5', '#3fbf74', '#e8b23a', '#ff8a5b', '#ff5c7a', '#e05cb7'].map(c => `<button class="swatch ${c === p.accent ? 'sel' : ''}" data-ac="${c}" style="background:${c}"></button>`).join('')}<label class="color-dot"><input type="color" data-acc value="${esc(p.accent)}"></label></div>
     <h3>Message display</h3>
@@ -210,6 +212,7 @@ function userAppearance(body) {
     <h3>Text size</h3><div class="zoom-row"><span style="font-size:12px">Aa</span><input type="range" min="12" max="20" step="1" value="${p.fontSize}" data-fs><span style="font-size:20px">Aa</span><b data-fsv>${p.fontSize}px</b></div>`;
   const set = (k, v) => { S.prefs[k] = v; savePrefs(); applyAppearance(); };
   body.onclick = (e) => {
+    const ly = e.target.closest('[data-lay]'); if (ly) { set('layout', ly.dataset.lay); $$('[data-lay]', body).forEach(x => { x.classList.toggle('on', x === ly); x.setAttribute('aria-pressed', x === ly); }); if (ly.dataset.lay === 'daylight') toast('Daylight uses its own light colors'); }
     const th = e.target.closest('[data-th]'); if (th) { set('theme', th.dataset.th); $$('[data-th]', body).forEach(x => x.classList.toggle('on', x === th)); }
     const ac = e.target.closest('[data-ac]'); if (ac) { set('accent', ac.dataset.ac); $$('[data-ac]', body).forEach(x => x.classList.toggle('sel', x === ac)); }
   };

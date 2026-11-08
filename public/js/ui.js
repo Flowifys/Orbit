@@ -273,7 +273,11 @@ let tipEl;
 function bindTips(root) {
   $$('[data-tip]', root).forEach(el => {
     el.onmouseenter = () => { tipEl?.remove(); const r = el.getBoundingClientRect(); tipEl = h(`<div class="tip">${esc(el.dataset.tip)}</div>`); document.body.appendChild(tipEl);
-      tipEl.style.left = (r.right + 10) + 'px'; tipEl.style.top = (r.top + r.height / 2 - tipEl.offsetHeight / 2) + 'px'; };
+      // side rail: tip to the right; a rail laid out in a row (Bubble / Dock / Inbox layouts): tip above or below
+      const across = getComputedStyle(el.parentElement).flexDirection === 'row';
+      if (!across) { tipEl.style.left = (r.right + 10) + 'px'; tipEl.style.top = (r.top + r.height / 2 - tipEl.offsetHeight / 2) + 'px'; }
+      else { const w = tipEl.offsetWidth; tipEl.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)) + 'px';
+        tipEl.style.top = (r.top > innerHeight / 2 ? r.top - tipEl.offsetHeight - 10 : r.bottom + 10) + 'px'; } };
     el.onmouseleave = () => { tipEl?.remove(); tipEl = null; };
   });
 }
@@ -861,7 +865,7 @@ function messageHtml(m, sid, prev, isParent) {
       ${mine || canManage ? `<button data-act="delete" class="danger" title="Delete">${I.trash}</button>` : ''}
     </div>`;
   const tag = sd && m.author_id === sd.owner_id ? '' : '';
-  return `<div class="msg ${grouped ? '' : 'head'} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
+  return `<div class="msg ${grouped ? '' : 'head'} ${mine ? 'mine' : ''} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
     <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
       ${body}${inviteEmbedsHtml(m.content)}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}

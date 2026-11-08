@@ -21,7 +21,7 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {} },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, layout: 'classic', fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {} },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
@@ -390,14 +390,34 @@ const Ringtone = {
 /* ---------- appearance ---------- */
 function applyAppearance() {
   const p = S.prefs, r = document.documentElement;
-  r.dataset.theme = p.theme || 'dark';
+  const light = p.layout === 'daylight' || p.theme === 'light';
+  r.dataset.theme = p.layout === 'daylight' ? 'light' : (p.theme || 'dark');
   r.style.setProperty('--accent', p.accent || '#8b6dff');
-  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#8b6dff'} 78%, white)`);
+  // on light backgrounds the accent text color goes darker instead of lighter so it stays readable
+  r.style.setProperty('--accent-2', `color-mix(in oklab, ${p.accent || '#8b6dff'} ${light ? '80%, black' : '78%, white'})`);
   r.style.setProperty('--accent-soft', `color-mix(in oklab, ${p.accent || '#8b6dff'} 18%, transparent)`);
   r.style.setProperty('--fs', (p.fontSize || 15) + 'px');
   r.classList.toggle('compact', !!p.compact);
   r.classList.toggle('reduce-motion', !!p.reduceMotion);
+  const lay = LAYOUTS.find(l => l[0] === p.layout) || LAYOUTS[0];
+  r.dataset.layout = lay[0];
+  if (lay[3] && !document.getElementById('lay-font-' + lay[0])) {
+    const l = document.createElement('link'); l.id = 'lay-font-' + lay[0]; l.rel = 'stylesheet';
+    l.href = 'https://fonts.googleapis.com/css2?family=' + lay[3] + ':wght@400;500;600;700;800&display=swap'; document.head.appendChild(l);
+  }
 }
+/* app layouts (Settings → Appearance → Layout): [id, name, what it is, Google font] */
+const LAYOUTS = [
+  ['classic', 'Classic', 'The normal Orbit look', ''],
+  ['nebula', 'Nebula', 'Glassy panels floating over a starry sky', ''],
+  ['console', 'Console', 'Flat, sharp and dense — more fits on screen', 'Instrument+Sans'],
+  ['daylight', 'Daylight', 'Soft light lavender with rounded everything', 'Outfit'],
+  ['bubble', 'Bubble', 'Servers as tabs on top, messages in bubbles', 'Manrope'],
+  ['dock', 'Dock', 'Your servers live in a dock at the bottom', 'Figtree'],
+  ['inbox', 'Inbox', 'One wide list of every chat, servers on top', 'Nunito+Sans'],
+  ['stage', 'Stage', 'Big call tiles and a bold, roomy look', 'Sora'],
+  ['columns', 'Columns', 'Every part of the app as its own card', 'Plus+Jakarta+Sans'],
+];
 applyAppearance();
 
 /* phones: size the app to the part of the screen you can actually see (shrinks when the keyboard
