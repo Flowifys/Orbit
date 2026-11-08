@@ -14,23 +14,27 @@ jobs:
   quest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Put the signing key in place
         env: { PW: '${{ secrets.QUEST_KEY_PASSWORD }}', KS: '${{ secrets.QUEST_KEYSTORE }}' }
         run: |
           if [ -z "$PW" ] || [ -z "$KS" ]; then echo "::error::Add the repository secrets QUEST_KEYSTORE and QUEST_KEY_PASSWORD (Settings → Secrets and variables → Actions)"; exit 1; fi
           echo "$KS" | base64 -d > quest/android.keystore
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with: { distribution: temurin, java-version: '17' }
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with: { node-version: 22 }
       - name: Install Meta's Bubblewrap
         run: npm install -g @meta-quest/bubblewrap-cli
       - name: Point Bubblewrap at the JDK and Android SDK
         run: |
           mkdir -p ~/.bubblewrap
-          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          # Bubblewrap looks for the SDK tools in the old "tools" folder; the runner only has cmdline-tools
+          SDK="$ANDROID_HOME"
+          if [ ! -x "$SDK/tools/bin/sdkmanager" ]; then rm -rf "$SDK/tools" 2>/dev/null; cp -r "$SDK/cmdline-tools/latest" "$SDK/tools" || { sudo cp -r "$SDK/cmdline-tools/latest" "$SDK/tools"; sudo chown -R "$USER" "$SDK/tools"; }; fi
+          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$SDK\"}" > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json; ls "$SDK" "$SDK/build-tools"
+          yes | "$SDK/tools/bin/sdkmanager" --licenses >/dev/null || true
       - name: Build the app
         working-directory: quest
         env:
