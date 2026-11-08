@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.22.0';
+const VERSION = '1.23.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -352,6 +352,17 @@ function start(opts = {}) {
   // ---------- express ----------
   const app = express();
   app.disable('x-powered-by');
+  // once PUBLIC_URL is set (e.g. https://orbital.sbs), visiting the old address sends people to the new one.
+  // Only pages are moved; the API, uploads and the socket keep answering on any address so nothing breaks mid-session.
+  if (PUBLIC_URL) {
+    const pubHost = new URL(PUBLIC_URL).host.toLowerCase();
+    app.use((req, res, next) => {
+      const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').toLowerCase();
+      if (req.method !== 'GET' || !host || host === pubHost || /^(localhost|127\.|\[::1\])/.test(host)) return next();
+      if (!/^\/(index\.html|download|get|install)?$/.test(req.path)) return next();
+      res.redirect(301, PUBLIC_URL + (req.originalUrl || req.url));
+    });
+  }
   app.use(express.json({ limit: '1mb' }));
   app.use((req, res, next) => { res.setHeader('Access-Control-Allow-Origin', '*'); res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,PUT,DELETE'); if (req.method === 'OPTIONS') return res.end(); next(); });

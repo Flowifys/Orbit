@@ -1,7 +1,7 @@
 // Orbit desktop app. Opens straight to Orbit — no setup screen.
 // It connects to the server address in electron/config.json ("serverUrl").
 // If that is empty, it runs a private Orbit server inside the app so it still works offline/for testing.
-const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Menu, shell, session, desktopCapturer, dialog, systemPreferences, ipcMain, nativeImage, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -97,6 +97,11 @@ app.whenReady().then(async () => {
   try { await session.defaultSession.clearCache(); } catch {}
   if (process.platform === 'darwin') { try { await systemPreferences.askForMediaAccess('microphone'); await systemPreferences.askForMediaAccess('camera'); } catch {} }
   let url = remote;
+  // if the main address doesn't answer (domain not set up yet, DNS trouble), use the backup address
+  if (url && config.fallbackUrl && !process.env.ORBIT_NO_FALLBACK) {
+    const alive = async (u) => { try { const r = await net.fetch(u.replace(/\/$/, '') + '/api/info', { signal: AbortSignal.timeout(5000) }); return r.ok && /orbit/i.test((await r.json())?.name || ''); } catch { return false; } };
+    if (!(await alive(url)) && (await alive(config.fallbackUrl))) url = config.fallbackUrl.replace(/\/$/, '');
+  }
   if (!url) {
     const { start } = require('../server/server.js');
     const opts = { host: '127.0.0.1', dataDir: path.join(app.getPath('userData'), 'orbit-data'), log: () => {} };

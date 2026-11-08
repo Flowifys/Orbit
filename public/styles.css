@@ -1784,3 +1784,19 @@ button.status-bubble:hover{border-color:var(--accent)}
 .act-game .act-row.act-also{margin-top:10px;padding-top:10px;border-top:1px solid rgba(160,150,230,.14)}
 .act-game .act-row.act-also .game-tile{width:48px;height:48px;border-radius:12px;font-size:17px}
 .act-game .act-row.act-also .act-title{font-size:14px}
+
+/* ===== 1.23: controller mode ===== */
+.pad-hints{display:none}
+body.pad .pad-hints{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:300;display:flex;gap:16px;align-items:center;padding:8px 16px;border-radius:999px;
+  background:color-mix(in srgb,var(--bg-0) 90%,transparent);backdrop-filter:blur(10px);border:1px solid var(--line-2);font-size:13px;font-weight:600;color:var(--text-2);box-shadow:var(--shadow);pointer-events:none}
+.pad-hints>span{display:inline-flex;align-items:center;gap:6px}
+.ph-key{display:inline-grid;place-items:center;min-width:22px;height:22px;padding:0 5px;border-radius:11px;font-size:11px;font-weight:800;color:#fff;background:#3a3550}
+.ph-a{background:#2ea043}.ph-b{background:#d1404b}.ph-x{background:#2f74d0}.ph-y{background:#c99a1a}.ph-sh{border-radius:6px;background:#4a4560}
+body.pad{--fs:16px;cursor:none}
+body.pad .pad-focus{outline:3px solid var(--accent)!important;outline-offset:2px;border-radius:10px;box-shadow:0 0 0 6px color-mix(in srgb,var(--accent) 28%,transparent),0 0 24px -2px var(--accent)!important;position:relative;z-index:2;transition:outline-offset .1s}
+body.pad .msg.pad-focus{outline-offset:-2px;background:var(--bg-hover)}
+body.pad .rail [data-server].pad-focus,body.pad .rail .pad-focus{border-radius:16px}
+body.pad .ch,body.pad .dm-item{min-height:40px}
+body.pad .messages{padding-bottom:56px}
+body.pad .composer{margin-bottom:46px}
+body.pad .msg .toolbar{display:none!important}

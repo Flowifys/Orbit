@@ -1,6 +1,6 @@
 {
   "name": "orbit",
-  "version": "1.22.0",
+  "version": "1.23.0",
   "description": "Orbit chat",
   "main": "electron/main.js",
   "scripts": {
