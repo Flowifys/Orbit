@@ -127,7 +127,7 @@ namespace OrbitVR
             var rt = Rect("Text", parent);
             var t = rt.gameObject.AddComponent<TextMeshProUGUI>();
             t.text = s; t.fontSize = size; t.color = c; t.fontStyle = style; t.alignment = align;
-            t.enableWordWrapping = true; t.overflowMode = TextOverflowModes.Ellipsis; t.raycastTarget = false;
+            t.textWrappingMode = TextWrappingModes.Normal; t.overflowMode = TextOverflowModes.Ellipsis; t.raycastTarget = false;
             return t;
         }
 
@@ -170,7 +170,7 @@ namespace OrbitVR
             {
                 var t = Text(img.transform, label, fontSize, fg, FontStyles.Bold, TextAlignmentOptions.Center);
                 Fill(t.rectTransform, 14, 0, 14, 0);
-                t.enableWordWrapping = false;
+                t.textWrappingMode = TextWrappingModes.NoWrap;
             }
             Size(img, -1, height);
             return b;
