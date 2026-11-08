@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.10';
+const VERSION = '1.25.11';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -149,7 +149,7 @@ function start(opts = {}) {
    ['effect', "TEXT DEFAULT ''"], ['banner_color', 'TEXT'], ['badges', "TEXT DEFAULT '[]'"], ['tokens_after', 'INTEGER'],
    ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"],
    ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"],
-   ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"], ['live_games', "TEXT DEFAULT '{}'"]].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
   [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
@@ -881,9 +881,26 @@ function start(opts = {}) {
   // each person can have a Spotify song and a game/custom activity at once; a game wins over music
   const actParts = new Map();   // userId -> { spotify, game }
   // when a game stops (or changes), add the time to that person's "Recently played"
+  // live_games remembers when each game started, so restarting Orbit (or the server) doesn't reset the timer:
+  // { "playing|Fortnite": { start, ended, counted } } — counted = time already added to Recently played
+  const RESUME_MS = 15 * 60e3;
+  const liveOf = (uidv) => pj(one('SELECT live_games FROM users WHERE id=?', uidv)?.live_games, {});
+  function liveStart(uidv, type, name) {
+    const e = liveOf(uidv)[type + '|' + name];
+    return e && (!e.ended || now() - e.ended < RESUME_MS) && now() - e.start < 48 * 3600e3 ? e.start : now();
+  }
+  function syncLive(uidv, games) {
+    const live = liveOf(uidv), on = new Set();
+    for (const g of games) { const k = g.type + '|' + g.name; on.add(k); live[k] = { start: g.start, ended: null, counted: Math.max(live[k]?.counted || 0, g.start) }; }
+    for (const [k, e] of Object.entries(live)) { if (!on.has(k) && !e.ended) e.ended = now(); if (e.ended && now() - e.ended > 3600e3) delete live[k]; }
+    run('UPDATE users SET live_games=? WHERE id=?', JSON.stringify(live), uidv);
+  }
   function logGame(uidv, g) {
     if (!g || g.type !== 'playing' || !g.start) return;
-    const mins = Math.round((now() - g.start) / 60000); if (mins < 1) return;
+    const live = liveOf(uidv), k = g.type + '|' + g.name;
+    const from = Math.max(g.start, live[k]?.counted || 0);
+    if (live[k]) { live[k].counted = now(); run('UPDATE users SET live_games=? WHERE id=?', JSON.stringify(live), uidv); }
+    const mins = Math.round((now() - from) / 60000); if (mins < 1) return;
     const list = pj(one('SELECT recent_games FROM users WHERE id=?', uidv)?.recent_games, []).filter(x => x && x.name);
     const hit = list.find(x => x.name === g.name);
     if (hit) { hit.minutes = (hit.minutes || 0) + mins; hit.last = now(); } else list.push({ name: g.name, minutes: mins, last: now() });
@@ -898,6 +915,7 @@ function start(opts = {}) {
       for (const g of gamesOf(actParts.get(uidv)?.game)) if (!still.has(g.type + '|' + g.name)) logGame(uidv, g);
     }
     const parts = src === 'all' ? {} : { ...(actParts.get(uidv) || {}), [src]: a || null };
+    if (src === 'game' || src === 'all') syncLive(uidv, gamesOf(parts.game));
     if (parts.spotify || parts.game) actParts.set(uidv, parts); else actParts.delete(uidv);
     const eff = parts.game || parts.spotify || null;
     const prev = activities.get(uidv) || null;
@@ -917,7 +935,7 @@ function start(opts = {}) {
       const names = [...new Set(b.games.map(g => String(g || '').replace(/\s+/g, ' ').trim().slice(0, 64)).filter(Boolean))].slice(0, 5);
       if (!names.length) { setActivity(req.user.id, null, 'game'); return res.json({ activity: activities.get(req.user.id) || null }); }
       const prevG = actParts.get(req.user.id)?.game; const prevAll = prevG ? [prevG, ...(prevG.also || [])] : [];
-      const list = names.map(n => ({ type: 'playing', name: n, details: null, source: 'detected', start: prevAll.find(g => g.type === 'playing' && g.name === n)?.start || now() }));
+      const list = names.map(n => ({ type: 'playing', name: n, details: null, source: 'detected', start: prevAll.find(g => g.type === 'playing' && g.name === n)?.start || liveStart(req.user.id, 'playing', n) }));
       setActivity(req.user.id, { ...list[0], also: list.slice(1) }, 'game');
       return res.json({ activity: activities.get(req.user.id) || null });
     }
@@ -925,7 +943,7 @@ function start(opts = {}) {
     if (!name || b.clear) { setActivity(req.user.id, null, 'game'); return res.json({ activity: activities.get(req.user.id) || null }); }
     if (!ACT_TYPES.includes(b.type)) throw err(400, 'Pick playing, watching, listening or competing');
     const prev = actParts.get(req.user.id)?.game;
-    const start = prev && prev.name === name && prev.type === b.type ? prev.start : Math.min(now(), Number(b.start) || now());
+    const start = prev && prev.name === name && prev.type === b.type ? prev.start : Math.min(now(), liveStart(req.user.id, b.type, name), Number(b.start) || now());
     setActivity(req.user.id, { type: b.type, name, details: String(b.details || '').trim().slice(0, 100) || null, source: b.auto ? 'detected' : 'custom', start }, 'game');
     res.json({ activity: activities.get(req.user.id) || null });
   }));
@@ -1666,6 +1684,22 @@ function start(opts = {}) {
     artInflight.set(key, job);
     return job;
   }
+  // staff: try every picture source for one game and report what happened (and save the first good one)
+  app.get('/api/admin/game-art', auth, wrap(async (req, res) => {
+    if (!STAFF.has((req.user.username || '').toLowerCase())) throw err(403, 'Only Orbit staff can do that');
+    const name = String(req.query.name || '').trim().slice(0, 64); if (!name) throw err(400, 'Give a game name');
+    const key = normGame(name), steps = [];
+    const srcs = [OFFICIAL_SITES[key] && ['official site', () => siteIcon(OFFICIAL_SITES[key])], ['Wikipedia', () => wikiArt(name)], ['Steam', () => steamArt(name)]].filter(Boolean);
+    let good = null;
+    for (const [label, fn] of srcs) {
+      let u = null, note = '';
+      try { u = await fn(); note = u ? 'found a picture' : 'no picture found'; } catch (e) { note = 'failed: ' + (e.message || e); }
+      if (u) { try { const r = await fetchLimited(u, 6 * 1024 * 1024, 0, true); note += ` · loads (${r.type}, ${Math.round(r.buf.length / 1024)} KB)`; good = good || u; } catch (e) { note += ' · does NOT load: ' + (e.message || e); } }
+      steps.push({ source: label, url: u, result: note });
+    }
+    if (good) run('INSERT OR REPLACE INTO game_art2(name, url, checked) VALUES(?,?,?)', key, good, now());
+    res.json({ name, saved: good ? proxied(good) : null, steps });
+  }));
   app.get('/api/game-art', auth, wrap(async (req, res) => {
     limit('art:' + req.user.id, 60, 60e3, 'Too many requests.');
     const names = [...new Set(String(req.query.names || '').split('|').map(n => n.trim()).filter(Boolean))].slice(0, 24);

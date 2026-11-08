@@ -328,6 +328,20 @@ function userAbout(body) {
       } catch (x) { toast(x.message, true); }
       b.disabled = false; b.innerHTML = `${I.download} Download backup`;
     };
+    // staff: find out why a game has no picture (and fix it if any source works)
+    body.insertAdjacentHTML('beforeend', `<div class="danger-zone art-check" style="border-color:var(--line-2);flex-wrap:wrap"><div class="grow"><b>Game picture check</b><small>Looks a game up on its site, Wikipedia and Steam and shows what happened.</small></div>
+      <div style="display:flex;gap:8px;width:100%;margin-top:10px"><input class="input" data-artname value="Fortnite" style="flex:1"><button class="btn secondary" data-artgo>Check</button></div><div class="art-out" style="width:100%"></div></div>`);
+    $('[data-artgo]', body).onclick = async (e) => {
+      const b = e.currentTarget, out = $('.art-out', body), name = $('[data-artname]', body).value.trim(); if (!name) return;
+      b.disabled = true; b.textContent = 'Checking…'; out.innerHTML = '';
+      try {
+        const r = await api('GET', '/api/admin/game-art?name=' + encodeURIComponent(name));
+        out.innerHTML = `${r.saved ? `<div style="display:flex;gap:10px;align-items:center;margin:10px 0"><img src="${esc(r.saved)}" style="width:56px;height:56px;border-radius:12px;object-fit:cover" alt=""><b>Saved — it shows everywhere now</b></div>` : '<p style="margin:10px 0;color:var(--red);font-weight:600">No source worked</p>'}
+          ${r.steps.map(x => `<div style="font-size:13px;margin:4px 0"><b>${esc(x.source)}:</b> ${esc(x.result)}${x.url ? `<br><span style="color:var(--dim);word-break:break-all">${esc(x.url)}</span>` : ''}</div>`).join('')}`;
+        if (r.saved) { delete GameArt.map[name]; try { localStorage.setItem('orbit-game-art-3', JSON.stringify(GameArt.map)); } catch {} }
+      } catch (x) { out.textContent = x.message; }
+      b.disabled = false; b.textContent = 'Check';
+    };
   }
 }
 
