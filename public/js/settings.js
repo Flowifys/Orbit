@@ -4,12 +4,13 @@ function settingsShell(navHtml, onNav, first) {
   const el = h(`<div class="settings"><nav class="snav"><div class="in">${navHtml}</div></nav><div class="sbody"><div class="in"></div></div>
     <button class="close" title="Close (Esc)"><span class="c">${I.x}</span>ESC</button></div>`);
   document.body.appendChild(el);
-  const body = $('.sbody .in', el);
+  let body = $('.sbody .in', el);
   const close = () => { el.remove(); document.removeEventListener('keydown', k); };
   const k = (e) => { if (e.key === 'Escape' && !$('.modal-wrap, .layer')) close(); };
   document.addEventListener('keydown', k);
   $('.close', el).onclick = close;
-  const go = (tab) => { $$('.snav [data-tab]', el).forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); body.innerHTML = ''; onNav(tab, body, close); };
+  // each tab gets a fresh container, so a slow tab that finishes loading after you've moved on writes into the old one (harmless)
+  const go = (tab) => { $$('.snav [data-tab]', el).forEach(b => b.classList.toggle('active', b.dataset.tab === tab)); const fresh = h('<div class="in"></div>'); body.replaceWith(fresh); body = fresh; onNav(tab, body, close); };
   $('.snav', el).onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) go(b.dataset.tab); const a = e.target.closest('[data-action]'); if (a) onNav('@' + a.dataset.action, body, close); };
   go(first);
   return { el, close, go };
