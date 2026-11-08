@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Orbit — the team</title>
+<meta name="description" content="Meet the people behind Orbit.">
+<meta name="theme-color" content="#0b0817">
+<link rel="icon" href="/logo.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:title" content="Orbit — the team">
+<meta property="og:description" content="Meet the people behind Orbit.">
+<meta property="og:image" content="/icon-512.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<div class="bg"><div class="blob a"></div><div class="blob b"></div><div class="blob c"></div></div>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/home"><img src="/logo.png" alt="">Orbit</a>
+    <nav class="nav-links">
+      <a href="/home">Home</a>
+      <a href="/team" class="active">Team</a>
+      <a href="/download">Download</a>
+      <a href="/" class="cta-nav">Open Orbit</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero" style="padding-bottom:0">
+    <span class="pill"><span class="dot"></span>The people behind it</span>
+    <h1>Meet the team.</h1>
+    <p class="sub">Orbit is a small, independent team obsessed with one thing: building the chat app we always wished we had — and shipping it everywhere.</p>
+  </section>
+
+  <section class="sec reveal" style="padding-top:28px">
+    <div class="team-grid">
+
+      <div class="tcard">
+        <div class="tc-banner owner"></div>
+        <div class="tc-row">
+          <div class="tc-av owner" data-user="orbit">
+            <div class="inner"><img src="/logo.png" alt="Orbit"></div>
+            <span class="st" title="Founder"></span>
+          </div>
+          <span class="tc-role owner">Founder &amp; Owner</span>
+        </div>
+        <div class="tc-body">
+          <div class="tc-name"><b>Orbit</b><span>@orbit</span></div>
+          <p class="tc-bio">The founder and owner — the one who sketched out what a chat app should feel like when it's genuinely built for the people using it, not for an ad budget. Sets the product vision, the design direction, and the bar every release has to clear before it ships.</p>
+          <div class="tc-tags"><span>Vision</span><span>Product</span><span>Design direction</span></div>
+        </div>
+      </div>
+
+      <div class="tcard">
+        <div class="tc-banner"></div>
+        <div class="tc-row">
+          <div class="tc-av" data-user="__">
+            <div class="inner" id="flow-av">F</div>
+            <span class="st" title="Status"></span>
+          </div>
+          <span class="tc-role">Main Software Engineer</span>
+        </div>
+        <div class="tc-body">
+          <div class="tc-name"><b>Flow</b><span>@__</span></div>
+          <p class="tc-bio">Builds and ships Orbit end to end — the real-time voice and video stack, screen sharing, the two-step security and sign-in system, and the release pipeline that pushes Orbit to Windows, Linux, iPhone, Android, Quest and Xbox. If it runs, Flow wrote it.</p>
+          <div class="tc-tags"><span>Full-stack</span><span>Voice &amp; Video</span><span>Security</span><span>Six platforms</span></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="sec reveal">
+    <div class="band">
+      <h2>Want in?</h2>
+      <p class="sub center">Orbit's free and takes about a minute to set up. Bring your crew.</p>
+      <div class="cta-row">
+        <a class="cta" href="/download"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Get Orbit</a>
+        <a class="cta secondary" href="/home">Back to home</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="fbrand"><img src="/logo.png" alt="">Orbit</span>
+    <span class="flinks"><a href="/home">Home</a><a href="/team">Team</a><a href="/download">Download</a><a href="/">Open Orbit</a></span>
+  </footer>
+</main>
+
+<script>
+(() => {
+  const top = document.querySelector('header.top');
+  const onScroll = () => top.classList.toggle('stuck', scrollY > 10);
+  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  const reveal = el => el.classList.add('in');
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((es) => es.forEach(x => { if (x.isIntersecting) { reveal(x.target); io.unobserve(x.target); } }), { rootMargin: '0px 0px -6% 0px' });
+    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+    setTimeout(() => document.querySelectorAll('.reveal:not(.in)').forEach(reveal), 2200);
+  } else document.querySelectorAll('.reveal').forEach(reveal);
+
+  // optional live status: if a member has turned on their public card, light up their dot
+  function liveStatus(el) {
+    const user = el.dataset.user;
+    fetch('/api/lanyard/' + encodeURIComponent(user), { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(j => {
+        if (!j || !j.success) return;
+        const d = j.data, dot = el.querySelector('.st');
+        dot.className = 'st ' + (d.status || 'offline');
+        dot.title = ({ online: 'Online', idle: 'Idle', dnd: 'Do Not Disturb', offline: 'Offline' })[d.status] || '';
+        if (d.orbit_user && d.orbit_user.avatar) {
+          const inner = el.querySelector('.inner');
+          inner.innerHTML = '<img src="' + d.orbit_user.avatar + '" alt="">';
+        }
+      }).catch(() => {});
+  }
+  document.querySelectorAll('.tc-av[data-user]').forEach(liveStatus);
+  setInterval(() => document.querySelectorAll('.tc-av[data-user]').forEach(liveStatus), 15000);
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>

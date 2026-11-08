@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.29.0';
+const VERSION = '1.30.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -2152,6 +2152,8 @@ function start(opts = {}) {
   // download page + Windows installer link. Set WINDOWS_DOWNLOAD_URL on Render to point somewhere else.
   const WIN_URL = process.env.WINDOWS_DOWNLOAD_URL || opts.windowsDownloadUrl || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.exe';
   app.get(['/download', '/get', '/install'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'download.html')); });
+  app.get('/home', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'home.html')); });
+  app.get('/team', (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'team.html')); });
   app.get('/download/windows', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, WIN_URL); });
   // Linux app (AppImage runs on any distro; .deb for Debian/Ubuntu) — built by .github/workflows/desktop.yml
   const LINUX_URL = process.env.LINUX_DOWNLOAD_URL || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.AppImage';
