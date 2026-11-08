@@ -1493,13 +1493,16 @@ function createServerModal() {
     <div class="mf"><button class="btn ghost" data-close>Back</button><span class="sp"></span><button class="btn primary" data-ok>Create</button></div>`, (m, close) => {
     const fi = $('input[type=file]', m);
     fi.onchange = () => { iconFile = fi.files[0]; if (iconFile) $('[data-icon]', m).innerHTML = `<img src="${URL.createObjectURL(iconFile)}">`; $('[data-icon]', m).appendChild(fi); };
+    let busy = false;
     const go = async () => {
+      if (busy) return;                                   // ignore double-clicks / Enter+click
       const name = $('[name=name]', m).value.trim(); if (!name) return;
+      busy = true; const btn = $('[data-ok]', m); btn.disabled = true; btn.textContent = 'Creating…';
       try {
         const sd = await api('POST', '/api/servers', { name });
         if (iconFile) { const f = new FormData(); f.append('file', iconFile); await upload(`/api/servers/${sd.id}/image/icon`, f).catch(() => {}); }
         await fetchServer(sd.id); close(); selectServer(sd.id);
-      } catch (e) { toast(e.message, true); }
+      } catch (e) { toast(e.message, true); busy = false; btn.disabled = false; btn.textContent = 'Create'; }
     };
     $('[data-ok]', m).onclick = go; $('[name=name]', m).onkeydown = (e) => { if (e.key === 'Enter') go(); };
   });

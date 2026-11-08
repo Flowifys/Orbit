@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.33.1';
+const VERSION = '1.33.2';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -983,6 +983,15 @@ function start(opts = {}) {
   app.post('/api/servers', auth, wrap((req, res) => {
     const name = String(req.body?.name || '').trim().slice(0, 50);
     if (!name) throw err(400, 'Give your server a name');
+    // Idempotency: a rapid duplicate submit (same owner + name within a few seconds, e.g. a
+    // double-click) returns the server already created instead of cloning it.
+    const dup = one('SELECT id FROM servers WHERE owner_id=? AND name=? AND created > ?', req.user.id, name, now() - 10000);
+    if (dup) return res.json(serverPayload(dup.id, req.user.id));
+    // Anti-abuse: cap how fast and how many servers one account can create.
+    if (one('SELECT COUNT(*) n FROM servers WHERE owner_id=? AND created > ?', req.user.id, now() - 60000).n >= 8)
+      throw err(429, 'You’re creating servers too quickly. Give it a minute.');
+    if (one('SELECT COUNT(*) n FROM servers WHERE owner_id=?', req.user.id).n >= 100)
+      throw err(400, 'You’ve hit the limit of 100 servers.');
     const sid = uid();
     tx(() => {
       run('INSERT INTO servers(id,name,owner_id,created) VALUES(?,?,?,?)', sid, name, req.user.id, now());
