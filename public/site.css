@@ -156,6 +156,14 @@ h2{font:700 clamp(28px,4vw,44px)/1.08 var(--display);letter-spacing:-.025em}
 .m-mrow b{color:var(--star);font-weight:600}
 .m-mrow .live{margin-left:auto;font-size:9px;font-weight:700;color:#06120a;background:var(--green);padding:1px 6px;border-radius:999px}
 
+/* stat tiles */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:38px}
+.stat{background:var(--glass);border:1px solid var(--line);border-radius:18px;padding:30px 22px;text-align:center;transition:.2s}
+.stat:hover{border-color:var(--line-2);background:var(--glass-2);transform:translateY(-3px)}
+.stat .big{font:800 clamp(32px,4.6vw,52px)/1 var(--display);letter-spacing:-.03em;background:linear-gradient(120deg,#fff,#b9a8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.stat .lbl{color:var(--mist);margin-top:12px;font-size:14.5px;line-height:1.5}
+@media (max-width:720px){.stats{grid-template-columns:1fr}}
+
 /* comparison table */
 .compare{margin-top:34px;border:1px solid var(--line);border-radius:18px;overflow:hidden;background:var(--glass)}
 .compare .crow{display:grid;grid-template-columns:1.6fr 1fr 1fr;align-items:center}
