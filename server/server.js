@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.11';
+const VERSION = '1.25.12';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -1653,24 +1653,27 @@ function start(opts = {}) {
   }
   // Wikipedia's page image for the game (its cover or logo) — works for games that aren't on Steam and whose sites block us
   async function wikiArt(name) {
+    // the article's lead image (cover or logo), via the MediaWiki API; Wikipedia renders SVG logos to PNG thumbnails
+    const why = [];
     for (const title of [`${name} (video game)`, name]) {
       try {
-        const r = await fetch('https://en.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(title.replace(/ /g, '_')) + '?redirect=true', {
-          signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'OrbitChat/1.0 (game art lookup; https://orbital.sbs)', Accept: 'application/json' } });
-        if (!r.ok) continue;
-        const j = await r.json();
-        if (j.type !== 'standard' || !/game/i.test(`${j.description || ''} ${j.extract || ''}`.slice(0, 600))) continue;
-        const img = j.originalimage?.source || j.thumbnail?.source;
-        if (img && !/\.svg(\?|$)/i.test(img)) return img;
-        if (j.thumbnail?.source) return j.thumbnail.source;   // Wikipedia renders SVG logos to PNG thumbnails
-      } catch {}
+        const u = 'https://en.wikipedia.org/w/api.php?action=query&format=json&formatversion=2&redirects=1&prop=pageimages|description&piprop=thumbnail|original&pithumbsize=512&titles=' + encodeURIComponent(title);
+        const r = await fetch(u, { signal: AbortSignal.timeout(7000), headers: { 'User-Agent': 'OrbitChat/1.0 (https://orbital.sbs; game art lookup)', Accept: 'application/json' } });
+        if (!r.ok) { why.push(`${title}: HTTP ${r.status}`); continue; }
+        const pg = (await r.json())?.query?.pages?.[0];
+        if (!pg || pg.missing) { why.push(`${title}: no such page`); continue; }
+        if (pg.description && !/game|series|franchise|platform/i.test(pg.description)) { why.push(`${title}: not a game (${pg.description})`); continue; }
+        const img = (pg.original?.source && !/\.svg(\?|$)/i.test(pg.original.source)) ? pg.original.source : pg.thumbnail?.source;
+        if (img) return img;
+        why.push(`${title}: page has no image`);
+      } catch (e) { why.push(`${title}: ${e.message || e}`); }
     }
-    return null;
+    throw new Error(why.join(' · '));
   }
   async function gameArt(name) {
     const key = normGame(name); if (!key) return null;
     const row = one('SELECT url, checked FROM game_art2 WHERE name=?', key);
-    if (row && (row.url ? row.checked > now() - 30 * 864e5 : row.checked > now() - 864e5)) return row.url;
+    if (row && (row.url ? row.checked > now() - 30 * 864e5 : row.checked > now() - 864e5)) return row.url;   // staff-set pictures have checked far in the future
     if (artInflight.has(key)) return artInflight.get(key);
     const job = (async () => {
       let url = null;
@@ -1699,6 +1702,15 @@ function start(opts = {}) {
     }
     if (good) run('INSERT OR REPLACE INTO game_art2(name, url, checked) VALUES(?,?,?)', key, good, now());
     res.json({ name, saved: good ? proxied(good) : null, steps });
+  }));
+  // staff: set a game's picture by hand (upload), for games whose sites block us
+  app.post('/api/admin/game-art', auth, imageOnly.single('file'), wrap((req, res) => {
+    if (!STAFF.has((req.user.username || '').toLowerCase())) throw err(403, 'Only Orbit staff can do that');
+    const name = String(req.body?.name || '').trim().slice(0, 64); if (!name) throw err(400, 'Give a game name');
+    if (!req.file) throw err(400, 'Upload a picture');
+    const url = fileUrl(req.file);
+    run('INSERT OR REPLACE INTO game_art2(name, url, checked) VALUES(?,?,?)', normGame(name), url, now() + 100 * 365 * 864e5);
+    res.json({ name, saved: url });
   }));
   app.get('/api/game-art', auth, wrap(async (req, res) => {
     limit('art:' + req.user.id, 60, 60e3, 'Too many requests.');

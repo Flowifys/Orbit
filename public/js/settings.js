@@ -330,7 +330,20 @@ function userAbout(body) {
     };
     // staff: find out why a game has no picture (and fix it if any source works)
     body.insertAdjacentHTML('beforeend', `<div class="danger-zone art-check" style="border-color:var(--line-2);flex-wrap:wrap"><div class="grow"><b>Game picture check</b><small>Looks a game up on its site, Wikipedia and Steam and shows what happened.</small></div>
-      <div style="display:flex;gap:8px;width:100%;margin-top:10px"><input class="input" data-artname value="Fortnite" style="flex:1"><button class="btn secondary" data-artgo>Check</button></div><div class="art-out" style="width:100%"></div></div>`);
+      <div style="display:flex;gap:8px;width:100%;margin-top:10px"><input class="input" data-artname value="Fortnite" style="flex:1"><button class="btn secondary" data-artgo>Check</button></div><div class="art-out" style="width:100%"></div>
+      <div style="display:flex;gap:8px;align-items:center;width:100%;margin-top:10px"><button class="btn primary sm" data-artup>${I.upload || I.plus} Upload a picture for this game</button><small style="color:var(--muted)">Square works best, like an app icon.</small><input type="file" accept="image/*" hidden data-artfile></div></div>`);
+    $('[data-artup]', body).onclick = () => $('[data-artfile]', body).click();
+    $('[data-artfile]', body).onchange = async (e) => {
+      const f = e.target.files[0]; const name = $('[data-artname]', body).value.trim(); if (!f || !name) return;
+      const fd = new FormData(); fd.append('name', name); fd.append('file', f);
+      try {
+        const r = await upload('/api/admin/game-art', fd);
+        GameArt.map[name] = { u: r.saved, at: Date.now() }; try { localStorage.setItem('orbit-game-art-3', JSON.stringify(GameArt.map)); } catch {}
+        $('.art-out', body).innerHTML = `<div style="display:flex;gap:10px;align-items:center;margin:10px 0"><img src="${esc(r.saved)}" style="width:56px;height:56px;border-radius:12px;object-fit:cover" alt=""><b>${esc(name)} now uses this picture for everyone</b></div>`;
+        GameArt.paint(); $$(`.game-tile[data-game="${CSS.escape(name)}"]`).forEach(t => { t.classList.remove('has-art'); }); GameArt.paint();
+      } catch (x) { toast(x.message, true); }
+      e.target.value = '';
+    };
     $('[data-artgo]', body).onclick = async (e) => {
       const b = e.currentTarget, out = $('.art-out', body), name = $('[data-artname]', body).value.trim(); if (!name) return;
       b.disabled = true; b.textContent = 'Checking…'; out.innerHTML = '';
