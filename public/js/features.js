@@ -213,11 +213,12 @@ async function selfProfilePopout(anchor) {
   const L = layer();
   const el = h(`<div class="popout self-pop"><div class="profile-card ${u.theme_primary ? 'themed' : ''} fx-${esc(u.effect || 'none')}" style="${themeStyle(u)}">
       ${bannerHtml(u)}
-      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [^>]*><\/i>/, stDot(st))}${statusBubbleHtml(u, true)}</div>
+      <div class="avwrap">${avatar(u, 's80', true).replace(/<i class="st [^>]*><\/i>/, stDot(st))}</div>
       ${fxLayerHtml(u.effect)}
       <div class="inner self-inner">
         <div class="dn" style="${nameStyle(u)}">${esc(u.display_name)}</div>
         <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
+        ${statusLineHtml(u, true)}
         ${u.bio ? `<div class="bio self-bio">${formatText(u.bio)}</div>` : ''}
         <div class="activity-slot">${activityHtml(u.id)}</div>
         <div class="self-menu">

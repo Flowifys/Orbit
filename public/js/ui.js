@@ -1330,6 +1330,14 @@ function statusBubbleHtml(u, mine) {
   if (u.status_text) return mine ? `<button class="status-bubble" data-cstatus title="Change status">${esc(u.status_text)}</button>` : `<div class="status-bubble">${esc(u.status_text)}</div>`;
   return mine ? `<button class="status-bubble empty" data-cstatus><span class="sb-ph">${I.plus.replace('width="20" height="20"', 'width="13" height="13"')} What’s on your mind?</span></button>` : '';
 }
+// custom status shown as a clean pill in the card body, below the banner
+function statusLineHtml(u, mine) {
+  const ic = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-8.5 8.5 8.6 8.6 0 0 1-3.9-.9L3 20l1.4-4.1A8.4 8.4 0 0 1 3.5 11.5 8.4 8.4 0 0 1 12 3a8.4 8.4 0 0 1 9 8.5z"/></svg>';
+  if (u.status_text) return mine
+    ? `<button class="status-line" data-cstatus title="Change status">${ic}<span>${esc(u.status_text)}</span></button>`
+    : `<div class="status-line">${ic}<span>${esc(u.status_text)}</span></div>`;
+  return mine ? `<button class="status-line empty" data-cstatus>${ic}<span>What’s on your mind?</span></button>` : '';
+}
 // profile effects: one overlay layer drawn over the whole card (see "profile effects" in styles.css)
 const FX = [['', 'None'], ['glow', 'Glow'], ['stars', 'Starfield'], ['aurora', 'Aurora'], ['embers', 'Embers'], ['snow', 'Snowfall'], ['sakura', 'Petals'], ['prism', 'Prism']];
 function fxLayerHtml(effect) { return effect && FX.some(([k]) => k === effect) ? `<div class="fx-layer fx-l-${effect}" aria-hidden="true"><i></i><i></i><i></i></div>` : ''; }
@@ -1340,11 +1348,12 @@ function profileCardHtml(u, opts = {}) {
   return `<div class="profile-card ${themed ? 'themed' : ''} fx-${esc(u.effect || 'none')}" data-card="${esc(u.id)}" style="${themeStyle(u)}">
     ${bannerHtml(u)}
     ${preview ? '' : `<button class="pc-full" data-fullp title="View full profile">${I.expand}<span>Full profile</span></button>`}
-    <div class="avwrap">${avatar(u, 's80', true)}${statusBubbleHtml(u, self && !preview)}</div>
+    <div class="avwrap">${avatar(u, 's80', true)}</div>
     ${fxLayerHtml(u.effect)}
     <div class="inner">
       <div class="dn" style="${nameStyle(u)}">${esc(mem?.nick || u.display_name)}</div>
       <div class="un"><span class="un-text">${esc(u.username)}${u.pronouns ? ` <span class="pron">${esc(u.pronouns)}</span>` : ''}</span>${badgeRowHtml(u)}</div>
+      ${statusLineHtml(u, self && !preview)}
       <div class="activity-slot">${activityHtml(u.id)}</div>
       ${u.bio ? `<section><h5>About me</h5><div class="bio">${formatText(u.bio)}</div></section>` : ''}
       ${(u.links || []).length ? `<section><h5>Links</h5><div class="links">${u.links.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">${I.link.replace('width="20" height="20"', 'width="14" height="14"')}<span>${esc(l.label || new URL(l.url).hostname)}</span></a>`).join('')}</div></section>` : ''}
