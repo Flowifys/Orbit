@@ -199,7 +199,7 @@ function connectSocket() {
     playNotif({ type: 'mention', serverId: server_id });
   });
   socket.on('voice:speaking', ({ channel_id, user_id, on }) => {
-    if (user_id === S.me.id || (Voice.channel === channel_id && Voice._analysers.has(user_id))) return;   // already measured locally
+    if (user_id === S.me.id) return;
     on ? Voice.remoteSpeaking.add(user_id) : Voice.remoteSpeaking.delete(user_id);
     paintSpeaking();
   });

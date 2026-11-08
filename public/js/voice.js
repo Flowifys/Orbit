@@ -88,7 +88,7 @@ const Voice = {
     this.videoTrack?.stop(); this.screenAudio?.stop();
     this.local = null; this.videoTrack = null; this.screenAudio = null; this.screenAudioStream = null; this._localPreview = null;
     this.video = false; this.screen = false; this.expanded = false; this.stripHidden = false;
-    this._analysers.forEach(a => a.ctx.close().catch(() => {})); this._analysers.clear(); this.speaking.clear(); clearTimeout(this._raf); this._raf = null; this._sentSpeak = false;
+    this._analysers.forEach(a => { try { a.src.disconnect(); } catch {} }); this._speakCtx?.close().catch(() => {}); this._speakCtx = null; this._analysers.clear(); this.speaking.clear(); clearTimeout(this._raf); this._raf = null; this._sentSpeak = false;
     cancelAnimationFrame(this._raf); this._raf = null;
     this.channel = null; this.state = 'idle'; this.focus = null; this.joinedAt = null;
     rerenderVoiceUi();
@@ -140,7 +140,7 @@ const Voice = {
     const p = this.peers.get(id); if (!p) return;
     p.pc.close(); p.audio.srcObject = null; if (p.screenAudioEl) p.screenAudioEl.srcObject = null;
     Voice.videoEls.delete(id);
-    const a = this._analysers.get(id); if (a) { a.ctx.close().catch(() => {}); this._analysers.delete(id); }
+    const a = this._analysers.get(id); if (a) { try { a.src.disconnect(); } catch {} this._analysers.delete(id); }   // shared context stays open
     this.speaking.delete(id);
     this.peers.delete(id);
     if (this.focus === id) this.focus = null;
@@ -283,13 +283,17 @@ const Voice = {
   watchSpeaking(id, stream) {
     if (!stream || !stream.getAudioTracks().length || this._analysers.has(id)) return;
     try {
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      // one shared audio context, started when you join (a click). Contexts made later for other people
+      // start "suspended" in browsers, which read as silence — that's why only your own ring used to move.
+      const ctx = this._speakCtx = this._speakCtx && this._speakCtx.state !== 'closed' ? this._speakCtx : new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       const src = ctx.createMediaStreamSource(stream); const an = ctx.createAnalyser(); an.fftSize = 512; src.connect(an);
-      this._analysers.set(id, { ctx, an, buf: new Uint8Array(an.frequencyBinCount), last: 0 });
+      this._analysers.set(id, { ctx, src, an, buf: new Uint8Array(an.frequencyBinCount), last: 0 });
       if (!this._raf) this.tick();
     } catch {}
   },
   tick() {
+    if (this._speakCtx?.state === 'suspended') this._speakCtx.resume().catch(() => {});
     let changed = false; const now = performance.now();
     for (const [id, a] of this._analysers) {
       a.an.getByteFrequencyData(a.buf);
@@ -642,3 +646,6 @@ window.addEventListener('load', () => {
     });
   };
 });
+
+// browsers only let audio start after a click or key press: wake the talking detector on the next one
+['pointerdown', 'keydown'].forEach(ev => document.addEventListener(ev, () => { if (Voice._speakCtx?.state === 'suspended') Voice._speakCtx.resume().catch(() => {}); }, true));
