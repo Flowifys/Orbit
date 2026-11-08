@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.25.4';
+const VERSION = '1.25.5';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -522,8 +522,22 @@ function start(opts = {}) {
       method: 'POST', signal: AbortSignal.timeout(10000),
       headers: { Authorization: twilioAuth(), 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(form) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok && r.status !== 404) { log('Twilio Verify failed', r.status, JSON.stringify(j).slice(0, 300)); throw err(r.status === 429 ? 429 : 502, r.status === 429 ? 'Too many codes sent to that number. Try again later.' : 'Couldn’t send the text message. Check the number and try again.'); }
-    return { ok: r.ok, ...j };
+    if (r.status === 404 && pathPart === 'VerificationCheck') return { ok: false, status: 'expired' };   // code expired or already used
+    if (!r.ok) {
+      log('Twilio Verify failed', r.status, JSON.stringify(j).slice(0, 400));
+      // say what actually went wrong, so it can be fixed without digging through logs
+      const why = {
+        20003: 'Twilio rejected Orbit’s keys. Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN on Render.',
+        20404: 'Twilio couldn’t find the Verify service. Check TWILIO_VERIFY_SID on Render (it starts with VA).',
+        21608: 'This Twilio account is still a trial: it can only text numbers added under Verified Caller IDs in Twilio. Add this number there, or upgrade the account.',
+        21614: 'That number can’t get text messages.', 60200: 'That phone number doesn’t look right. Use +1 and the 10-digit number.',
+        60203: 'Too many codes sent to that number. Try again later.', 60205: 'That number can’t get text messages (it may be a landline).',
+        60410: 'Twilio’s fraud protection blocked texts to that number. Try email codes instead.',
+        60605: 'Texts to that country are turned off in Twilio’s Geo Permissions.', 20429: 'Too many codes sent. Try again in a minute.',
+      }[j.code] || (r.status === 404 ? 'Twilio couldn’t find the Verify service. Check TWILIO_VERIFY_SID on Render (it starts with VA).' : `Couldn’t send the text message (Twilio error ${j.code || r.status}${j.message ? ': ' + String(j.message).slice(0, 160) : ''}).`);
+      throw err(r.status === 429 || j.code === 60203 ? 429 : 502, why);
+    }
+    return { ok: true, ...j };
   }
   async function sendSms(to, text) {
     if (!smsEnabled) { log(`SMS to ${to}: ${text}`); devCode(to, text.slice(0, 6)); return; }
