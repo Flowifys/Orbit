@@ -30,7 +30,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.28.0';
+const VERSION = '1.28.1';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -2130,6 +2130,14 @@ function start(opts = {}) {
   const WIN_URL = process.env.WINDOWS_DOWNLOAD_URL || opts.windowsDownloadUrl || 'https://github.com/Flowifys/Orbit/releases/latest/download/Orbit.exe';
   app.get(['/download', '/get', '/install'], (req, res) => { res.setHeader('Cache-Control', 'no-cache'); res.sendFile(path.join(publicDir, 'download.html')); });
   app.get('/download/windows', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, WIN_URL); });
+  // Meta Quest app (built by .github/workflows/quest.yml) + the link that lets it open Orbit without a browser bar
+  const QUEST_URL = process.env.QUEST_DOWNLOAD_URL || 'https://github.com/Flowifys/Orbit/releases/download/quest/Orbit-Quest.apk';
+  app.get('/download/quest', (req, res) => { res.setHeader('Cache-Control', 'no-store'); res.redirect(302, QUEST_URL); });
+  const QUEST_FP = (process.env.QUEST_CERT_SHA256 || 'AD:3E:7A:71:CF:9D:D3:57:FA:E9:1B:89:C1:B0:F3:A1:8E:C4:0E:9A:DD:81:6D:0E:85:69:45:9B:0D:0A:53:8D').split(',').map(x => x.trim()).filter(Boolean);
+  app.get('/.well-known/assetlinks.json', (req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.json([{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: 'sbs.orbital.app', sha256_cert_fingerprints: QUEST_FP } }]);
+  });
   // custom emoji image by id (works for emojis from servers you're not in, like Discord)
   app.get('/emoji/:id', (req, res) => {
     const e = one('SELECT url FROM emojis WHERE id=?', String(req.params.id));

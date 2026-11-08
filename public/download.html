@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Get Orbit</title>
-<meta name="description" content="Download Orbit for Windows, iPhone and Android, or open it in your browser.">
+<meta name="description" content="Download Orbit for Windows, iPhone, Android and Meta Quest, use it on Xbox, or open it in your browser.">
 <meta name="theme-color" content="#0e0b18">
 <link rel="icon" href="/logo.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -194,6 +194,37 @@
       </div>
     </details>
 
+    <details class="plat" data-p="quest">
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2" stroke-linejoin="round"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h13A2.5 2.5 0 0 1 21 8.5v6a2.5 2.5 0 0 1-2.5 2.5h-3l-2-2.5h-3L8.5 17h-3A2.5 2.5 0 0 1 3 14.5z"/><circle cx="8" cy="11.5" r="1.6"/><circle cx="16" cy="11.5" r="1.6"/></svg></span>
+        <span class="p-name">Meta Quest<span class="p-what">A floating Orbit window in your headset</span></span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="p-body">
+        <p><b>Quickest:</b> open the <b>Browser</b> in your headset, go to <b>orbital.sbs</b> and sign in.</p>
+        <p style="margin-top:12px"><b>As an app</b> (its own icon in your library):</p>
+        <ol class="steps">
+          <li><span>Turn on <b>Developer Mode</b> for your headset in the Meta Horizon app on your phone. <small>Menu → Devices → your headset → Headset settings → Developer Mode.</small></span></li>
+          <li><span>On your computer, download <b>Orbit-Quest.apk</b>.</span></li>
+          <li><span>Plug in your headset and install the file with <b>SideQuest</b> or <b>Meta Quest Developer Hub</b>.</span></li>
+          <li><span>In the headset, open <b>Library → Unknown Sources → Orbit</b>.</span></li>
+        </ol>
+        <div class="row"><a class="btn" href="/download/quest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>Download for Meta Quest</a></div>
+      </div>
+    </details>
+
+    <details class="plat" data-p="xbox">
+      <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2" stroke-linecap="round"><path d="M6.5 8h11a3.5 3.5 0 0 1 3.4 4.3l-1 4.3a2 2 0 0 1-3.5.8L14.5 15h-5l-1.9 2.4a2 2 0 0 1-3.5-.8l-1-4.3A3.5 3.5 0 0 1 6.5 8z"/><path d="M8 10.5v3M6.5 12h3"/><circle cx="16" cy="11" r=".6" fill="#b9a8ff"/><circle cx="17.2" cy="13" r=".6" fill="#b9a8ff"/></svg></span>
+        <span class="p-name">Xbox<span class="p-what">Use Orbit with your controller</span></span>
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></summary>
+      <div class="p-body">
+        <ol class="steps">
+          <li><span>Open <b>Microsoft Edge</b> on your Xbox.</span></li>
+          <li><span>Go to <b>orbital.sbs</b> and sign in.</span></li>
+          <li><span>Orbit switches to controller mode on its own: move with the stick or D-pad, <b>A</b> to select, <b>B</b> to go back.</span></li>
+        </ol>
+        <p class="fine">Tip: add it to your Edge favorites so it’s one click next time.</p>
+      </div>
+    </details>
+
     <details class="plat" data-p="web">
       <summary><span class="p-ico"><svg viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/></svg></span>
         <span class="p-name">Mac, Linux &amp; any browser<span class="p-what">Nothing to download</span></span>
@@ -212,10 +243,12 @@
 (() => {
   const ua = navigator.userAgent;
   const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const quest = /OculusBrowser|Quest/.test(ua);
+  const xbox = /Xbox/.test(ua);
   const android = /Android/.test(ua);
   const windows = /Windows/.test(ua);
-  const me = ios ? 'iphone' : android ? 'android' : windows ? 'windows' : 'web';
-  const labels = { iphone: 'Install on iPhone', android: 'Install on Android', windows: 'Download for Windows', web: 'Open Orbit' };
+  const me = quest ? 'quest' : xbox ? 'xbox' : ios ? 'iphone' : android ? 'android' : windows ? 'windows' : 'web';
+  const labels = { iphone: 'Install on iPhone', android: 'Install on Android', windows: 'Download for Windows', quest: 'Get Orbit for Quest', xbox: 'Use Orbit on Xbox', web: 'Open Orbit' };
   document.querySelector(`.sat[data-p="${me}"]`)?.classList.add('me');
   const card = document.querySelector(`.plat[data-p="${me}"]`);
   card.open = true;
@@ -224,7 +257,7 @@
   const cta = document.getElementById('cta');
   document.getElementById('cta-text').textContent = labels[me];
   cta.href = me === 'windows' ? '/download/windows' : me === 'web' ? '/' : '#platforms';
-  if (me === 'iphone' || me === 'android') cta.addEventListener('click', (e) => { e.preventDefault(); if (me === 'android' && deferred) return installAndroid(); card.open = true; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  if (me === 'iphone' || me === 'android' || me === 'quest' || me === 'xbox') cta.addEventListener('click', (e) => { e.preventDefault(); if (me === 'android' && deferred) return installAndroid(); card.open = true; card.scrollIntoView({ behavior: 'smooth', block: 'start' }); });
   if (me !== 'web') document.getElementById('cta-sub').innerHTML = 'Free, and it updates by itself. <a href="#platforms">Other devices</a>';
 
   // already running as an installed app

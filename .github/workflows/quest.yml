@@ -1,0 +1,58 @@
+# Builds the Meta Quest app (Orbit-Quest.apk) and attaches it to the "quest" release, so
+# https://orbital.sbs/download/quest always hands out the newest one.
+# Needs two repository secrets: QUEST_KEYSTORE (the signing key file, base64) and QUEST_KEY_PASSWORD.
+name: Build Meta Quest app
+on:
+  push:
+    branches: [main]
+    paths: ['quest/**', '.github/workflows/quest.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: quest-build, cancel-in-progress: true }
+jobs:
+  quest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Put the signing key in place
+        env: { PW: '${{ secrets.QUEST_KEY_PASSWORD }}', KS: '${{ secrets.QUEST_KEYSTORE }}' }
+        run: |
+          if [ -z "$PW" ] || [ -z "$KS" ]; then echo "::error::Add the repository secrets QUEST_KEYSTORE and QUEST_KEY_PASSWORD (Settings → Secrets and variables → Actions)"; exit 1; fi
+          echo "$KS" | base64 -d > quest/android.keystore
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Install Meta's Bubblewrap
+        run: npm install -g @meta-quest/bubblewrap-cli
+      - name: Point Bubblewrap at the JDK and Android SDK
+        run: |
+          mkdir -p ~/.bubblewrap
+          echo "{\"jdkPath\":\"$JAVA_HOME\",\"androidSdkPath\":\"$ANDROID_HOME\"}" > ~/.bubblewrap/config.json
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+      - name: Build the app
+        working-directory: quest
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: '${{ secrets.QUEST_KEY_PASSWORD }}'
+          BUBBLEWRAP_KEY_PASSWORD: '${{ secrets.QUEST_KEY_PASSWORD }}'
+        run: |
+          # every build gets a higher version number (the Meta store requires it)
+          node -e "const f='twa-manifest.json',m=require('./'+f);m.appVersionCode=Number(process.env.GITHUB_RUN_NUMBER);m.appVersionName='1.0.'+process.env.GITHUB_RUN_NUMBER;require('fs').writeFileSync(f,JSON.stringify(m,null,2))"
+          yes | bubblewrap update --skipVersionUpgrade 2>&1 | tee build.log
+          yes | bubblewrap build --skipPwaValidation 2>&1 | tee -a build.log
+          test -f app-release-signed.apk
+          cp app-release-signed.apk Orbit-Quest.apk
+      - name: Attach Orbit-Quest.apk to the quest release
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          gh release view quest >/dev/null 2>&1 || gh release create quest --title "Orbit for Meta Quest" --notes "Orbit for Meta Quest. Install Orbit-Quest.apk with SideQuest or Meta Quest Developer Hub — see https://orbital.sbs/download" --latest=false
+          gh release upload quest quest/Orbit-Quest.apk --clobber
+      - name: Share the build log if it failed
+        if: failure()
+        env: { GH_TOKEN: '${{ github.token }}', PW: '${{ secrets.QUEST_KEY_PASSWORD }}' }
+        run: |
+          [ -f quest/build.log ] || exit 0
+          [ -n "$PW" ] && sed -i "s/$PW/[hidden]/g" quest/build.log
+          gh release view quest-log >/dev/null 2>&1 || gh release create quest-log --title "Quest build log" --notes "Log of the last failed Quest build" --prerelease --latest=false
+          gh release upload quest-log quest/build.log --clobber

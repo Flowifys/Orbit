@@ -2,6 +2,7 @@
   "name": "Orbit",
   "short_name": "Orbit",
   "description": "Chat, voice and video with your friends.",
+  "lang": "en",
   "id": "/",
   "start_url": "/",
   "scope": "/",

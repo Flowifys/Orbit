@@ -3,3 +3,4 @@ data
 dist
 out
 *.db
+quest/android.keystore
