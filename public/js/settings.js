@@ -278,6 +278,9 @@ function userPrivacy(body) {
     <label class="row-toggle"><span class="rt">Send read receipts<small>Let people see when you’ve read their direct messages. Turning this off also hides their “seen” status from you.</small></span><span class="toggle"><input type="checkbox" data-priv="read_receipts" ${me.read_receipts ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Strict blocking<small>When on, people you’ve blocked can’t see your online status in shared servers, and their messages are hidden from you completely instead of collapsed.</small></span><span class="toggle"><input type="checkbox" data-priv="block_mode" ${me.block_mode === 'strict' ? 'checked' : ''}><span></span></span></label>
     <label class="row-toggle"><span class="rt">Public profile card<small>Let anyone read your live status and activity at <b>/api/lanyard/${esc(me.username)}</b> — the Orbit version of Lanyard. Used for embeddable profile cards. Turn off to keep your presence private.</small></span><span class="toggle"><input type="checkbox" data-priv="card_public" ${me.card_public ? 'checked' : ''}><span></span></span></label>
+    <label class="row-toggle"><span class="rt">Streamer Mode<small>While on, Orbit hides invite links, your email address, and notification pop-ups so they don’t leak into a stream (OBS, Medal, etc.). This protects what’s shown on your screen — it can’t stop a recorder from capturing audio you can hear.</small></span><span class="toggle"><input type="checkbox" data-streamer ${S.prefs.streamerMode ? 'checked' : ''}><span></span></span></label>
+    <h3>End-to-end encrypted DMs</h3>
+    <div class="e2e-settings" id="e2e-box"></div>
     <h3>Appear offline to specific people</h3>
     <p class="hint">Chosen friends always see you as offline, even when you’re online. Everyone else sees your real status.</p>
     <div class="invis-grid">${friends.length ? friends.map(chip).join('') : '<p class="hint">Add some friends first.</p>'}</div>
@@ -287,6 +290,8 @@ function userPrivacy(body) {
     if (el.dataset.priv === 'block_mode') savePriv({ block_mode: el.checked ? 'strict' : 'standard' });
     else savePriv({ [el.dataset.priv]: el.checked });
   });
+  const sm = $('[data-streamer]', body);
+  if (sm) sm.onchange = () => { S.prefs.streamerMode = sm.checked; savePrefs(); applyAppearance(); toast(sm.checked ? 'Streamer Mode on' : 'Streamer Mode off'); };
   body.addEventListener('click', async (e) => {
     const iv = e.target.closest('[data-invis]');
     if (iv) {
@@ -297,6 +302,48 @@ function userPrivacy(body) {
     }
     const ub = e.target.closest('[data-unblock]');
     if (ub) { await api('DELETE', `/api/friends/${ub.dataset.unblock}/block`).catch(x => toast(x.message, true)); userPrivacy(body); }
+  });
+  drawE2E($('#e2e-box', body));
+}
+// Encryption controls inside Privacy settings
+function drawE2E(box) {
+  if (!box) return;
+  if (!window.E2E || !E2E.supported) { box.innerHTML = `<p class="hint">This browser doesn’t support encrypted messages.</p>`; return; }
+  const state = !E2E.enabled ? 'off' : (E2E.ready ? 'on' : 'locked');
+  if (state === 'off') box.innerHTML = `<p class="hint">Turn on end-to-end encryption so your direct messages are scrambled — only you and the person you’re talking to can read them. Not even Orbit can.</p>
+    <button class="btn primary" data-e2e="enable">🔒 Turn on encryption</button>`;
+  else if (state === 'locked') box.innerHTML = `<p class="hint">Encryption is on for your account, but this device is locked. Enter your passphrase to read your messages here.</p>
+    <button class="btn primary" data-e2e="unlock">Unlock on this device</button>`;
+  else box.innerHTML = `<p class="hint" style="color:var(--green,#3ba55d)">✓ Encryption is on and unlocked on this device. Your DMs are end-to-end encrypted when the other person also has it on.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn ghost sm" data-e2e="passphrase">Change passphrase</button><button class="btn ghost sm" data-e2e="forget">Lock this device</button></div>`;
+  box.querySelectorAll('[data-e2e]').forEach(b => b.onclick = () => e2eAction(b.dataset.e2e, box));
+}
+function e2eAction(action, box) {
+  if (action === 'unlock') { promptUnlockE2E(); return; }
+  if (action === 'forget') {
+    confirmModal('Lock this device', 'Your messages will be hidden on this device until you unlock with your passphrase again. Your messages are not deleted.', 'Lock', async () => { await E2E.forgetDevice(); drawE2E(box); reDecryptOpen(); });
+    return;
+  }
+  // enable or change passphrase: ask for a passphrase (twice)
+  const changing = action === 'passphrase';
+  modal(`<div class="mh"><h2>${changing ? 'Change passphrase' : '🔒 Turn on encryption'}</h2>
+    <p>${changing ? 'Choose a new passphrase. You’ll use it to unlock your messages on new devices.' : 'Choose an encryption passphrase. You’ll use it to unlock your messages when you log in on a new device. Orbit can’t see it or reset it, so keep it safe.'}</p></div>
+    <div class="mb"><input type="password" class="input" id="ep1" placeholder="Passphrase (at least 8 characters)" autocomplete="new-password">
+    <input type="password" class="input" id="ep2" placeholder="Confirm passphrase" autocomplete="new-password" style="margin-top:8px">
+    <label class="hint" style="display:flex;gap:8px;align-items:flex-start;margin-top:10px"><input type="checkbox" id="epack" style="margin-top:3px">I understand that if I forget this passphrase and lose my devices, these messages can’t be recovered — not even by Orbit.</label>
+    <div class="e2e-err" style="color:var(--red,#f33);font-size:13px;margin-top:8px;display:none"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Cancel</button><button class="btn primary" id="epgo">${changing ? 'Save' : 'Turn on encryption'}</button></div>`, (m, close) => {
+    const p1 = $('#ep1', m), p2 = $('#ep2', m), ack = $('#epack', m), err = $('.e2e-err', m), go = $('#epgo', m);
+    const fail = (msg) => { err.textContent = msg; err.style.display = 'block'; };
+    go.onclick = async () => {
+      err.style.display = 'none';
+      if (p1.value.length < 8) return fail('Use at least 8 characters.');
+      if (p1.value !== p2.value) return fail('The passphrases don’t match.');
+      if (!changing && !ack.checked) return fail('Please confirm you understand recovery isn’t possible.');
+      go.disabled = true;
+      try { if (changing) { await E2E.changePassphrase(p1.value); toast('Passphrase changed'); } else { await E2E.setup(p1.value); toast('Encryption is on 🔒'); } close(); drawE2E(box); reDecryptOpen(); }
+      catch (e) { go.disabled = false; fail(e.message || 'Something went wrong'); }
+    };
   });
 }
 function userNotify(body) {

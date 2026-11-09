@@ -1956,3 +1956,16 @@ body.pad .chat>.composer .typing{bottom:4px}
 .token-box{display:flex;gap:8px;align-items:center;margin-top:8px;background:var(--bg-1);border:1px solid var(--border);border-radius:8px;padding:8px 10px}
 .token-box code{flex:1;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;word-break:break-all;color:var(--text)}
 .token-warn{color:var(--yellow,#d4a72c);font-size:12px;margin-top:6px}
+
+/* End-to-end encryption */
+.msg .text.enc-note{color:var(--dim);font-style:italic;opacity:.85}
+.e2e-settings{margin:10px 0 6px}
+.e2e-settings .btn.sm{padding:8px 12px;font-size:13px}
+.dm-lock{display:inline-flex;align-items:center;gap:4px;color:var(--green,#3ba55d);font-size:12px;font-weight:600}
+
+/* Streamer Mode: hide things that could leak into a stream */
+.streamer-mode .invite-box,
+.streamer-mode [data-email]{filter:blur(6px);transition:filter .12s}
+.streamer-mode .invite-box:hover,
+.streamer-mode [data-email]:hover{filter:none}
+.streamer-mode .voice-bar .dm-lock::after{content:" · Streamer Mode on";color:var(--dim)}

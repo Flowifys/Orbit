@@ -117,6 +117,7 @@ async function loadApp() {
   prefetchAvatars();
   checkInbox();
   connectSocket();
+  E2E.init().then(() => { if (E2E.locked) promptUnlockE2E(); }).catch(() => {});
   if (S.pendingInvite) { const c = S.pendingInvite; S.pendingInvite = null; showInvite(c); }
   else {
     let last = null; try { last = JSON.parse(localStorage.getItem('orbit-view') || 'null'); } catch {}
@@ -418,7 +419,7 @@ function voiceBarHtml() {
   if (!Voice.channel) return '';
   const ch = findChannel(Voice.channel);
   const where = !ch ? '' : ch.type === 'dm' ? 'Call with ' + ch.name : ch.type === 'group' ? ch.name : [ch.name, S.serverData[ch.server_id]?.name].filter(Boolean).join(' / ');
-  return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}<time data-vtime>${Voice.joinedAt ? fmtCallTime(Date.now() - Voice.joinedAt) : ''}</time></b><span data-goto-voice>${esc(where)}</span></div>
+  return `<div class="voice-bar"><div class="row1"><div class="status"><b>${I.speaker} ${Voice.state === 'connecting' ? 'Connecting…' : 'Voice Connected'}<time data-vtime>${Voice.joinedAt ? fmtCallTime(Date.now() - Voice.joinedAt) : ''}</time></b><span data-goto-voice>${esc(where)}</span><span class="dm-lock" title="Voice is peer-to-peer and encrypted (DTLS-SRTP). Orbit’s servers never hear your call.">🔒 End-to-end encrypted</span></div>
     <button class="icon-btn" data-vleave title="Disconnect">${I.hangup}</button></div>
     <div class="row2"><button data-vcam class="${Voice.video ? 'on' : ''}" title="Camera">${Voice.video ? I.video : I.videoOff}</button><button data-vscreen class="${Voice.screen ? 'on' : ''}" title="Share screen">${I.screen}</button>${ch && ch.server_id ? `<button data-soundboard title="Soundboard">🎵</button>` : ''}</div></div>`;
 }
@@ -796,6 +797,7 @@ async function loadMessages(key, older) {
   const before = older && list.length ? list[0].id : '';
   try {
     const rows = await api('GET', `/api/channels/${cid}/messages?limit=50${before ? '&before=' + before : ''}${isThread ? '&thread=' + key.slice(2) : ''}`);
+    if (rows.some(m => m.enc)) await E2E.decryptBatch(rows);
     S.messages[key] = older ? [...rows, ...list] : rows;
     S.hasMore[key] = rows.length === 50;
   } catch (e) { toast(e.message, true); S.messages[key] = S.messages[key] || []; }
@@ -858,6 +860,17 @@ function messageListHtml(key) {
   flushBlocked();
   return html;
 }
+// For an encrypted DM message, return the plaintext to show, or a lock note if it can't be shown yet.
+function decText(m) {
+  if (!m.enc) return { text: m.content };
+  if (m._dec != null) return { text: m._dec, enc: 1 };
+  const f = m._decFail;
+  if (f === 'nokey') return { note: '🔒 This message isn’t addressed to you' };
+  if (f === 'nosender') return { note: '🔒 Can’t verify the sender’s key' };
+  if (f) return { note: '🔒 Couldn’t decrypt this message' };
+  if (!window.E2E || !E2E.ready) return { note: '🔒 Encrypted — unlock to read' };
+  return { note: '🔒 Decrypting…' };
+}
 function messageHtml(m, sid, prev, isParent) {
   if (m.system) return `<div class="msg system head" data-mid="${m.id}"><div class="left">${I.arrow}</div><div class="body"><div class="text">${esc(m.content)} <span class="ts" style="font-size:12px;color:var(--dim);font-style:normal">${fmtDate(m.created)}</span></div></div></div>`;
   const u = user(m.author_id);
@@ -869,7 +882,7 @@ function messageHtml(m, sid, prev, isParent) {
   const canManage = sid ? can(PERM.MANAGE_MESSAGES, sid) : false;
   const editing = S.editing === m.id;
   const reply = m.reply ? (m.reply.deleted ? `<div class="reply-ref"><span><i>Original message was deleted</i></span></div>`
-    : `<div class="reply-ref" data-jump="${m.reply.id}">${avatar(m.reply.author_id, '')}<b style="${sid && colorIn(sid, m.reply.author_id) ? 'color:' + colorIn(sid, m.reply.author_id) : ''}">@${esc(nameIn(sid, m.reply.author_id))}</b><span>${esc(plainPreview(m.reply.content)) || '<i>Click to see attachment</i>'}</span></div>`) : '';
+    : `<div class="reply-ref" data-jump="${m.reply.id}">${avatar(m.reply.author_id, '')}<b style="${sid && colorIn(sid, m.reply.author_id) ? 'color:' + colorIn(sid, m.reply.author_id) : ''}">@${esc(nameIn(sid, m.reply.author_id))}</b><span>${m.reply.encrypted ? '🔒 Encrypted message' : (esc(plainPreview(m.reply.content)) || '<i>Click to see attachment</i>')}</span></div>`) : '';
   const atts = (m.attachments || []).map(a => {
     const t = a.type || '';
     if (t.startsWith('image/')) { const gif = t === 'image/gif' || /\.gif($|\?)/i.test(a.url) || /giphy\.com/.test(a.url);
@@ -881,23 +894,26 @@ function messageHtml(m, sid, prev, isParent) {
     return `<div class="att-file">${I.file}<div class="fi"><a href="${esc(a.url)}" download="${esc(a.name)}" target="_blank">${esc(a.name)}</a><small>${fmtSize(a.size)}</small></div><a href="${esc(a.url)}" download="${esc(a.name)}" class="icon-btn" title="Download">${I.download}</a></div>`;
   }).join('');
   const reacts = Object.entries(m.reactions || {}).filter(([, v]) => v.length).map(([e, v]) => `<button class="react ${v.includes(S.me.id) ? 'mine' : ''}" data-react="${esc(e)}" title="${esc(v.map(x => nameIn(sid, x)).join(', '))}">${emojiHtml(e)}<b>${v.length}</b></button>`).join('');
+  const dt = decText(m);
   const body = editing
     ? `<textarea class="edit-box" data-edit="${m.id}" rows="1">${esc(m.content)}</textarea><div class="edit-hint">escape to <button data-cancel-edit>cancel</button> • enter to <button data-save-edit>save</button></div>`
-    : `${m.content ? `<div class="text">${formatText(m.content, sid)}${m.edited ? ` <span class="edited" title="${esc(fmtDate(m.edited))}">(edited)</span>` : ''}</div>` : ''}`;
+    : m.enc
+      ? (dt.note ? `<div class="text enc-note">${esc(dt.note)}</div>` : `<div class="text">${formatText(dt.text, sid)}${m.edited ? ` <span class="edited">(edited)</span>` : ''}</div>`)
+      : `${m.content ? `<div class="text">${formatText(m.content, sid)}${m.edited ? ` <span class="edited" title="${esc(fmtDate(m.edited))}">(edited)</span>` : ''}</div>` : ''}`;
   const thread = !isParent && m.thread && !m.thread_id ? `<button class="thread-link" data-open-thread>${I.thread}<b>${m.thread.count} ${m.thread.count === 1 ? 'reply' : 'replies'}</b><span>Last ${fmtDate(m.thread.last)}</span></button>` : '';
   const tools = isParent ? '' : `<div class="toolbar">
       ${QUICK_REACTS.slice(0, 3).map(e => `<button data-quick="${e}" title="React ${e}" style="font-size:16px">${e}</button>`).join('')}
       <button data-act="react" title="Add reaction">${I.smile}</button>
       <button data-act="reply" title="Reply">${I.reply}</button>
       ${!m.thread_id && !String(S.view.channel).startsWith('t:') ? `<button data-act="thread" title="Create thread">${I.thread}</button>` : ''}
-      ${mine ? `<button data-act="edit" title="Edit">${I.edit}</button>` : ''}
+      ${mine && !m.enc ? `<button data-act="edit" title="Edit">${I.edit}</button>` : ''}
       ${mine || canManage ? `<button data-act="delete" class="danger" title="Delete">${I.trash}</button>` : ''}
     </div>`;
   const tag = sd && m.author_id === sd.owner_id ? '' : '';
   return `<div class="msg ${grouped ? '' : 'head'} ${mine ? 'mine' : ''} ${m.pinned ? 'pinned' : ''} ${m.reply ? 'has-reply' : ''} ${mentioned ? 'mentioned' : ''} ${m._pending ? 'pending' : ''} ${m._failed ? 'failed' : ''}" data-mid="${m.id}">
     <div class="left">${grouped ? `<span class="time">${fmtTime(m.created)}</span>` : avatar(u, '')}</div>
     <div class="body">${reply}${grouped ? '' : `<div class="meta"><span class="name" data-uid="${u.id}" style="${color ? 'color:' + color : nameStyle(u)}">${esc(nameIn(sid, u.id))}</span>${badgeHtml(u)}${tag}<span class="ts">${fmtDate(m.created)}</span></div>`}
-      ${body}${inviteEmbedsHtml(m.content)}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
+      ${body}${inviteEmbedsHtml(m.enc ? '' : m.content)}${atts ? `<div class="attachments">${atts}</div>` : ''}${m.sticker ? `<img class="sticker" src="${esc(m.sticker.url)}" alt="Sticker: ${esc(m.sticker.name)}" title="${esc(m.sticker.name)}" draggable="false">` : ''}${editing ? '' : embedsHtml(m) + pollHtml(m)}${reacts ? `<div class="reactions">${reacts}<button class="react add" data-act="react" title="Add reaction">${I.smile.replace('width="20" height="20"', 'width="16" height="16"')}</button></div>` : ''}${thread}
     </div>${tools}</div>`;
 }
 function findMsg(id) {
@@ -959,7 +975,7 @@ function bindMessageList(box) {
       !m.thread_id && !key().startsWith('t:') && ['Create thread', () => openThread(m)],
       canPinIn(m.channel_id) && !m._pending && (m.pinned ? ['Unpin message', () => api('DELETE', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))] : ['Pin message', () => api('PUT', `/api/messages/${m.id}/pin`).catch(x => toast(x.message, true))]),
       !m._pending && (isBookmarked(m.id) ? ['Remove bookmark', () => removeBookmarkByMsg(m.id)] : ['Save message', () => saveBookmark(m)]),
-      ['Copy text', () => copy(m.content)],
+      ['Copy text', () => copy(m.enc ? (m._dec || '') : m.content)],
       ['Copy message ID', () => copy(String(m.id))],
       img && ['Copy image link', () => copy(location.origin + img.getAttribute('src'))],
       ['Mark unread', () => { S.unread[S.view.channel] = { count: 1, mentions: 0, server_id: sid }; renderSidebar(); renderRail(); }],
@@ -1004,13 +1020,15 @@ function upsertMessage(m) {
   }
   if (S.thread && S.thread.id === m.id) { S.thread.parent = m; refreshMessages('t:' + m.id); }
 }
-function onMessageNew(m) {
+async function onMessageNew(m) {
   if (m.author_id) S.users[m.author_id] = S.users[m.author_id] || { id: m.author_id, username: '…', display_name: '…' };
   const key = m.thread_id ? 't:' + m.thread_id : m.channel_id;
   const list = S.messages[key];
   if (list) {
-    const pi = list.findIndex(x => x._pending && x._nonce && x.author_id === m.author_id && x.content === m.content);
-    if (pi >= 0) list.splice(pi, 1);
+    // match the optimistic local copy: by content normally, but encrypted echoes have no plaintext
+    const pi = list.findIndex(x => x._pending && x.author_id === m.author_id && (m.enc ? true : x.content === m.content));
+    if (pi >= 0) { if (m.enc && m._dec == null) m._dec = list[pi].content; list.splice(pi, 1); }
+    if (m.enc && m._dec == null && !m._decFail) await E2E.decrypt(m);
     if (!list.find(x => x.id === m.id)) list.push(m);
     refreshMessages(key);
   }
@@ -1038,13 +1056,33 @@ function notify(m, ch) {
     : ((m.mentions || []).includes(S.me.id) || m.mention_everyone) ? { type: 'mention', serverId: ch.server_id || null }
     : { type: 'message', serverId: ch.server_id || null };
   playNotif(ctx);
+  if (S.prefs.streamerMode) return;   // Streamer Mode: no pop-ups that could leak into a stream
   if (!S.prefs.notify || !('Notification' in window) || Notification.permission !== 'granted') return;
   const sid = ch.server_id;
   const title = ch.type === 'dm' ? nameIn(null, m.author_id) : ch.type === 'group' ? `${nameIn(null, m.author_id)} (${ch.name || 'Group chat'})` : `${nameIn(sid, m.author_id)} (#${ch.name}, ${S.serverData[sid]?.name || ''})`;
   try {
-    const n = new Notification(title, { body: plainPreview(m.content) || 'Sent an attachment', icon: user(m.author_id).avatar || LOGO, tag: 'orbit-' + m.channel_id });
+    const n = new Notification(title, { body: m.enc ? (m._dec ? plainPreview(m._dec) : '🔒 Encrypted message') : (plainPreview(m.content) || 'Sent an attachment'), icon: user(m.author_id).avatar || LOGO, tag: 'orbit-' + m.channel_id });
     n.onclick = () => { window.focus(); selectChannel(m.channel_id); n.close(); };
   } catch {}
+}
+// Ask for the encryption passphrase to unlock E2E DMs on this device.
+function promptUnlockE2E() {
+  modal(`<div class="mh"><h2>🔒 Unlock your messages</h2><p>Enter your encryption passphrase to read and send private messages on this device.</p></div>
+    <div class="mb"><input type="password" class="input" id="e2e-pass" placeholder="Encryption passphrase" autocomplete="off">
+    <div class="e2e-err" style="color:var(--red,#f33);font-size:13px;margin-top:8px;display:none"></div></div>
+    <div class="mf"><button class="btn ghost" data-close>Later</button><button class="btn primary" id="e2e-unlock">Unlock</button></div>`, (m, close) => {
+    const inp = $('#e2e-pass', m), err = $('.e2e-err', m), btn = $('#e2e-unlock', m);
+    const go = async () => { if (!inp.value) return; btn.disabled = true; err.style.display = 'none';
+      try { await E2E.unlock(inp.value); toast('Messages unlocked 🔓'); close(); reDecryptOpen(); }
+      catch { err.textContent = 'That passphrase didn’t work. Try again.'; err.style.display = 'block'; btn.disabled = false; inp.select(); } };
+    btn.onclick = go; inp.onkeydown = (e) => { if (e.key === 'Enter') go(); };
+  });
+}
+// After unlocking, re-decrypt whatever's on screen.
+function reDecryptOpen() {
+  const key = S.view && S.view.channel; if (!key) return;
+  const list = S.messages[key];
+  if (list && list.some(x => x.enc)) { list.forEach(x => { if (x.enc) { x._decFail = null; } }); E2E.decryptBatch(list).then(() => refreshMessages(key)); }
 }
 const readTimers = {};
 function markRead(cid, force) {
@@ -1159,6 +1197,9 @@ function bindComposer(comp, cid, threadId) {
     if (wait > 0) return toast(`Slowmode is on. You can send another message in ${fmtWait(wait)}.`, true);
     if (content.length > 4000) return toast('Message is too long (4000 characters max)', true);
     const key = threadId ? 't:' + threadId : cid;
+    const replyId = state.reply?.id, mentionReply = state.mentionReply;
+    // Encrypt in DMs when end-to-end is ready, there are no files, and every member has a key.
+    const dmMembers = chNow && isDM(chNow) ? [S.me.id, ...(chNow.type === 'group' ? (chNow.members || []).map(x => x.id) : chNow.user ? [chNow.user.id] : [])].filter((v, i, a) => a.indexOf(v) === i) : null;
     const form = new FormData();
     form.append('content', content);
     if (state.reply) { form.append('reply_to', state.reply.id); form.append('mention_reply', String(state.mentionReply)); }
@@ -1172,7 +1213,16 @@ function bindComposer(comp, cid, threadId) {
     state.files = []; renderAttach(); comp._setReply(null); comp._syncSend && comp._syncSend();
     if (chNow && chNow.slowmode && !bypassSlow(chNow)) S.slowUntil[cid] = Date.now() + chNow.slowmode * 1000;
     try {
-      const m = await upload(`/api/channels/${cid}/messages`, form, hadFiles ? (p) => { const el = $(`[data-mid="${temp.id}"] .text`); if (el) el.textContent = `${content ? content + ' — ' : ''}Uploading… ${Math.round(p * 100)}%`; } : null);
+      let m;
+      const canEnc = dmMembers && content && !hadFiles && window.E2E && E2E.ready && await E2E.canEncryptTo(dmMembers);
+      if (canEnc) {
+        const enc = await E2E.encryptFor(dmMembers, content);
+        const body = { enc }; if (replyId) { body.reply_to = replyId; body.mention_reply = String(mentionReply); }
+        m = await api('POST', `/api/channels/${cid}/messages`, body);
+        m._dec = content;   // we know the plaintext we just sent
+      } else {
+        m = await upload(`/api/channels/${cid}/messages`, form, hadFiles ? (p) => { const el = $(`[data-mid="${temp.id}"] .text`); if (el) el.textContent = `${content ? content + ' — ' : ''}Uploading… ${Math.round(p * 100)}%`; } : null);
+      }
       const list = S.messages[key];
       if (list) { const i = list.indexOf(temp); if (i >= 0) { if (list.find(x => x.id === m.id)) list.splice(i, 1); else list[i] = m; } refreshMessages(key, true); }
     } catch (e) {

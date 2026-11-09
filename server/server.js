@@ -31,7 +31,7 @@ const CONNECTION_TYPES = {
   roblox: (n) => 'https://www.roblox.com/search/users?keyword=' + enc(n),
 };
 
-const VERSION = '1.40.0';
+const VERSION = '1.41.0';
 const STAFF = new Set((process.env.STAFF_USERS || '..,__').split(',').map(x => x.trim().toLowerCase()).filter(Boolean));
 const GROUP_MAX = 35;
 // OG badge: everyone who signed up before this date gets it automatically (staff can also give it to anyone)
@@ -154,10 +154,11 @@ function start(opts = {}) {
    ['read_receipts', 'INTEGER DEFAULT 1'], ['block_mode', "TEXT DEFAULT 'standard'"], ['card_public', 'INTEGER DEFAULT 0'],
    ['board', "TEXT DEFAULT '{}'"], ['recent_games', "TEXT DEFAULT '[]'"],
    ['twofa', "TEXT DEFAULT ''"], ['phone', 'TEXT'], ['backup_codes', "TEXT DEFAULT '[]'"], ['live_games', "TEXT DEFAULT '{}'"],
-   ['bot', 'INTEGER DEFAULT 0'], ['owner_id', 'TEXT'], ['bot_secret', 'TEXT']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
+   ['bot', 'INTEGER DEFAULT 0'], ['owner_id', 'TEXT'], ['bot_secret', 'TEXT'],
+   ['pubkey', 'TEXT'], ['enc_priv', 'TEXT'], ['enc_ready', 'INTEGER DEFAULT 0']].forEach(([c, t]) => { if (!userCols.includes(c)) db.exec(`ALTER TABLE users ADD COLUMN ${c} ${t}`); });
   // 1.10: pins, link embeds, polls, slowmode, timeouts, custom emojis (additive only — never drops data)
   const msgCols = all0(db, "PRAGMA table_info(messages)").map(c => c.name);
-  [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
+  [['pinned', 'INTEGER DEFAULT 0'], ['embeds', "TEXT DEFAULT '[]'"], ['poll', 'TEXT'], ['enc', 'TEXT']].forEach(([c, t]) => { if (!msgCols.includes(c)) db.exec(`ALTER TABLE messages ADD COLUMN ${c} ${t}`); });
   if (!chanCols.includes('slowmode')) db.exec('ALTER TABLE channels ADD COLUMN slowmode INTEGER DEFAULT 0');
   // 1.15: channel categories (type 'category', channels point at one with parent_id), stickers
   const addedCategories = !chanCols.includes('parent_id');
@@ -223,7 +224,7 @@ function start(opts = {}) {
     banner: u.banner, bio: u.bio, accent: u.accent, status_text: u.status_text, created: u.created, pronouns: u.pronouns || '',
     theme_primary: u.theme_primary || null, theme_accent: u.theme_accent || null, name_color: u.name_color || null, name_color2: u.name_color2 || null,
     avatar_crop: pj(u.avatar_crop, null), banner_crop: pj(u.banner_crop, null), links: pj(u.links, []), connections: pj(u.connections, []).filter(c => !c.hidden).map(({ hidden, show_activity, ...c }) => c),
-    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u), bot: !!u.bot });
+    effect: u.effect || '', banner_color: u.banner_color || null, activity: activities.get(u.id) || null, staff: STAFF.has((u.username || '').toLowerCase()), badges: badgeList(u), bot: !!u.bot, e2e: !!u.pubkey });
   function badgeList(u) {
     const raw = pj(u.badges, []);
     const set = new Set(raw.filter(b => GRANTABLE_BADGES.includes(b)));
@@ -314,7 +315,7 @@ function start(opts = {}) {
     const ph = ids.map(() => '?').join(',');
     const reacts = all(`SELECT message_id, emoji, user_id FROM reactions WHERE message_id IN (${ph})`, ...ids);
     const replyIds = [...new Set(rows.map(r => r.reply_to).filter(Boolean))];
-    const replies = replyIds.length ? all(`SELECT id, author_id, content, attachments FROM messages WHERE id IN (${replyIds.map(() => '?').join(',')})`, ...replyIds) : [];
+    const replies = replyIds.length ? all(`SELECT id, author_id, content, attachments, enc FROM messages WHERE id IN (${replyIds.map(() => '?').join(',')})`, ...replyIds) : [];
     const threadCounts = all(`SELECT thread_id, COUNT(*) c, MAX(created) last FROM messages WHERE thread_id IN (${ph}) GROUP BY thread_id`, ...ids);
     const pollIds = rows.filter(r => r.poll).map(r => r.id);
     const votes = pollIds.length ? all(`SELECT message_id, user_id, opt FROM poll_votes WHERE message_id IN (${pollIds.map(() => '?').join(',')})`, ...pollIds) : [];
@@ -327,8 +328,8 @@ function start(opts = {}) {
       const tc = threadCounts.find(x => x.thread_id === r.id);
       return { id: r.id, channel_id: r.channel_id, author_id: r.author_id, content: r.content, reply_to: r.reply_to, thread_id: r.thread_id,
         attachments: JSON.parse(r.attachments || '[]'), mentions: JSON.parse(r.mentions || '[]'), mention_everyone: !!r.mention_everyone,
-        edited: r.edited, created: r.created, system: !!r.system, reactions: rx,
-        reply: rep ? { id: rep.id, author_id: rep.author_id, content: rep.content.slice(0, 200), has_attachments: rep.attachments !== '[]' } : (r.reply_to ? { id: r.reply_to, deleted: true } : null),
+        edited: r.edited, created: r.created, system: !!r.system, reactions: rx, enc: pj(r.enc, null),
+        reply: rep ? { id: rep.id, author_id: rep.author_id, content: rep.enc ? '' : rep.content.slice(0, 200), encrypted: !!rep.enc, has_attachments: rep.attachments !== '[]' } : (r.reply_to ? { id: r.reply_to, deleted: true } : null),
         thread: tc ? { count: tc.c, last: tc.last } : null, pinned: r.pinned || 0, embeds: pj(r.embeds, []).map(e => e && ({ ...e, image: proxied(e.image) })), poll: pollOf(r), sticker: pj(r.sticker, null), title: r.title || null };
     });
   }
@@ -1270,6 +1271,35 @@ function start(opts = {}) {
     res.json({ ok: true });
   }));
 
+  // ----- end-to-end encryption (keys) -----
+  // The server only ever stores a user's PUBLIC key and their private key wrapped under a
+  // passphrase it never sees. It cannot read any encrypted DM.
+  app.post('/api/e2e/setup', auth, wrap((req, res) => {
+    humanOnly(req);
+    const pubkey = String(req.body?.pubkey || '').slice(0, 500);
+    const encPriv = typeof req.body?.enc_priv === 'string' ? pj(req.body.enc_priv, null) : req.body?.enc_priv;
+    if (!/^[A-Za-z0-9+/=]{80,500}$/.test(pubkey)) throw err(400, 'Invalid public key');
+    if (!encPriv || typeof encPriv.salt !== 'string' || typeof encPriv.iv !== 'string' || typeof encPriv.ct !== 'string') throw err(400, 'Invalid key backup');
+    const cur = one('SELECT pubkey FROM users WHERE id=?', req.user.id)?.pubkey;
+    // Changing your public key would make old messages unreadable, so it's set once.
+    // Re-posting the SAME pubkey is allowed — that's how a passphrase change re-wraps the key.
+    if (cur && cur !== pubkey) throw err(409, 'Encryption is already set up on this account.');
+    run('UPDATE users SET pubkey=?, enc_priv=?, enc_ready=1 WHERE id=?', pubkey, JSON.stringify({ salt: encPriv.salt.slice(0, 64), iv: encPriv.iv.slice(0, 64), ct: encPriv.ct.slice(0, 4000) }), req.user.id);
+    res.json({ ok: true });
+  }));
+  // Fetch my own wrapped key bundle (to unlock on a new device with my passphrase)
+  app.get('/api/e2e/me', auth, wrap((req, res) => {
+    const u = one('SELECT pubkey, enc_priv, enc_ready FROM users WHERE id=?', req.user.id);
+    res.json({ ready: !!u?.enc_ready, pubkey: u?.pubkey || null, enc_priv: pj(u?.enc_priv, null) });
+  }));
+  // Fetch public keys for a set of users (to encrypt messages to them)
+  app.get('/api/e2e/keys', auth, wrap((req, res) => {
+    const ids = String(req.query.ids || '').split(',').map(s => s.trim()).filter(Boolean).slice(0, 50);
+    const out = {};
+    ids.forEach(id => { const u = one('SELECT pubkey FROM users WHERE id=? AND pubkey IS NOT NULL', id); if (u) out[id] = u.pubkey; });
+    res.json(out);
+  }));
+
   // ----- channels -----
   app.post('/api/servers/:id/channels', auth, wrap((req, res) => {
     const sid = req.params.id;
@@ -2143,8 +2173,24 @@ function start(opts = {}) {
         if (wait > 0) { cleanup(); throw err(429, `Slowmode is on. You can send another message in ${wait}s.`); }
       }
     }
-    const content = String(req.body?.content || '').slice(0, 4000);
-    const gifUrl = String(req.body?.gif || '').trim();
+    // End-to-end encrypted DM message: the client sends a per-recipient ciphertext map
+    // { userId: { iv, ct } }. The server stores and relays it verbatim and never sees plaintext.
+    let encBlob = null;
+    if (req.body?.enc && ch.type === 'dm') {
+      const e = typeof req.body.enc === 'string' ? pj(req.body.enc, null) : req.body.enc;
+      if (e && typeof e === 'object' && !Array.isArray(e)) {
+        const members = all('SELECT user_id FROM dm_members WHERE channel_id=?', ch.id).map(r => r.user_id);
+        const blob = {};
+        for (const mid of members) {
+          const it = e[mid];
+          if (it && typeof it.iv === 'string' && typeof it.ct === 'string' && it.ct.length <= 12000) blob[mid] = { iv: it.iv.slice(0, 64), ct: it.ct };
+        }
+        if (blob[req.user.id]) encBlob = blob;   // must at least include a copy the sender can read back
+      }
+      if (!encBlob) { cleanup(); throw err(400, 'Malformed encrypted message'); }
+    }
+    const content = encBlob ? '' : String(req.body?.content || '').slice(0, 4000);
+    const gifUrl = encBlob ? '' : String(req.body?.gif || '').trim();
     const gifOk = gifUrl && /^https:\/\/(media[0-9]?\.giphy\.com|i\.giphy\.com)\//.test(gifUrl);
     let poll = null;
     if (req.body?.poll) {
@@ -2161,12 +2207,13 @@ function start(opts = {}) {
       if (!st || !isMember(st.server_id, req.user.id)) { cleanup(); throw err(400, 'You can only use stickers from servers you’re in'); }
       sticker = { id: st.id, name: st.name, url: st.url };
     }
-    if (!content.trim() && !req.files?.length && !gifOk && !poll && !sticker) throw err(400, 'Message is empty');
+    if (encBlob && req.files?.length) cleanup();   // encrypted DMs are text-only in v1
+    if (!encBlob && !content.trim() && !req.files?.length && !gifOk && !poll && !sticker) throw err(400, 'Message is empty');
     // forum: a new post (not a reply) needs a title
     const isPost = ch.type === 'forum' && !req.body?.thread_id;
     const title = isPost ? String(req.body?.title || '').trim().slice(0, 100) : null;
     if (isPost && !title) { cleanup(); throw err(400, 'Give your post a title'); }
-    const attachments = (req.files || []).map(f => ({ url: fileUrl(f), name: f.originalname.slice(0, 200), size: f.size, type: f.mimetype }));
+    const attachments = encBlob ? [] : (req.files || []).map(f => ({ url: fileUrl(f), name: f.originalname.slice(0, 200), size: f.size, type: f.mimetype }));
     // voice message: duration + waveform drawn by the sender's app, attached to the recorded audio file
     if (req.body?.voice && attachments[0] && /^audio\//.test(attachments[0].type)) {
       const v = pj(req.body.voice, {}) || {};
@@ -2197,8 +2244,8 @@ function start(opts = {}) {
       }
     }
     if (ch.type === 'forum' && req.body?.thread_id && !thread) { cleanup(); throw err(404, 'That post was deleted'); }
-    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll,sticker,title) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null, sticker ? JSON.stringify(sticker) : null, title);
+    const r = run('INSERT INTO messages(channel_id,author_id,content,reply_to,thread_id,attachments,mentions,mention_everyone,created,poll,sticker,title,enc) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      ch.id, req.user.id, content, reply?.id ?? null, thread?.id ?? null, JSON.stringify(attachments), JSON.stringify(m.ids), m.everyone ? 1 : 0, now(), poll ? JSON.stringify(poll) : null, sticker ? JSON.stringify(sticker) : null, title, encBlob ? JSON.stringify(encBlob) : null);
     const msg = msgById(Number(r.lastInsertRowid));
     unfurlLater(msg.id, content, req.user.id);
     run('INSERT OR REPLACE INTO reads VALUES(?,?,?)', req.user.id, ch.id, msg.id);

@@ -22,7 +22,7 @@ const S = {
   serverData: {}, messages: {}, hasMore: {}, loading: {}, typing: {},
   view: { server: '@me', channel: null }, lastChannel: {}, thread: null, reply: null, editing: null,
   pending: [], drafts: {}, membersOpen: true, info: {},
-  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, layout: 'classic', fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {}, ptt: false, pttKey: '', pttKeyLabel: '', sbVolume: 0.7 },
+  prefs: { notify: true, sounds: true, status: 'online', mic: '', cam: '', noise: true, theme: 'dark', accent: '#8b6dff', compact: false, layout: 'classic', fontSize: 15, reduceMotion: false, ringtone: '', notifSound: '', gifFavorites: [], notifSounds: { dm: '', mention: '', server: {} }, streamVolumes: {}, ptt: false, pttKey: '', pttKeyLabel: '', sbVolume: 0.7, streamerMode: false },
   activities: {},
   friends: { friends: [], incoming: [], outgoing: [], blocked: [] },
 };
@@ -400,6 +400,7 @@ function applyAppearance() {
   r.style.setProperty('--fs', (p.fontSize || 15) + 'px');
   r.classList.toggle('compact', !!p.compact);
   r.classList.toggle('reduce-motion', !!p.reduceMotion);
+  r.classList.toggle('streamer-mode', !!p.streamerMode);
   const lay = LAYOUTS.find(l => l[0] === p.layout) || LAYOUTS[0];
   r.dataset.layout = lay[0];
   if (lay[3] && !document.getElementById('lay-font-' + lay[0])) {
